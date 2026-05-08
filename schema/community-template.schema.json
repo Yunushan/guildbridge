@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/guildbridge/community-template.schema.json",
+  "title": "GuildBridge Community Template",
+  "type": "object",
+  "required": ["schema", "version", "name", "privacy", "roles", "categories", "channels"],
+  "properties": {
+    "schema": { "const": "guildbridge.community.v1" },
+    "version": { "type": "string" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": ["string", "null"] },
+    "source": {
+      "type": "object",
+      "properties": {
+        "platform": { "type": "string" },
+        "id_hash": { "type": ["string", "null"] },
+        "exported_at": { "type": "string" },
+        "note": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "privacy": {
+      "type": "object",
+      "properties": {
+        "redaction": { "type": "string" },
+        "exports_members": { "const": false },
+        "exports_messages": { "const": false },
+        "exports_dm_channels": { "const": false },
+        "exports_user_overwrites": { "const": false },
+        "stores_tokens": { "const": false }
+      },
+      "required": ["exports_members", "exports_messages", "stores_tokens"],
+      "additionalProperties": false
+    },
+    "roles": { "type": "array", "items": { "$ref": "#/$defs/role" } },
+    "categories": { "type": "array", "items": { "$ref": "#/$defs/category" } },
+    "channels": { "type": "array", "items": { "$ref": "#/$defs/channel" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "permissionOverwrite": {
+      "type": "object",
+      "required": ["target_type", "target_id", "allow", "deny"],
+      "properties": {
+        "target_type": { "enum": ["role", "everyone"] },
+        "target_id": { "type": "string" },
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "role": {
+      "type": "object",
+      "required": ["id", "name", "permissions"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "color": { "type": ["integer", "string", "null"] },
+        "position": { "type": ["integer", "null"] },
+        "hoist": { "type": "boolean" },
+        "mentionable": { "type": "boolean" },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "category": {
+      "type": "object",
+      "required": ["id", "name", "permission_overwrites"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "position": { "type": ["integer", "null"] },
+        "permission_overwrites": { "type": "array", "items": { "$ref": "#/$defs/permissionOverwrite" } },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "channel": {
+      "type": "object",
+      "required": ["id", "name", "type", "permission_overwrites"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "enum": ["text", "voice", "category", "forum", "announcement", "stage", "link", "space", "unknown"] },
+        "position": { "type": ["integer", "null"] },
+        "parent_id": { "type": ["string", "null"] },
+        "topic": { "type": ["string", "null"] },
+        "nsfw": { "type": "boolean" },
+        "bitrate": { "type": ["integer", "null"] },
+        "user_limit": { "type": ["integer", "null"] },
+        "permission_overwrites": { "type": "array", "items": { "$ref": "#/$defs/permissionOverwrite" } },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

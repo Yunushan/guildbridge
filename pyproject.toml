@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guildbridge"
+version = "0.1.0"
+description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, and Matrix/Element."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "GuildBridge contributors"}]
+keywords = ["discord", "fluxer", "stoat", "matrix", "element", "migration", "template", "community", "server"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Communications :: Chat",
+  "Topic :: Utilities",
+]
+dependencies = [
+  "requests>=2.31.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "jsonschema>=4.22.0",
+  "ruff>=0.5.0",
+  "mypy>=1.10.0",
+  "types-requests>=2.31.0",
+]
+
+[project.scripts]
+guildbridge = "guildbridge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_ORG/guildbridge"
+Repository = "https://github.com/YOUR_ORG/guildbridge"
+Issues = "https://github.com/YOUR_ORG/guildbridge/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 110
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+strict_optional = true

@@ -1,0 +1,81 @@
+{
+  "name": "Example Community",
+  "description": "A safe, portable community structure template.",
+  "schema": "guildbridge.community.v1",
+  "version": "1.0",
+  "source": {
+    "platform": "example",
+    "id_hash": "example_redacted_hash",
+    "exported_at": "2026-01-01T00:00:00+00:00",
+    "note": "example only"
+  },
+  "privacy": {
+    "redaction": "safe",
+    "exports_members": false,
+    "exports_messages": false,
+    "exports_dm_channels": false,
+    "exports_user_overwrites": false,
+    "stores_tokens": false
+  },
+  "roles": [
+    {
+      "id": "everyone",
+      "name": "@everyone",
+      "permissions": ["view_channel", "read_message_history"],
+      "color": null,
+      "position": 0,
+      "hoist": false,
+      "mentionable": false,
+      "metadata": {}
+    },
+    {
+      "id": "role_admin",
+      "name": "Admin",
+      "permissions": ["administrator", "manage_server", "manage_roles", "manage_channels"],
+      "color": 16711680,
+      "position": 1,
+      "hoist": true,
+      "mentionable": false,
+      "metadata": {}
+    }
+  ],
+  "categories": [
+    {
+      "id": "cat_general",
+      "name": "General",
+      "position": 0,
+      "permission_overwrites": [],
+      "metadata": {}
+    }
+  ],
+  "channels": [
+    {
+      "id": "chan_welcome",
+      "name": "welcome",
+      "type": "text",
+      "position": 0,
+      "parent_id": "cat_general",
+      "topic": "Start here.",
+      "nsfw": false,
+      "bitrate": null,
+      "user_limit": null,
+      "permission_overwrites": [],
+      "metadata": {}
+    },
+    {
+      "id": "chan_voice",
+      "name": "voice-chat",
+      "type": "voice",
+      "position": 1,
+      "parent_id": "cat_general",
+      "topic": null,
+      "nsfw": false,
+      "bitrate": 64000,
+      "user_limit": 0,
+      "permission_overwrites": [],
+      "metadata": {}
+    }
+  ],
+  "warnings": [],
+  "metadata": {}
+}
