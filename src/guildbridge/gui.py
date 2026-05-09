@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 from tkinter import (
     BooleanVar,
+    Canvas,
     Listbox,
     StringVar,
     Tk,
@@ -89,7 +90,8 @@ class GuildBridgeGUI(ttk.Frame):
         self.result_queue: queue.Queue[CommandResult] = queue.Queue()
         self.style = ttk.Style(master)
         self.theme = StringVar(value="Light")
-        self.output = scrolledtext.ScrolledText(self, height=14, wrap="word")
+        self.output = scrolledtext.ScrolledText(self, height=10, wrap="word")
+        self.themed_canvases: list[Canvas] = []
         self.themed_listboxes: list[Listbox] = []
         self.themed_trees: list[ttk.Treeview] = []
 
@@ -99,8 +101,8 @@ class GuildBridgeGUI(ttk.Frame):
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=0)
-        self.rowconfigure(1, weight=1)
-        self.rowconfigure(2, weight=0)
+        self.rowconfigure(1, weight=3)
+        self.rowconfigure(2, weight=1)
 
         header = ttk.Frame(self)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
@@ -119,11 +121,12 @@ class GuildBridgeGUI(ttk.Frame):
         notebook.add(self._platforms_tab(notebook), text="Platforms")
 
         output_frame = ttk.LabelFrame(self, text="Output")
-        output_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        output_frame.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
         output_frame.columnconfigure(0, weight=1)
-        self.output.grid(in_=output_frame, row=0, column=0, sticky="ew", padx=8, pady=8)
+        output_frame.rowconfigure(0, weight=1)
+        self.output.grid(in_=output_frame, row=0, column=0, sticky="nsew", padx=8, pady=8)
         ttk.Button(output_frame, text="Clear", command=lambda: self.output.delete("1.0", "end")).grid(
-            row=0, column=1, sticky="ns", padx=(0, 8), pady=8
+            row=0, column=1, sticky="ne", padx=(0, 8), pady=8
         )
 
     def _apply_theme(self) -> None:
@@ -225,6 +228,8 @@ class GuildBridgeGUI(ttk.Frame):
             highlightbackground=palette["border"],
             highlightcolor=palette["select_bg"],
         )
+        for canvas in self.themed_canvases:
+            canvas.configure(background=palette["bg"], highlightbackground=palette["border"])
         for listbox in self.themed_listboxes:
             listbox.configure(
                 background=palette["field"],
@@ -242,10 +247,25 @@ class GuildBridgeGUI(ttk.Frame):
             tree.tag_configure("even", background=palette["field"], foreground=palette["text"])
             tree.tag_configure("odd", background=palette["surface"], foreground=palette["text"])
 
-    def _new_tab(self, parent: ttk.Notebook) -> ttk.Frame:
-        frame = ttk.Frame(parent, padding=12)
+    def _new_tab(self, parent: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
+        container = ttk.Frame(parent)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        canvas = Canvas(container, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        frame = ttk.Frame(canvas, padding=12)
         frame.columnconfigure(1, weight=1)
-        return frame
+
+        canvas_window = canvas.create_window((0, 0), window=frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        frame.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(canvas_window, width=event.width))
+        self.themed_canvases.append(canvas)
+        return container, frame
 
     def _provider_combo(self, frame: ttk.Frame, label: str, row: int, variable: StringVar) -> None:
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
@@ -298,7 +318,7 @@ class GuildBridgeGUI(ttk.Frame):
             field.variable.set(selected)
 
     def _export_tab(self, parent: ttk.Notebook) -> ttk.Frame:
-        frame = self._new_tab(parent)
+        tab, frame = self._new_tab(parent)
         provider = StringVar(value="discord")
         source_id = StringVar()
         template = StringVar()
@@ -331,10 +351,10 @@ class GuildBridgeGUI(ttk.Frame):
                 )
             ),
         ).grid(row=row + 1, column=1, sticky="e", pady=(12, 0))
-        return frame
+        return tab
 
     def _import_tab(self, parent: ttk.Notebook) -> ttk.Frame:
-        frame = self._new_tab(parent)
+        tab, frame = self._new_tab(parent)
         file = StringVar()
         target_id = StringVar()
         target_name = StringVar()
@@ -389,10 +409,10 @@ class GuildBridgeGUI(ttk.Frame):
                 reviewed_plan=plan_in.get(),
             ),
         ).grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
-        return frame
+        return tab
 
     def _migrate_tab(self, parent: ttk.Notebook) -> ttk.Frame:
-        frame = self._new_tab(parent)
+        tab, frame = self._new_tab(parent)
         provider_from = StringVar(value="discord")
         source_id = StringVar()
         template = StringVar()
@@ -459,10 +479,10 @@ class GuildBridgeGUI(ttk.Frame):
                 reviewed_plan=plan_in.get(),
             ),
         ).grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
-        return frame
+        return tab
 
     def _tools_tab(self, parent: ttk.Notebook) -> ttk.Frame:
-        frame = self._new_tab(parent)
+        tab, frame = self._new_tab(parent)
         validate_file = StringVar()
         redact_file = StringVar()
         redact_out = StringVar(value="redacted.template.json")
@@ -485,10 +505,10 @@ class GuildBridgeGUI(ttk.Frame):
             text="Redact",
             command=lambda: self._run(build_redact_args(redact_file.get(), out=redact_out.get())),
         ).grid(row=row, column=1, sticky="e", pady=(8, 0))
-        return frame
+        return tab
 
     def _platforms_tab(self, parent: ttk.Notebook) -> ttk.Frame:
-        frame = self._new_tab(parent)
+        tab, frame = self._new_tab(parent)
         frame.columnconfigure(0, weight=1)
         checks = runtime_check()
         check_text = "\n".join(f"{key}: {value}" for key, value in checks.items())
@@ -522,7 +542,7 @@ class GuildBridgeGUI(ttk.Frame):
         tree.grid(row=1, column=0, sticky="nsew")
         self.themed_trees.append(tree)
         frame.rowconfigure(1, weight=1)
-        return frame
+        return tab
 
     def _run(self, args: list[str], *, apply_requested: bool = False, reviewed_plan: str = "") -> None:
         if apply_requested and not self._confirm_apply(reviewed_plan):

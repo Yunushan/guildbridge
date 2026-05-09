@@ -157,7 +157,14 @@ def command_preview(args: Sequence[str]) -> str:
     return "guildbridge " + " ".join(shlex.quote(part) for part in args)
 
 
+def _bundled_cli_name() -> str:
+    return "guildbridge.exe" if sys.platform == "win32" else "guildbridge"
+
+
 def subprocess_command(args: Sequence[str]) -> list[str]:
+    if getattr(sys, "frozen", False):
+        cli_launcher = Path(sys.executable).with_name(_bundled_cli_name())
+        return [str(cli_launcher), *args]
     return [sys.executable, "-m", "guildbridge", *args]
 
 

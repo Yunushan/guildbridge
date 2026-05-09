@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -111,6 +112,18 @@ def test_build_validate_and_redact_args() -> None:
 
 def test_subprocess_command_uses_current_python() -> None:
     assert subprocess_command(["providers"]) == [sys.executable, "-m", "guildbridge", "providers"]
+
+
+def test_subprocess_command_uses_bundled_cli_when_frozen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    launcher_name = "guildbridge.exe" if sys.platform == "win32" else "guildbridge"
+    gui_name = "guildbridge-gui.exe" if sys.platform == "win32" else "guildbridge-gui"
+
+    monkeypatch.setattr(sys, "executable", str(tmp_path / gui_name))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    assert subprocess_command(["providers"]) == [str(tmp_path / launcher_name), "providers"]
 
 
 def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
