@@ -188,6 +188,27 @@ def test_windows_release_accepts_pinned_wix_v7_eula() -> None:
     assert "`-acceptEula wix7`" in windows_doc
 
 
+def test_release_workflow_attaches_built_files_to_github_release() -> None:
+    release = _text(".github/workflows/release.yml")
+    release_doc = _text("docs/RELEASE.md")
+    readme = _text("README.md")
+    turkish_readme = _text("README.tr.md")
+
+    assert "publish-release:" in release
+    assert "if: github.ref_type == 'tag'" in release
+    assert "needs: [build, windows-artifacts]" in release
+    assert "contents: write" in release
+    assert "actions/download-artifact@v7" in release
+    assert "merge-multiple: true" in release
+    assert "gh release create" in release
+    assert "gh release upload" in release
+    assert "release-assets/* --clobber" in release
+    assert "attaches those files as release assets" in release_doc
+    assert "Manual workflow runs upload workflow artifacts only" in release_doc
+    assert "attaches them to the GitHub Release for tag builds" in readme
+    assert "GitHub Release asset'i olarak ekler" in turkish_readme
+
+
 def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     github_ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")

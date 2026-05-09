@@ -63,7 +63,7 @@ git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
 ```
 
-The `Release Artifacts` workflow builds, verifies, and uploads wheel/sdist artifacts plus Windows ZIP/MSI artifacts. Download and inspect those artifacts before publishing anywhere external.
+The `Release Artifacts` workflow builds, verifies, and uploads wheel/sdist artifacts plus Windows ZIP/MSI artifacts. For tag builds, it also creates or updates the GitHub Release and attaches those files as release assets. Manual workflow runs upload workflow artifacts only because they are not tied to a tag.
 
 ## Windows Artifacts
 
