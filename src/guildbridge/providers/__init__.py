@@ -6,6 +6,8 @@ from .base import Provider
 from .discord import DiscordProvider
 from .fluxer import FluxerProvider
 from .matrix import MatrixProvider
+from .mumble import MumbleProvider
+from .rocket_chat import RocketChatProvider
 from .stoat import StoatProvider
 
 PROVIDER_CLASSES: tuple[type[Provider], ...] = (
@@ -13,6 +15,8 @@ PROVIDER_CLASSES: tuple[type[Provider], ...] = (
     FluxerProvider,
     StoatProvider,
     MatrixProvider,
+    RocketChatProvider,
+    MumbleProvider,
 )
 
 

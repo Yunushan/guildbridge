@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from functools import partial
 from typing import Any
 
 from guildbridge.config import RuntimeConfig
@@ -20,7 +21,7 @@ from guildbridge.models import (
 from guildbridge.permissions import discord_to_neutral, neutral_to_discord
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider
+from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id, safe_int
 
 DISCORD_CHANNEL_TYPES = {
     0: "text",
@@ -47,7 +48,14 @@ class DiscordProvider(Provider):
 
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)
-        self.http = HttpClient(config.discord_api_base, token=config.discord_token, auth_scheme="Bot", timeout=config.request_timeout)
+        self.http = HttpClient(
+            config.discord_api_base,
+            token=config.discord_token,
+            auth_scheme="Bot",
+            timeout=config.request_timeout,
+            max_retries=config.max_retries,
+            user_agent=config.user_agent,
+        )
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if options.template:
@@ -85,10 +93,15 @@ class DiscordProvider(Provider):
                     "mentionable": bool(role.mentionable),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/guilds/{options.target_id}/roles", payload))
+            action = Action(self.name, "POST", f"/guilds/{options.target_id}/roles", payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, f"/guilds/{options.target_id}/roles", json_body=payload, headers=headers),
+            )
             if options.apply:
-                created = self.http.post(f"/guilds/{options.target_id}/roles", json_body=payload, headers=headers)
-                role_map[role.id] = str(created.get("id"))
+                role_map[role.id] = require_response_id(created, "Discord role create", "id")
             else:
                 role_map[role.id] = f"dry_role_{role.id}"
 
@@ -102,10 +115,15 @@ class DiscordProvider(Provider):
                     "permission_overwrites": self._overwrites_to_discord(cat.permission_overwrites, role_map),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/guilds/{options.target_id}/channels", payload))
+            action = Action(self.name, "POST", f"/guilds/{options.target_id}/channels", payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, f"/guilds/{options.target_id}/channels", json_body=payload, headers=headers),
+            )
             if options.apply:
-                created = self.http.post(f"/guilds/{options.target_id}/channels", json_body=payload, headers=headers)
-                category_map[cat.id] = str(created.get("id"))
+                category_map[cat.id] = require_response_id(created, "Discord category create", "id")
             else:
                 category_map[cat.id] = f"dry_category_{cat.id}"
 
@@ -129,10 +147,19 @@ class DiscordProvider(Provider):
                     "permission_overwrites": self._overwrites_to_discord(channel.permission_overwrites, role_map),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/guilds/{options.target_id}/channels", payload))
+            if channel.parent_id and channel.parent_id not in category_map:
+                result.warnings.append(
+                    f"Channel {channel.name!r} references missing category {channel.parent_id!r}; creating without a parent."
+                )
+            action = Action(self.name, "POST", f"/guilds/{options.target_id}/channels", payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, f"/guilds/{options.target_id}/channels", json_body=payload, headers=headers),
+            )
             if options.apply:
-                created = self.http.post(f"/guilds/{options.target_id}/channels", json_body=payload, headers=headers)
-                result.id_map[channel.id] = str(created.get("id"))
+                result.id_map[channel.id] = require_response_id(created, "Discord channel create", "id")
             else:
                 result.id_map[channel.id] = f"dry_channel_{channel.id}"
 
@@ -193,7 +220,7 @@ class DiscordProvider(Provider):
         raw_channels = list(channels or [])
 
         for ch in raw_channels:
-            ch_type = DISCORD_CHANNEL_TYPES.get(int(ch.get("type", 0)), "unknown")
+            ch_type = DISCORD_CHANNEL_TYPES.get(safe_int(ch.get("type"), -1), "unknown")
             raw_id = str(ch.get("id") or ch.get("name"))
             if ch_type == "category":
                 lid = local_id("cat", self.name, raw_id)
@@ -208,7 +235,7 @@ class DiscordProvider(Provider):
                 )
 
         for ch in raw_channels:
-            ch_type = DISCORD_CHANNEL_TYPES.get(int(ch.get("type", 0)), "unknown")
+            ch_type = DISCORD_CHANNEL_TYPES.get(safe_int(ch.get("type"), -1), "unknown")
             if ch_type == "category":
                 continue
             raw_id = str(ch.get("id") or ch.get("name"))
@@ -238,7 +265,9 @@ class DiscordProvider(Provider):
             channels=out_channels,
             warnings=[self.supported_warning()],
         )
-        if not options.include_user_overwrites:
+        if options.include_user_overwrites:
+            template.warnings.append("User/member-specific permission overwrites cannot be represented safely and were dropped.")
+        else:
             template.warnings.append("User/member-specific permission overwrites were dropped for privacy.")
         return template
 
@@ -250,21 +279,13 @@ class DiscordProvider(Provider):
     ) -> list[PermissionOverwrite]:
         output: list[PermissionOverwrite] = []
         for ow in overwrites or []:
-            ow_type = int(ow.get("type", 0))
-            raw_id = str(ow.get("id"))
-            if ow_type == 1 and not options.include_user_overwrites:
+            raw_type = ow.get("type")
+            ow_type = safe_int(raw_type)
+            raw_value = ow.get("id")
+            if raw_value in {None, ""}:
                 continue
-            if ow_type == 1:
-                # Still do not keep raw user IDs. Only include if caller explicitly asked,
-                # with an anonymized target that cannot be imported without editing.
-                output.append(
-                    PermissionOverwrite(
-                        target_type="role",
-                        target_id=f"user_overwrite_{hash_id(self.name, raw_id, 8)}",
-                        allow=discord_to_neutral(ow.get("allow")),
-                        deny=discord_to_neutral(ow.get("deny")),
-                    )
-                )
+            raw_id = str(raw_value)
+            if ow_type == 1 or str(raw_type).lower() in {"member", "user"}:
                 continue
             output.append(
                 PermissionOverwrite(

@@ -2,16 +2,19 @@
 
 # GuildBridge
 
-**Privacy-first server/community template importer-exporter for Discord, Stoat, Fluxer, and Matrix/Element.**
+**Privacy-first server/community template importer-exporter for Discord, Stoat, Fluxer, Matrix/Element, Rocket.Chat, and Mumble.**
 
 Import, export, redact, validate, and migrate community structure without shipping members, messages, DMs, tokens, or raw user IDs in open-source templates.
 
 ![python](https://img.shields.io/badge/python-3.10%2B-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![build](https://img.shields.io/badge/build-ready-brightgreen) ![privacy](https://img.shields.io/badge/privacy-redacted_by_default-success)
 
-**providers** Discord · Fluxer · Stoat · Matrix/Element  
+**language** [English](README.md) · [Türkçe](README.tr.md)
+
+**providers** Discord · Fluxer · Stoat · Matrix/Element · Rocket.Chat · Mumble  
+**interfaces** CLI · desktop GUI · web/mobile GUI  
 **actions** export · import · migrate · validate · redact · dry-run · apply
 
-[Quick Start](#quick-start) • [Supported Paths](#supported-paths) • [Privacy Model](#privacy-model) • [Configuration](#configuration) • [Examples](#examples) • [Provider Notes](#provider-notes) • [Contributing](#contributing) • [License](#license)
+[Quick Start](#quick-start) • [GUI](#gui) • [Supported Platforms](#supported-platforms) • [Supported Paths](#supported-paths) • [Privacy Model](#privacy-model) • [Recovery Guidance](#recovery-guidance) • [Release Hygiene](#release-hygiene) • [Configuration](#configuration) • [Examples](#examples) • [Provider Notes](#provider-notes) • [Contributing](#contributing) • [License](#license)
 
 </div>
 
@@ -36,7 +39,7 @@ It intentionally does **not** export:
 - members, member lists, DMs, friend lists, presences, emails, IPs, or personal profiles
 - bot tokens, access tokens, session tokens, or cookies
 - raw provider IDs in generated templates; source IDs are hashed/localized
-- user/member-specific permission overwrites unless explicitly requested, and even then they are anonymized and removed by `redact`
+- user/member-specific permission overwrites; unsafe user targets are dropped even when diagnostics are requested
 
 ## Best project name
 
@@ -61,11 +64,11 @@ Alternative names:
 ### 1. Install locally
 
 ```bash
-git clone https://github.com/YOUR_ORG/guildbridge.git
+git clone https://github.com/Yunushan/guildbridge.git
 cd guildbridge
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-python -m pip install -e .[dev]
+python -m pip install -e ".[dev]"
 ```
 
 ### 2. Configure tokens without committing secrets
@@ -83,7 +86,25 @@ Never commit `.env`. The repository `.gitignore` excludes it.
 guildbridge providers
 ```
 
-### 4. Export a Discord server template to neutral JSON
+### 4. Check platform support
+
+```bash
+guildbridge platforms --check
+```
+
+### 5. Launch the GUI
+
+```bash
+guildbridge-gui
+```
+
+For browser and mobile access:
+
+```bash
+guildbridge-web
+```
+
+### 6. Export a Discord server template to neutral JSON
 
 ```bash
 guildbridge export \
@@ -92,7 +113,7 @@ guildbridge export \
   --out community.template.json
 ```
 
-### 5. Dry-run import to Fluxer
+### 7. Dry-run import to Fluxer
 
 ```bash
 guildbridge import \
@@ -102,7 +123,7 @@ guildbridge import \
   --plan-out fluxer.plan.json
 ```
 
-### 6. Apply after reviewing the plan
+### 8. Apply after reviewing the plan
 
 ```bash
 guildbridge import \
@@ -110,8 +131,73 @@ guildbridge import \
   --file community.template.json \
   --target-name "Imported Community" \
   --plan-out fluxer.result.json \
-  --apply
+  --plan-in fluxer.plan.json \
+  --apply \
+  --confirm-apply APPLY
 ```
+
+Confirmed apply runs require a reviewed dry-run plan through `--plan-in`. GuildBridge recomputes a no-write candidate plan, compares the command, target, template fingerprint, action count, and action hash to the reviewed file, and refuses writes if anything drifted. Apply runs also write a local journal before provider writes start. By default the journal is saved under `.guildbridge/journals/`; use `--journal-out path/to/journal.json` for an explicit path. If a run fails halfway through, inspect the journal before retrying and pass `--resume-journal path/to/journal.json` so GuildBridge verifies the retry uses the same command, target, provider, template fingerprint, and reviewed plan hash.
+
+## GUI
+
+GuildBridge includes two GUI modes that wrap the same export, import, migrate, validate, and redact commands as the CLI.
+
+Desktop GUI:
+
+```bash
+guildbridge-gui
+```
+
+Browser/mobile GUI:
+
+```bash
+guildbridge-web
+```
+
+The browser GUI starts at `http://127.0.0.1:8765` by default. It uses a responsive layout with touch-sized controls, anchored navigation, result status panels, and scroll-safe platform tables for phone and tablet browsers. It also uses a per-server CSRF token, limits POST body size, adds basic browser security headers, and requires typing `APPLY` before browser-triggered write operations run with `--apply`.
+
+Both GUI modes expose the same apply-safety controls as the CLI for import and migrate: Reviewed plan input, Journal output, Resume journal, Force invalid template after review, and Apply writes. Apply operations need a reviewed plan path and typed `APPLY`; GuildBridge still validates the reviewed plan before provider writes start.
+
+Use `--host 0.0.0.0 --allow-lan --auth-token "choose-a-long-random-token"` only on trusted networks when you want phones or tablets on the same network to connect. LAN mode requires an auth token on every request; if you omit `--auth-token`, GuildBridge generates one and prints it once at startup.
+
+Alternative launch commands:
+
+```bash
+python -m guildbridge.gui
+python -m guildbridge.web
+```
+
+The desktop GUI runs on platforms with Tkinter installed and a desktop session. Android and iOS are browser-client targets for `guildbridge-web`; on-device CLI use is experimental because mobile Python runtimes vary.
+
+## Supported Platforms
+
+GuildBridge support is tiered so platform claims stay honest:
+
+- CI-tested CLI/runtime: Windows, Ubuntu, macOS, and Debian through the GitLab Python image.
+- Install-script supported: Windows Server, Linux Mint, RHEL, AlmaLinux, Rocky Linux, Oracle Linux, Fedora, CentOS, CentOS Stream, Arch Linux, Manjaro Linux, Gentoo, FreeBSD, NetBSD, and OpenBSD.
+- Browser-client supported: Android and Apple iOS can use `guildbridge-web` from a mobile browser. On-device CLI support is experimental and depends on the Python runtime.
+
+Desktop GUI support requires Tkinter and a desktop session. Headless servers can use the CLI or browser GUI.
+
+Install or check platform dependencies:
+
+```bash
+./scripts/install-system-deps.sh
+./scripts/install-system-deps.sh --dry-run --require dev
+guildbridge platforms --check
+python scripts/check-platform.py --require cli --format json
+```
+
+Windows:
+
+```powershell
+.\scripts\check-platform.ps1
+.\scripts\check-platform.ps1 -Require desktop-gui
+```
+
+The default check requires CLI readiness only. Use `--require desktop-gui`, `--require web-gui`, or `--require dev` when you need those capabilities checked as hard requirements.
+
+See [docs/PLATFORMS.md](docs/PLATFORMS.md) for package names and platform-specific notes.
 
 ## Supported Paths
 
@@ -123,6 +209,10 @@ source provider -> neutral community.template.json -> target provider
 
 | From | To | Status | Notes |
 |---|---|---:|---|
+| Discord/Fluxer/Stoat | Rocket.Chat | ✅ supported | Creates Rocket.Chat roles and rooms; room-specific permission semantics are best-effort. |
+| Rocket.Chat | Discord/Fluxer/Stoat/Matrix | ✅ supported | Exports rooms and workspace roles; messages, users, subscriptions, and DMs are excluded. |
+| Discord/Fluxer/Stoat/Matrix/Rocket.Chat | Mumble | ✅ supported with admin bridge | Creates Mumble groups and voice channels through a configured admin API bridge. |
+| Mumble | Discord/Fluxer/Stoat/Matrix/Rocket.Chat | ✅ supported with admin bridge | Exports Mumble groups, channels, and ACL-like permissions; live voice state and registrations are excluded. |
 | Discord | Fluxer | ✅ supported | Good structural fit; channel/role permissions are mapped best-effort. |
 | Discord | Stoat | ✅ supported | Uses configurable Stoat/Revolt-style API endpoints. |
 | Discord | Matrix/Element | ✅ supported | Creates Matrix spaces and rooms; roles do not map 1:1. |
@@ -132,7 +222,7 @@ source provider -> neutral community.template.json -> target provider
 | Stoat | Discord | ✅ supported | Best-effort role/channel mapping. |
 | Stoat | Fluxer | ✅ supported | Best-effort role/channel mapping. |
 | Stoat | Matrix/Element | ✅ supported | Categories become spaces. |
-| Matrix/Element | Discord/Fluxer/Stoat | ✅ supported | Exports Matrix space hierarchy as channels; Matrix has no global server roles. |
+| Matrix/Element | Discord/Fluxer/Stoat/Rocket.Chat/Mumble | ✅ supported | Exports Matrix space hierarchy as channels; Matrix has no global server roles. |
 
 ## Configuration
 
@@ -175,6 +265,25 @@ MATRIX_SERVER_NAME="example.org"
 
 Element is a Matrix client, so GuildBridge uses the Matrix Client-Server API.
 
+### Rocket.Chat
+
+```bash
+ROCKET_CHAT_API_BASE="https://chat.example.org/api/v1"
+ROCKET_CHAT_AUTH_TOKEN="..."
+ROCKET_CHAT_USER_ID="..."
+```
+
+Rocket.Chat exports rooms/channels and workspace roles. It does not export messages, users, subscriptions, direct messages, or private user metadata.
+
+### Mumble
+
+```bash
+MUMBLE_API_BASE="https://mumble-admin.example.org/api/v1"
+MUMBLE_API_TOKEN="..."
+```
+
+Mumble/Murmur does not provide a universal HTTP management API on the voice port. GuildBridge expects `MUMBLE_API_BASE` to point at an admin API bridge for Murmur/Ice/gRPC management that exposes server, group, channel, and ACL routes.
+
 ## Examples
 
 ### Discord template -> Fluxer server
@@ -195,7 +304,9 @@ guildbridge migrate \
   --template "https://discord.new/abc123" \
   --target-name "Fluxer Copy" \
   --plan-out fluxer.result.json \
-  --apply
+  --plan-in fluxer.plan.json \
+  --apply \
+  --confirm-apply APPLY
 ```
 
 ### Live Discord guild -> existing Discord guild
@@ -280,8 +391,15 @@ GuildBridge is designed so public template files are safe to publish.
 2. **No members.** Member lists and user profiles are not part of the schema.
 3. **No DMs.** Direct/private conversations are never exported.
 4. **No secrets.** Tokens and session values are read from environment variables only.
-5. **Dry-run first.** Imports do nothing unless `--apply` is set.
-6. **Redaction available.** `guildbridge redact` removes unsafe metadata from hand-edited templates.
+5. **Stable reviewed plans.** Imports do nothing unless `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>` is set. GuildBridge refuses writes if the current candidate plan differs from the reviewed dry-run plan.
+6. **Apply journals.** Confirmed apply runs write a local journal with started, succeeded, and failed action records so interrupted writes can be audited before retrying.
+7. **Redaction available.** `guildbridge redact` removes unsafe metadata keys, token-like values, raw source IDs, and unsafe overwrite placeholders from hand-edited templates.
+
+## Recovery Guidance
+
+Command failures include the original error plus recovery hints for common operator issues: missing files, invalid JSON, missing provider tokens, HTTP authentication/rate-limit/provider failures, reviewed-plan drift, invalid templates, and journal resume mismatches.
+
+For interrupted apply runs, inspect the journal first. Retry only with the same command, target, template, and reviewed plan, then pass `--resume-journal path/to/journal.json` so GuildBridge verifies the retry before writing.
 
 ### Source IDs
 
@@ -322,19 +440,53 @@ This keeps the template stable without revealing original raw IDs.
 - Channels are imported as Matrix rooms.
 - Discord/Fluxer/Stoat-style global roles cannot be faithfully represented without member IDs, which GuildBridge intentionally avoids.
 
+### Rocket.Chat
+
+- Uses Rocket.Chat REST API credentials: `ROCKET_CHAT_AUTH_TOKEN` and `ROCKET_CHAT_USER_ID`.
+- Exports workspace rooms/channels and roles.
+- Imports text-like channels as Rocket.Chat channels or private groups.
+- Room-specific role semantics are best-effort because Rocket.Chat permissions are mostly workspace role settings.
+
+### Mumble
+
+- Uses a configured Mumble/Murmur admin API bridge through `MUMBLE_API_BASE`.
+- Exports groups, channel tree, and ACL-style allow/deny entries.
+- Imports structural channels as Mumble voice channels.
+- Does not export live users, registrations, certificates, voice state, or text/chat history.
+
+## Release Hygiene
+
+Release steps are documented in [docs/RELEASE.md](docs/RELEASE.md). The short local check is:
+
+```bash
+make release-check
+```
+
+The GitHub release workflow builds and uploads artifacts for `v*` tags and manual runs; it does not publish to PyPI automatically.
+
 ## Development
 
 ```bash
-python -m pip install -e .[dev]
-ruff check src tests
-mypy src
-pytest
+python -m pip install -e ".[dev]"
+python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+python -m mypy src
+python -m pytest -q
+python scripts/check-platform.py --require cli --format json
+python -m build
+python -m twine check dist/*
+python scripts/verify-dist.py
 ```
 
 Run the CLI directly:
 
 ```bash
 python -m guildbridge providers
+```
+
+Run the GUI directly:
+
+```bash
+python -m guildbridge.gui
 ```
 
 ## GitHub and GitLab CI
@@ -346,7 +498,9 @@ This repo includes both:
 .gitlab-ci.yml
 ```
 
-Both pipelines run install, lint, type checks, and tests.
+Both pipelines run install, lint, type checks, tests, platform checks, package builds, distribution metadata checks, and wheel install verification.
+
+GitHub Actions also has a `Release Artifacts` workflow for `v*` tags and manual runs. It builds the wheel/sdist and uploads them as workflow artifacts; it does not publish to PyPI automatically.
 
 ## Project layout
 
@@ -372,7 +526,7 @@ guildbridge/
 
 - Do not commit `.env`.
 - Do not paste tokens into issue reports.
-- Run dry-runs before `--apply`.
+- Run dry-runs before `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>`.
 - Review generated plans before applying them.
 - Prefer a bot/application with minimum required permissions.
 

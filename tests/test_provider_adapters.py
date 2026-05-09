@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from guildbridge.config import RuntimeConfig
+from guildbridge.models import Channel, CommunityTemplate, Role
+from guildbridge.providers.base import ExportOptions, ImportOptions, require_response_id, safe_int
+from guildbridge.providers.discord import DiscordProvider
+from guildbridge.providers.fluxer import FluxerProvider
+from guildbridge.providers.matrix import MatrixProvider
+from guildbridge.providers.mumble import MumbleProvider
+from guildbridge.providers.rocket_chat import RocketChatProvider
+from guildbridge.providers.stoat import StoatProvider
+
+
+class EmptyCreateHttp:
+    def post(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {}
+
+
+def _template_with_role() -> CommunityTemplate:
+    return CommunityTemplate(
+        name="Example",
+        roles=[
+            Role(id="everyone", name="@everyone"),
+            Role(id="role_admin", name="Admin", permissions=["manage_roles"]),
+        ],
+    )
+
+
+def test_provider_helpers_parse_ints_and_require_ids() -> None:
+    assert safe_int("4") == 4
+    assert safe_int(None, 99) == 99
+    assert require_response_id({"guild": {"id": 123}}, "guild create", "id", "guild.id") == "123"
+    with pytest.raises(ValueError, match="guild create response did not contain an id"):
+        require_response_id({"guild": {}}, "guild create", "id", "guild.id")
+
+
+def test_discord_export_drops_user_overwrites_even_when_requested() -> None:
+    provider = DiscordProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "guild1", "name": "Guild"},
+        [{"id": "guild1", "name": "@everyone", "permissions": "0"}],
+        [
+            {
+                "id": "channel1",
+                "name": "General",
+                "type": "not-an-int",
+                "permission_overwrites": [
+                    {"id": "user1", "type": 1, "allow": "2048", "deny": "0"},
+                    {"id": "guild1", "type": 0, "allow": "1024", "deny": "0"},
+                ],
+            }
+        ],
+        source_note="test",
+        options=ExportOptions(include_user_overwrites=True),
+    )
+
+    assert template.channels[0].type == "unknown"
+    assert [ow.target_id for ow in template.channels[0].permission_overwrites] == ["everyone"]
+    assert template.validate() == []
+    assert any("cannot be represented safely" in warning for warning in template.warnings)
+
+
+def test_fluxer_export_drops_user_overwrites_even_when_requested() -> None:
+    provider = FluxerProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "guild1", "name": "Flux"},
+        [{"id": "guild1", "name": "@everyone", "permissions": 0}],
+        [
+            {
+                "id": "channel1",
+                "name": "General",
+                "type": 0,
+                "permission_overwrites": [
+                    {"id": "user1", "type": "member", "allow": 2048, "deny": 0},
+                    {"id": "guild1", "type": "role", "allow": 1024, "deny": 0},
+                ],
+            }
+        ],
+        options=ExportOptions(include_user_overwrites=True),
+    )
+
+    assert [ow.target_id for ow in template.channels[0].permission_overwrites] == ["everyone"]
+    assert template.validate() == []
+    assert any("cannot be represented safely" in warning for warning in template.warnings)
+
+
+def test_rocket_chat_build_template_exports_rooms_and_roles() -> None:
+    provider = RocketChatProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"siteName": "Rocket Workspace", "uniqueId": "workspace1"},
+        [{"_id": "admin", "name": "admin", "permissions": ["admin", "send-message"]}],
+        [{"_id": "room1", "name": "general", "t": "c", "topic": "General chat"}],
+        options=ExportOptions(),
+    )
+
+    assert template.source.platform == "rocket.chat"
+    assert any(role.name == "admin" for role in template.roles)
+    assert template.channels[0].name == "general"
+    assert template.channels[0].type == "text"
+    assert template.validate() == []
+
+
+def test_mumble_build_template_exports_voice_channels_and_groups() -> None:
+    provider = MumbleProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "server1", "name": "Mumble Server"},
+        [{"id": "moderators", "name": "Moderators", "permissions": ["kick", "ban"]}],
+        [
+            {"id": "cat1", "name": "Team Rooms", "type": "category"},
+            {
+                "id": "chan1",
+                "name": "Blue Team",
+                "parent_id": "cat1",
+                "acl": [{"group": "moderators", "allow": ["enter", "speak"], "deny": []}],
+            },
+        ],
+        options=ExportOptions(),
+    )
+
+    assert template.source.platform == "mumble"
+    assert template.categories[0].name == "Team Rooms"
+    assert template.channels[0].type == "voice"
+    assert template.channels[0].parent_id == template.categories[0].id
+    assert template.validate() == []
+
+
+def test_discord_apply_requires_role_create_id() -> None:
+    provider = DiscordProvider(RuntimeConfig(discord_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Discord role create response did not contain an id"):
+        provider.import_template(_template_with_role(), ImportOptions(target_id="guild1", apply=True))
+
+
+def test_fluxer_apply_requires_role_create_id() -> None:
+    provider = FluxerProvider(RuntimeConfig(fluxer_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Fluxer role create response did not contain an id"):
+        provider.import_template(_template_with_role(), ImportOptions(target_id="guild1", apply=True))
+
+
+def test_matrix_apply_requires_room_id() -> None:
+    provider = MatrixProvider(RuntimeConfig(matrix_access_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Matrix space create response did not contain an id"):
+        provider.import_template(CommunityTemplate(name="Example"), ImportOptions(apply=True))
+
+
+def test_stoat_apply_requires_server_id() -> None:
+    provider = StoatProvider(RuntimeConfig(stoat_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Stoat server create response did not contain an id"):
+        provider.import_template(CommunityTemplate(name="Example"), ImportOptions(apply=True))
+
+
+def test_rocket_chat_apply_requires_role_create_id() -> None:
+    provider = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Rocket.Chat role create response did not contain an id"):
+        provider.import_template(_template_with_role(), ImportOptions(apply=True))
+
+
+def test_mumble_apply_requires_group_create_id() -> None:
+    provider = MumbleProvider(RuntimeConfig(mumble_api_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Mumble group create response did not contain an id"):
+        provider.import_template(_template_with_role(), ImportOptions(target_id="server1", apply=True))
+
+
+def test_missing_parent_category_is_reported_in_dry_runs() -> None:
+    provider = DiscordProvider(RuntimeConfig())
+    template = CommunityTemplate(
+        name="Example",
+        roles=[Role(id="everyone", name="@everyone")],
+        channels=[Channel(id="chan1", name="General", parent_id="missing-category")],
+    )
+
+    result = provider.import_template(template, ImportOptions(target_id="guild1"))
+
+    assert any("references missing category" in warning for warning in result.warnings)

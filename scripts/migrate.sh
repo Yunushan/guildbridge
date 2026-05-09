@@ -11,6 +11,8 @@ Examples:
   scripts/migrate.sh fluxer stoat FLUXER_GUILD_ID "Stoat Copy" --apply
 
 This wrapper chooses --template for Discord template URLs/codes and --source-id otherwise.
+Run without --apply first and review migration.plan.json.
+When --apply is used, it validates that reviewed plan before adding the required GuildBridge apply confirmation.
 USAGE
 }
 
@@ -37,7 +39,7 @@ else
 fi
 
 if [[ "$APPLY" == "--apply" ]]; then
-  ARGS+=(--apply --plan-out migration.result.json)
+  ARGS+=(--apply --confirm-apply APPLY --plan-in migration.plan.json --plan-out migration.result.json)
 fi
 
 "${ARGS[@]}"

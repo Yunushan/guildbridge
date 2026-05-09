@@ -26,3 +26,18 @@ Provider APIs change. GuildBridge keeps platform logic isolated in provider adap
 - Matrix spaces model categories/servers best.
 - Matrix rooms model text-like channels best.
 - Discord-style global roles do not map 1:1 without member IDs.
+
+## Rocket.Chat
+
+- API base URL defaults to `http://localhost:3000/api/v1`.
+- Set `ROCKET_CHAT_API_BASE`, `ROCKET_CHAT_AUTH_TOKEN`, and `ROCKET_CHAT_USER_ID`.
+- The provider uses Rocket.Chat REST headers `X-Auth-Token` and `X-User-Id`.
+- Exports rooms/channels and workspace roles; messages, users, subscriptions, and direct messages are not exported.
+- Imports text-like rooms through channel/group create endpoints. Workspace/room permission parity is best-effort because Rocket.Chat role permissions are not identical to Discord-style channel overwrites.
+
+## Mumble / Murmur
+
+- API base URL defaults to `http://localhost:64738/api/v1`, but this must be an admin API bridge, not the Mumble voice protocol itself.
+- Set `MUMBLE_API_BASE` and `MUMBLE_API_TOKEN`.
+- The provider expects server, group, channel, and ACL management routes from the configured bridge.
+- Exports groups, channels, and ACL-like allow/deny entries; live users, registrations, certificates, voice state, and text messages are not exported.

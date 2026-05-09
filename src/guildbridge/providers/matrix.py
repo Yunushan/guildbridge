@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from functools import partial
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -18,7 +19,7 @@ from guildbridge.models import (
 )
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider
+from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id
 
 
 class MatrixProvider(Provider):
@@ -28,7 +29,14 @@ class MatrixProvider(Provider):
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)
         base = config.matrix_base_url or "https://matrix.org"
-        self.http = HttpClient(base, token=config.matrix_access_token, auth_scheme="Bearer", timeout=config.request_timeout)
+        self.http = HttpClient(
+            base,
+            token=config.matrix_access_token,
+            auth_scheme="Bearer",
+            timeout=config.request_timeout,
+            max_retries=config.max_retries,
+            user_agent=config.user_agent,
+        )
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if not options.source_id:
@@ -58,10 +66,15 @@ class MatrixProvider(Provider):
                 "preset": "private_chat",
                 "creation_content": {"type": "m.space"},
             }
-            result.actions.append(Action(self.name, "POST", "/_matrix/client/v3/createRoom", payload, note="create target Matrix space"))
+            action = Action(self.name, "POST", "/_matrix/client/v3/createRoom", payload, note="create target Matrix space")
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, "/_matrix/client/v3/createRoom", json_body=payload),
+            )
             if options.apply:
-                created = self.http.post("/_matrix/client/v3/createRoom", json_body=payload)
-                main_space_id = str(created.get("room_id"))
+                main_space_id = require_response_id(created, "Matrix space create", "room_id")
             else:
                 main_space_id = "!dryMainSpace:example.org"
         result.id_map["space"] = main_space_id
@@ -73,14 +86,19 @@ class MatrixProvider(Provider):
                 "preset": "private_chat",
                 "creation_content": {"type": "m.space"},
             }
-            result.actions.append(Action(self.name, "POST", "/_matrix/client/v3/createRoom", payload, note="create category as nested Matrix space"))
+            action = Action(self.name, "POST", "/_matrix/client/v3/createRoom", payload, note="create category as nested Matrix space")
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, "/_matrix/client/v3/createRoom", json_body=payload),
+            )
             if options.apply:
-                created = self.http.post("/_matrix/client/v3/createRoom", json_body=payload)
-                cat_space_id = str(created.get("room_id"))
+                cat_space_id = require_response_id(created, "Matrix category space create", "room_id")
             else:
                 cat_space_id = f"!dryCategory{len(category_space_map)}:example.org"
             category_space_map[cat.id] = cat_space_id
-            self._plan_or_apply_space_link(result, main_space_id, cat_space_id, server_name, order=cat.position, apply=options.apply)
+            self._plan_or_apply_space_link(result, main_space_id, cat_space_id, server_name, order=cat.position, options=options)
 
         for channel in sorted(template.channels, key=lambda c: (c.position is None, c.position or 0)):
             if channel.type not in {"text", "voice", "announcement", "forum", "stage", "link"}:
@@ -95,15 +113,24 @@ class MatrixProvider(Provider):
                     "power_level_content_override": self._power_levels_for_channel(channel),
                 }
             )
-            result.actions.append(Action(self.name, "POST", "/_matrix/client/v3/createRoom", payload, note="create Matrix room"))
+            action = Action(self.name, "POST", "/_matrix/client/v3/createRoom", payload, note="create Matrix room")
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, "/_matrix/client/v3/createRoom", json_body=payload),
+            )
             if options.apply:
-                created = self.http.post("/_matrix/client/v3/createRoom", json_body=payload)
-                room_id = str(created.get("room_id"))
+                room_id = require_response_id(created, "Matrix room create", "room_id")
             else:
                 room_id = f"!dryRoom{len(result.id_map)}:example.org"
             result.id_map[channel.id] = room_id
+            if channel.parent_id and channel.parent_id not in category_space_map:
+                result.warnings.append(
+                    f"Channel {channel.name!r} references missing category {channel.parent_id!r}; linking to the main space."
+                )
             parent = category_space_map.get(channel.parent_id or "") or main_space_id
-            self._plan_or_apply_space_link(result, parent, room_id, server_name, order=channel.position, apply=options.apply)
+            self._plan_or_apply_space_link(result, parent, room_id, server_name, order=channel.position, options=options)
 
         result.warnings.append("Matrix/Element has no Discord-style global server roles; GuildBridge creates rooms/spaces and applies only coarse room defaults.")
         return result
@@ -161,17 +188,25 @@ class MatrixProvider(Provider):
             warnings=[self.supported_warning(), warning, "Matrix message history, members, and per-user power levels were not exported."],
         )
 
-    def _plan_or_apply_space_link(self, result: ImportResult, parent_id: str, child_id: str, server_name: str, *, order: int | None, apply: bool) -> None:
+    def _plan_or_apply_space_link(
+        self,
+        result: ImportResult,
+        parent_id: str,
+        child_id: str,
+        server_name: str,
+        *,
+        order: int | None,
+        options: ImportOptions,
+    ) -> None:
         order_str = f"{order:04d}" if isinstance(order, int) else None
         child_payload = without_none({"via": [server_name], "order": order_str, "suggested": True})
         parent_payload = {"via": [server_name], "canonical": True}
         child_path = f"/_matrix/client/v3/rooms/{self._q(parent_id)}/state/m.space.child/{self._q(child_id)}"
         parent_path = f"/_matrix/client/v3/rooms/{self._q(child_id)}/state/m.space.parent/{self._q(parent_id)}"
-        result.actions.append(Action(self.name, "PUT", child_path, child_payload, note="link child into parent space"))
-        result.actions.append(Action(self.name, "PUT", parent_path, parent_payload, note="set parent on child room"))
-        if apply:
-            self.http.put(child_path, json_body=child_payload)
-            self.http.put(parent_path, json_body=parent_payload)
+        child_action = Action(self.name, "PUT", child_path, child_payload, note="link child into parent space")
+        plan_or_apply_action(options, result, child_action, partial(self.http.put, child_path, json_body=child_payload))
+        parent_action = Action(self.name, "PUT", parent_path, parent_payload, note="set parent on child room")
+        plan_or_apply_action(options, result, parent_action, partial(self.http.put, parent_path, json_body=parent_payload))
 
     @staticmethod
     def _power_levels_for_channel(channel: Channel) -> dict[str, Any]:

@@ -1,0 +1,738 @@
+from __future__ import annotations
+
+import argparse
+import html
+import ipaddress
+import secrets
+from collections.abc import Mapping
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+from guildbridge.diagnostics import format_error_report
+from guildbridge.gui_commands import (
+    CommandResult,
+    build_export_args,
+    build_import_args,
+    build_migrate_args,
+    build_redact_args,
+    build_validate_args,
+    command_preview,
+    run_cli_args,
+)
+from guildbridge.platforms import SUPPORTED_PLATFORMS, runtime_check
+from guildbridge.providers import provider_names
+from guildbridge.safety import APPLY_CONFIRMATION
+
+CSRF_FIELD = "csrf_token"
+AUTH_FIELD = "auth_token"
+AUTH_HEADER = "X-GuildBridge-Auth"
+DEFAULT_MAX_BODY_BYTES = 64 * 1024
+
+
+def _first(form: Mapping[str, list[str]], key: str, default: str = "") -> str:
+    values = form.get(key)
+    if not values:
+        return default
+    return values[0]
+
+
+def _checked(form: Mapping[str, list[str]], key: str) -> bool:
+    return key in form
+
+
+def _is_loopback_address(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return value.lower() in {"localhost", "localhost.localdomain"}
+
+
+def _is_loopback_host(value: str) -> bool:
+    if value in {"", "localhost"}:
+        return True
+    return _is_loopback_address(value)
+
+
+def _auth_token_valid(provided: str, expected: str) -> bool:
+    return bool(expected) and secrets.compare_digest(provided, expected)
+
+
+def _auth_input(auth_token: str) -> str:
+    if not auth_token:
+        return ""
+    return f'<input type="hidden" name="{AUTH_FIELD}" value="{html.escape(auth_token)}">'
+
+
+def validate_lan_auth_token(provided: str, expected: str) -> None:
+    if not _auth_token_valid(provided.strip(), expected):
+        raise ValueError("Invalid or missing web GUI auth token.")
+
+
+def validate_apply_confirmation(form: Mapping[str, list[str]]) -> None:
+    if _checked(form, "apply") and _first(form, "confirm_apply").strip() != APPLY_CONFIRMATION:
+        raise ValueError(f"Refusing --apply from web GUI without typing {APPLY_CONFIRMATION!r} in the confirmation field.")
+
+
+def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
+    validate_apply_confirmation(form)
+    action = _first(form, "action")
+    if action == "export":
+        return build_export_args(
+            _first(form, "provider_from", "discord"),
+            source_id=_first(form, "source_id"),
+            template=_first(form, "template"),
+            out=_first(form, "out", "community.template.json"),
+            include_user_overwrites=_checked(form, "include_user_overwrites"),
+        )
+    if action == "import":
+        return build_import_args(
+            _first(form, "provider_to", "discord"),
+            file=_first(form, "file"),
+            target_id=_first(form, "target_id"),
+            target_name=_first(form, "target_name"),
+            plan_out=_first(form, "plan_out", "-"),
+            plan_in=_first(form, "plan_in"),
+            journal_out=_first(form, "journal_out"),
+            resume_journal=_first(form, "resume_journal"),
+            audit_log_reason=_first(form, "audit_log_reason"),
+            redact=_checked(form, "redact"),
+            apply=_checked(form, "apply"),
+            force_invalid_template=_checked(form, "force_invalid_template"),
+        )
+    if action == "migrate":
+        return build_migrate_args(
+            _first(form, "provider_from", "discord"),
+            _first(form, "provider_to", "fluxer"),
+            source_id=_first(form, "source_id"),
+            template=_first(form, "template"),
+            target_id=_first(form, "target_id"),
+            target_name=_first(form, "target_name"),
+            template_out=_first(form, "template_out"),
+            plan_out=_first(form, "plan_out", "-"),
+            plan_in=_first(form, "plan_in"),
+            journal_out=_first(form, "journal_out"),
+            resume_journal=_first(form, "resume_journal"),
+            audit_log_reason=_first(form, "audit_log_reason"),
+            include_user_overwrites=_checked(form, "include_user_overwrites"),
+            redact=_checked(form, "redact"),
+            apply=_checked(form, "apply"),
+            force_invalid_template=_checked(form, "force_invalid_template"),
+        )
+    if action == "validate":
+        return build_validate_args(_first(form, "file"))
+    if action == "redact":
+        return build_redact_args(_first(form, "file"), out=_first(form, "out", "redacted.template.json"))
+    if action == "platforms":
+        return ["platforms", "--check"]
+    raise ValueError(f"Unknown web action: {action}")
+
+
+def _provider_options(selected: str = "") -> str:
+    options = []
+    for name in sorted(provider_names()):
+        mark = " selected" if name == selected else ""
+        options.append(f'<option value="{html.escape(name)}"{mark}>{html.escape(name)}</option>')
+    return "\n".join(options)
+
+
+def _text_field(
+    label: str,
+    name: str,
+    *,
+    value: str = "",
+    placeholder: str = "",
+    class_name: str = "",
+) -> str:
+    classes = f"field {class_name}".strip()
+    value_attr = f' value="{html.escape(value)}"' if value else ""
+    placeholder_attr = f' placeholder="{html.escape(placeholder)}"' if placeholder else ""
+    return (
+        f'<label class="{classes}"><span>{html.escape(label)}</span>'
+        f'<input name="{html.escape(name)}" type="text"{value_attr}{placeholder_attr} '
+        'autocomplete="off" autocapitalize="off" spellcheck="false"></label>'
+    )
+
+
+def _select_field(label: str, name: str, options: str) -> str:
+    return f'<label class="field"><span>{html.escape(label)}</span><select name="{html.escape(name)}">{options}</select></label>'
+
+
+def _checkbox_field(label: str, name: str, *, checked: bool = False, danger: bool = False) -> str:
+    checked_attr = " checked" if checked else ""
+    danger_class = " check--danger" if danger else ""
+    return (
+        f'<label class="check{danger_class}">'
+        f'<input type="checkbox" name="{html.escape(name)}"{checked_attr}>'
+        f"<span>{html.escape(label)}</span></label>"
+    )
+
+
+def _csrf_input(csrf_token: str) -> str:
+    return f'<input type="hidden" name="{CSRF_FIELD}" value="{html.escape(csrf_token)}">'
+
+
+def _apply_confirmation_label() -> str:
+    return _text_field(
+        "Apply confirmation",
+        "confirm_apply",
+        placeholder=f"Type {APPLY_CONFIRMATION} after selecting a reviewed plan",
+        class_name="field--full field--danger",
+    )
+
+
+def _render_result(result: CommandResult | None) -> str:
+    if result is None:
+        return ""
+    output = result.stdout + result.stderr
+    body = html.escape(output or "(no output)")
+    preview = html.escape(command_preview(result.args))
+    status = "timed out" if result.timed_out else "completed"
+    state = "timeout" if result.timed_out else "success" if result.returncode == 0 else "failed"
+    title = "Timed out" if result.timed_out else "Succeeded" if result.returncode == 0 else "Failed"
+    return f"""
+    <section id="result" class="panel output output--{state}" aria-live="polite">
+      <div class="panel__header">
+        <div>
+          <p class="eyebrow">Result</p>
+          <h2>{title}</h2>
+        </div>
+        <span class="status-pill status-pill--{state}">{status}</span>
+      </div>
+      <p class="command-preview"><code>{preview}</code></p>
+      <pre>{body}</pre>
+      <dl class="result-meta">
+        <div><dt>Exit code</dt><dd>{result.returncode}</dd></div>
+        <div><dt>Duration</dt><dd>{result.duration_seconds:.2f}s</dd></div>
+      </dl>
+    </section>
+    """
+
+
+def render_page(result: CommandResult | None = None, *, csrf_token: str = "", auth_token: str = "") -> str:
+    checks = runtime_check()
+    check_items = "".join(f"<li>{html.escape(str(key))}: {html.escape(str(value))}</li>" for key, value in checks.items())
+    platforms = "".join(
+        "<tr>"
+        f"<td>{html.escape(item.name)}</td>"
+        f"<td>{html.escape(item.family)}</td>"
+        f"<td>{html.escape(item.cli_support)}</td>"
+        f"<td>{html.escape(item.desktop_gui_support)}</td>"
+        f"<td>{html.escape(item.web_gui_support)}</td>"
+        f"<td>{html.escape(item.ci_coverage)}</td>"
+        "</tr>"
+        for item in SUPPORTED_PLATFORMS
+    )
+    providers_default = _provider_options("discord")
+    providers_fluxer = _provider_options("fluxer")
+    csrf = _csrf_input(csrf_token)
+    auth = _auth_input(auth_token)
+    apply_confirmation = _apply_confirmation_label()
+    runtime_badges = "".join(
+        f'<span class="badge">{html.escape(label)}: {html.escape(str(checks.get(key, "unknown")))}</span>'
+        for label, key in (("CLI", "cli_ready"), ("Desktop", "desktop_gui_ready"), ("Web", "web_gui_ready"))
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GuildBridge</title>
+  <style>
+    :root {{
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-soft: #f9fafb;
+      --border: #d7dee8;
+      --border-strong: #aeb8c7;
+      --text: #17202a;
+      --muted: #586577;
+      --brand: #1f5fbf;
+      --brand-strong: #174a96;
+      --success: #087443;
+      --danger: #b42318;
+      --warning: #a15c07;
+      --code-bg: #111827;
+    }}
+    * {{ box-sizing: border-box; }}
+    html {{ scroll-behavior: smooth; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }}
+    .skip-link {{
+      position: absolute;
+      left: 16px;
+      top: -48px;
+      z-index: 20;
+      background: var(--surface);
+      color: var(--brand-strong);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }}
+    .skip-link:focus {{ top: 12px; }}
+    header {{
+      background: #101820;
+      color: #ffffff;
+      border-bottom: 1px solid #253242;
+    }}
+    .header-inner {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }}
+    h1, h2, p {{ margin-top: 0; }}
+    h1 {{ margin-bottom: 4px; font-size: 28px; line-height: 1.15; }}
+    h2 {{ margin-bottom: 0; font-size: 20px; line-height: 1.2; }}
+    header p {{ margin-bottom: 0; color: #d6dee8; }}
+    .badge-row {{ display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 9px;
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      border-radius: 999px;
+      color: #eef4fb;
+      background: rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+      font-size: 13px;
+    }}
+    .tool-nav {{
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.97);
+      border-bottom: 1px solid var(--border);
+    }}
+    .tool-nav__inner {{
+      max-width: 1180px;
+      margin: 0 auto;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 8px 18px;
+      -webkit-overflow-scrolling: touch;
+    }}
+    .tool-nav a {{
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 650;
+    }}
+    .tool-nav a:focus-visible, .tool-nav a:hover {{ background: #eaf1fb; outline: none; }}
+    main {{ max-width: 1180px; margin: 0 auto; padding: 18px; }}
+    .panel {{
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      scroll-margin-top: 72px;
+    }}
+    .panel__header {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }}
+    .eyebrow {{
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      text-transform: uppercase;
+    }}
+    .form-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px 14px;
+      align-items: end;
+    }}
+    .field {{ display: grid; gap: 6px; font-size: 14px; font-weight: 650; }}
+    .field--full {{ grid-column: 1 / -1; }}
+    .field--danger span {{ color: var(--danger); }}
+    input, select, button {{ font: inherit; }}
+    input, select {{
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      padding: 9px 10px;
+      background: #ffffff;
+      color: var(--text);
+    }}
+    input:focus-visible, select:focus-visible, button:focus-visible {{
+      outline: 3px solid #9cc2ff;
+      outline-offset: 2px;
+    }}
+    .check {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface-soft);
+      font-weight: 650;
+    }}
+    .check input {{ width: 18px; min-height: 18px; }}
+    .check--danger {{ border-color: #f3b4ad; background: #fff7f5; color: var(--danger); }}
+    .form-actions {{
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }}
+    button {{
+      min-height: 44px;
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 16px;
+      background: var(--brand);
+      color: #ffffff;
+      font-weight: 750;
+      cursor: pointer;
+    }}
+    button:hover {{ background: var(--brand-strong); }}
+    .tool-stack {{ display: grid; gap: 14px; }}
+    pre {{
+      max-height: 420px;
+      overflow: auto;
+      background: var(--code-bg);
+      color: #dce8f5;
+      padding: 12px;
+      border-radius: 6px;
+    }}
+    .command-preview {{ overflow-wrap: anywhere; margin-bottom: 10px; }}
+    .status-pill {{
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 5px 10px;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 750;
+      text-transform: capitalize;
+    }}
+    .status-pill--success {{ background: var(--success); }}
+    .status-pill--failed {{ background: var(--danger); }}
+    .status-pill--timeout {{ background: var(--warning); }}
+    .output--success {{ border-left: 4px solid var(--success); }}
+    .output--failed {{ border-left: 4px solid var(--danger); }}
+    .output--timeout {{ border-left: 4px solid var(--warning); }}
+    .result-meta {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 8px;
+      margin: 10px 0 0;
+    }}
+    .result-meta div {{ border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--surface-soft); }}
+    .result-meta dt {{ color: var(--muted); font-size: 12px; font-weight: 750; text-transform: uppercase; }}
+    .result-meta dd {{ margin: 2px 0 0; font-weight: 750; }}
+    .runtime-list {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 8px;
+      padding: 0;
+      margin: 0 0 14px;
+      list-style: none;
+    }}
+    .runtime-list li {{ border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; background: var(--surface-soft); overflow-wrap: anywhere; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }}
+    table {{ border-collapse: collapse; width: 100%; min-width: 840px; background: var(--surface); }}
+    th, td {{ border-bottom: 1px solid var(--border); padding: 9px 10px; text-align: left; vertical-align: top; }}
+    th {{ background: var(--surface-soft); font-size: 13px; color: var(--muted); }}
+    tbody tr:last-child td {{ border-bottom: 0; }}
+    @media (max-width: 720px) {{
+      .header-inner {{ display: grid; padding: 18px 14px; }}
+      .badge-row {{ justify-content: flex-start; }}
+      main {{ padding: 14px 12px; }}
+      .tool-nav__inner {{ padding-inline: 12px; }}
+      .panel {{ border-radius: 0; border-left: 0; border-right: 0; margin-left: -12px; margin-right: -12px; padding: 14px 12px; }}
+      .panel__header {{ display: grid; }}
+      .form-grid {{ grid-template-columns: 1fr; }}
+      .form-actions {{ justify-content: stretch; }}
+      .form-actions button, button {{ width: 100%; }}
+      .runtime-list {{ grid-template-columns: 1fr; }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+      html {{ scroll-behavior: auto; }}
+    }}
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#migrate">Skip to migrate</a>
+  <header>
+    <div class="header-inner">
+      <div>
+        <h1>GuildBridge</h1>
+        <p>Community migration workspace</p>
+      </div>
+      <div class="badge-row" aria-label="Runtime readiness">{runtime_badges}</div>
+    </div>
+  </header>
+  <nav class="tool-nav" aria-label="GuildBridge tools">
+    <div class="tool-nav__inner">
+      <a href="#migrate">Migrate</a>
+      <a href="#export">Export</a>
+      <a href="#import">Import</a>
+      <a href="#tools">Validate</a>
+      <a href="#runtime">Runtime</a>
+      <a href="#platforms">Platforms</a>
+    </div>
+  </nav>
+  <main id="content">
+    {_render_result(result)}
+
+    <section id="migrate" class="panel">
+      <div class="panel__header"><h2>Migrate</h2></div>
+      <form method="post" action="/run" class="form-grid" aria-label="Migrate community">
+        {csrf}
+        {auth}
+        <input type="hidden" name="action" value="migrate">
+        {_select_field("From", "provider_from", providers_default)}
+        {_select_field("To", "provider_to", providers_fluxer)}
+        {_text_field("Source ID", "source_id")}
+        {_text_field("Template URL/code", "template")}
+        {_text_field("Target ID", "target_id")}
+        {_text_field("Target name", "target_name")}
+        {_text_field("Template output", "template_out")}
+        {_text_field("Plan/result output", "plan_out", value="-")}
+        {_text_field("Reviewed plan input", "plan_in")}
+        {_text_field("Journal output", "journal_out")}
+        {_text_field("Resume journal", "resume_journal")}
+        {_text_field("Audit reason", "audit_log_reason")}
+        {_checkbox_field("Redact before import", "redact", checked=True)}
+        {_checkbox_field("Include user overwrites", "include_user_overwrites")}
+        {_checkbox_field("Force invalid template after review", "force_invalid_template", danger=True)}
+        {_checkbox_field("Apply writes", "apply", danger=True)}
+        {apply_confirmation}
+        <div class="form-actions"><button type="submit">Run Migrate</button></div>
+      </form>
+    </section>
+
+    <section id="export" class="panel">
+      <div class="panel__header"><h2>Export</h2></div>
+      <form method="post" action="/run" class="form-grid" aria-label="Export community">
+        {csrf}
+        {auth}
+        <input type="hidden" name="action" value="export">
+        {_select_field("From", "provider_from", providers_default)}
+        {_text_field("Source ID", "source_id")}
+        {_text_field("Template URL/code", "template")}
+        {_text_field("Output", "out", value="community.template.json")}
+        {_checkbox_field("Include user overwrites", "include_user_overwrites")}
+        <div class="form-actions"><button type="submit">Run Export</button></div>
+      </form>
+    </section>
+
+    <section id="import" class="panel">
+      <div class="panel__header"><h2>Import</h2></div>
+      <form method="post" action="/run" class="form-grid" aria-label="Import community">
+        {csrf}
+        {auth}
+        <input type="hidden" name="action" value="import">
+        {_select_field("To", "provider_to", providers_default)}
+        {_text_field("Template file", "file")}
+        {_text_field("Target ID", "target_id")}
+        {_text_field("Target name", "target_name")}
+        {_text_field("Plan/result output", "plan_out", value="-")}
+        {_text_field("Reviewed plan input", "plan_in")}
+        {_text_field("Journal output", "journal_out")}
+        {_text_field("Resume journal", "resume_journal")}
+        {_text_field("Audit reason", "audit_log_reason")}
+        {_checkbox_field("Redact before import", "redact")}
+        {_checkbox_field("Force invalid template after review", "force_invalid_template", danger=True)}
+        {_checkbox_field("Apply writes", "apply", danger=True)}
+        {apply_confirmation}
+        <div class="form-actions"><button type="submit">Run Import</button></div>
+      </form>
+    </section>
+
+    <section id="tools" class="panel">
+      <div class="panel__header"><h2>Validate / Redact</h2></div>
+      <div class="tool-stack">
+        <form method="post" action="/run" class="form-grid" aria-label="Validate template">
+          {csrf}
+          {auth}
+          <input type="hidden" name="action" value="validate">
+          {_text_field("Template file", "file")}
+          <div class="form-actions"><button type="submit">Validate</button></div>
+        </form>
+        <form method="post" action="/run" class="form-grid" aria-label="Redact template">
+          {csrf}
+          {auth}
+          <input type="hidden" name="action" value="redact">
+          {_text_field("Template file", "file")}
+          {_text_field("Output", "out", value="redacted.template.json")}
+          <div class="form-actions"><button type="submit">Redact</button></div>
+        </form>
+      </div>
+    </section>
+
+    <section id="runtime" class="panel">
+      <div class="panel__header"><h2>Runtime</h2></div>
+      <ul class="runtime-list">{check_items}</ul>
+      <form method="post" action="/run">
+        {csrf}
+        {auth}
+        <input type="hidden" name="action" value="platforms">
+        <button type="submit">Run Platform Check</button>
+      </form>
+    </section>
+
+    <section id="platforms" class="panel">
+      <div class="panel__header"><h2>Supported Platforms</h2></div>
+      <div class="table-wrap" role="region" aria-label="Supported platform matrix" tabindex="0">
+        <table><thead><tr><th>Platform</th><th>Family</th><th>CLI</th><th>Desktop GUI</th><th>Web GUI</th><th>CI</th></tr></thead><tbody>{platforms}</tbody></table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
+class GuildBridgeWebHandler(BaseHTTPRequestHandler):
+    csrf_token = ""
+    auth_token = ""
+    require_auth = False
+    allow_lan = False
+    max_body_bytes = DEFAULT_MAX_BODY_BYTES
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path not in {"/", "/index.html"}:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if self.require_auth and not self._query_auth_ok(parsed.query):
+            self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing auth token")
+            return
+        self._send_html(render_page(csrf_token=self.csrf_token, auth_token=self.auth_token if self.require_auth else ""))
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path != "/run":
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if not self.allow_lan and not _is_loopback_address(str(self.client_address[0])):
+            self.send_error(HTTPStatus.FORBIDDEN, "LAN clients require --allow-lan")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid Content-Length")
+            return
+        if length > self.max_body_bytes:
+            self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body is too large")
+            return
+        raw = self.rfile.read(length).decode("utf-8")
+        form = parse_qs(raw, keep_blank_values=True)
+        if self.require_auth:
+            query_form = parse_qs(parsed.query, keep_blank_values=True)
+            provided = _first(form, AUTH_FIELD) or _first(query_form, AUTH_FIELD) or self.headers.get(AUTH_HEADER, "")
+            if not _auth_token_valid(provided.strip(), self.auth_token):
+                self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing auth token")
+                return
+        if _first(form, CSRF_FIELD) != self.csrf_token:
+            self.send_error(HTTPStatus.FORBIDDEN, "Invalid CSRF token")
+            return
+        try:
+            args = build_web_args(form)
+            result = run_cli_args(args)
+        except Exception as exc:
+            result = CommandResult((), (), 1, "", format_error_report(exc), 0.0)
+        self._send_html(render_page(result, csrf_token=self.csrf_token, auth_token=self.auth_token if self.require_auth else ""))
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def _send_html(self, body: str) -> None:
+        data = body.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def end_headers(self) -> None:
+        self._send_security_headers()
+        super().end_headers()
+
+    def _send_security_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+
+    def _query_auth_ok(self, query: str) -> bool:
+        form = parse_qs(query, keep_blank_values=True)
+        provided = _first(form, AUTH_FIELD) or self.headers.get(AUTH_HEADER, "")
+        return _auth_token_valid(provided.strip(), self.auth_token)
+
+
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    *,
+    allow_lan: bool = False,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    auth_token: str | None = None,
+) -> None:
+    if max_body_bytes < 1024:
+        raise ValueError("max_body_bytes must be at least 1024")
+    if not allow_lan and not _is_loopback_host(host):
+        raise ValueError("Refusing to bind web GUI to a non-loopback host without --allow-lan.")
+    require_auth = allow_lan
+    configured_auth_token = auth_token is not None and bool(auth_token.strip())
+    token = (auth_token or "").strip()
+    if require_auth and not token:
+        token = secrets.token_urlsafe(24)
+    GuildBridgeWebHandler.csrf_token = secrets.token_urlsafe(32)
+    GuildBridgeWebHandler.auth_token = token
+    GuildBridgeWebHandler.require_auth = require_auth
+    GuildBridgeWebHandler.allow_lan = allow_lan
+    GuildBridgeWebHandler.max_body_bytes = max_body_bytes
+    server = ThreadingHTTPServer((host, port), GuildBridgeWebHandler)
+    scope = "LAN-enabled" if allow_lan else "local-only"
+    print(f"GuildBridge web GUI ({scope}): http://{host}:{port}")
+    if require_auth:
+        if configured_auth_token:
+            print(f"LAN auth is enabled. Open http://{host}:{port}/?{AUTH_FIELD}=<token> with your configured token.")
+        else:
+            print(f"Generated LAN auth token: {token}")
+            print(f"Open http://{host}:{port}/?{AUTH_FIELD}=<token>. Request logs do not include the token.")
+    server.serve_forever()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run the GuildBridge browser-based GUI.")
+    parser.add_argument("--host", default="127.0.0.1", help="host/interface to bind")
+    parser.add_argument("--port", type=int, default=8765, help="port to bind")
+    parser.add_argument("--allow-lan", action="store_true", help="allow binding to non-loopback interfaces and serving LAN clients")
+    parser.add_argument("--max-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES, help="maximum accepted POST body size")
+    parser.add_argument("--auth-token", help="LAN auth token; generated automatically when --allow-lan is used and this is omitted")
+    args = parser.parse_args(argv)
+    serve(args.host, args.port, allow_lan=args.allow_lan, max_body_bytes=args.max_body_bytes, auth_token=args.auth_token)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

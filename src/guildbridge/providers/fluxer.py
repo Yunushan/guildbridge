@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from functools import partial
 from typing import Any
 
 from guildbridge.config import RuntimeConfig
@@ -19,7 +20,7 @@ from guildbridge.models import (
 from guildbridge.permissions import fluxer_to_neutral, neutral_to_fluxer
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider
+from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id, safe_int
 
 FLUXER_CHANNEL_TYPES = {
     0: "text",
@@ -42,7 +43,14 @@ class FluxerProvider(Provider):
 
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)
-        self.http = HttpClient(config.fluxer_api_base, token=config.fluxer_token, auth_scheme="Bot", timeout=config.request_timeout)
+        self.http = HttpClient(
+            config.fluxer_api_base,
+            token=config.fluxer_token,
+            auth_scheme="Bot",
+            timeout=config.request_timeout,
+            max_retries=config.max_retries,
+            user_agent=config.user_agent,
+        )
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if not options.source_id:
@@ -62,12 +70,10 @@ class FluxerProvider(Provider):
         guild_id = options.target_id
         if not guild_id:
             payload = {"name": normalize_name(options.target_name or template.name, max_len=100), "empty_features": True}
-            result.actions.append(Action(self.name, "POST", "/guilds", payload, note="create target Fluxer guild"))
+            action = Action(self.name, "POST", "/guilds", payload, note="create target Fluxer guild")
+            created = plan_or_apply_action(options, result, action, lambda: self.http.post("/guilds", json_body=payload))
             if options.apply:
-                created = self.http.post("/guilds", json_body=payload)
-                guild_id = str(created.get("id") or created.get("guild", {}).get("id"))
-                if not guild_id:
-                    raise ValueError(f"Fluxer guild create response did not contain an id: {created!r}")
+                guild_id = require_response_id(created, "Fluxer guild create", "id", "guild.id", "guild._id")
             else:
                 guild_id = "dry_fluxer_guild"
         result.id_map["guild"] = guild_id
@@ -86,10 +92,10 @@ class FluxerProvider(Provider):
                     "mentionable": bool(role.mentionable),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/guilds/{guild_id}/roles", payload))
+            action = Action(self.name, "POST", f"/guilds/{guild_id}/roles", payload)
+            created = plan_or_apply_action(options, result, action, partial(self.http.post, f"/guilds/{guild_id}/roles", json_body=payload))
             if options.apply:
-                created = self.http.post(f"/guilds/{guild_id}/roles", json_body=payload)
-                role_map[role.id] = str(created.get("id") or created.get("role", {}).get("id"))
+                role_map[role.id] = require_response_id(created, "Fluxer role create", "id", "role.id", "role._id", "role_id")
             else:
                 role_map[role.id] = f"dry_role_{role.id}"
 
@@ -102,10 +108,15 @@ class FluxerProvider(Provider):
                     "permission_overwrites": self._overwrites_to_fluxer(cat.permission_overwrites, role_map),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/guilds/{guild_id}/channels", payload))
+            action = Action(self.name, "POST", f"/guilds/{guild_id}/channels", payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, f"/guilds/{guild_id}/channels", json_body=payload),
+            )
             if options.apply:
-                created = self.http.post(f"/guilds/{guild_id}/channels", json_body=payload)
-                category_map[cat.id] = str(created.get("id") or created.get("channel", {}).get("id"))
+                category_map[cat.id] = require_response_id(created, "Fluxer category create", "id", "channel.id", "channel._id", "channel_id")
             else:
                 category_map[cat.id] = f"dry_category_{cat.id}"
 
@@ -126,10 +137,19 @@ class FluxerProvider(Provider):
                     "permission_overwrites": self._overwrites_to_fluxer(channel.permission_overwrites, role_map),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/guilds/{guild_id}/channels", payload))
+            if channel.parent_id and channel.parent_id not in category_map:
+                result.warnings.append(
+                    f"Channel {channel.name!r} references missing category {channel.parent_id!r}; creating without a parent."
+                )
+            action = Action(self.name, "POST", f"/guilds/{guild_id}/channels", payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, f"/guilds/{guild_id}/channels", json_body=payload),
+            )
             if options.apply:
-                created = self.http.post(f"/guilds/{guild_id}/channels", json_body=payload)
-                result.id_map[channel.id] = str(created.get("id") or created.get("channel", {}).get("id"))
+                result.id_map[channel.id] = require_response_id(created, "Fluxer channel create", "id", "channel.id", "channel._id", "channel_id")
             else:
                 result.id_map[channel.id] = f"dry_channel_{channel.id}"
 
@@ -165,7 +185,7 @@ class FluxerProvider(Provider):
         out_channels: list[Channel] = []
         raw_channels = list(channels or [])
         for ch in raw_channels:
-            ctype = FLUXER_CHANNEL_TYPES.get(int(ch.get("type", 0)), "unknown")
+            ctype = FLUXER_CHANNEL_TYPES.get(safe_int(ch.get("type"), -1), "unknown")
             raw_id = str(ch.get("id") or ch.get("channel_id") or ch.get("name"))
             if ctype == "category":
                 lid = local_id("cat", self.name, raw_id)
@@ -179,7 +199,7 @@ class FluxerProvider(Provider):
                     )
                 )
         for ch in raw_channels:
-            ctype = FLUXER_CHANNEL_TYPES.get(int(ch.get("type", 0)), "unknown")
+            ctype = FLUXER_CHANNEL_TYPES.get(safe_int(ch.get("type"), -1), "unknown")
             if ctype in {"category", "unknown"}:
                 continue
             raw_id = str(ch.get("id") or ch.get("channel_id") or ch.get("name"))
@@ -198,6 +218,11 @@ class FluxerProvider(Provider):
                     permission_overwrites=self._overwrites_from_fluxer(ch.get("permission_overwrites", []), role_id_map, options),
                 )
             )
+        warnings = [self.supported_warning(), "Fluxer DM/group-DM channels are not exported as server structure."]
+        if options.include_user_overwrites:
+            warnings.append("User/member-specific permission overwrites cannot be represented safely and were dropped.")
+        else:
+            warnings.append("User/member-specific permission overwrites were dropped for privacy.")
         return CommunityTemplate(
             name=normalize_name(guild.get("name") or "Fluxer community", max_len=100),
             description=guild.get("description"),
@@ -206,25 +231,19 @@ class FluxerProvider(Provider):
             roles=out_roles,
             categories=out_categories,
             channels=out_channels,
-            warnings=[self.supported_warning(), "Fluxer DM/group-DM channels are not exported as server structure."],
+            warnings=warnings,
         )
 
     def _overwrites_from_fluxer(self, overwrites: Iterable[dict[str, Any]], role_id_map: dict[str, str], options: ExportOptions) -> list[PermissionOverwrite]:
         output: list[PermissionOverwrite] = []
         for ow in overwrites or []:
-            ow_type = int(ow.get("type", 0))
-            raw_id = str(ow.get("id") or ow.get("role_id") or ow.get("target_id"))
-            if ow_type == 1 and not options.include_user_overwrites:
+            raw_type = ow.get("type")
+            ow_type = safe_int(raw_type)
+            raw_value = ow.get("id") or ow.get("role_id") or ow.get("target_id")
+            if raw_value in {None, ""}:
                 continue
-            if ow_type == 1:
-                output.append(
-                    PermissionOverwrite(
-                        target_type="role",
-                        target_id=f"user_overwrite_{hash_id(self.name, raw_id, 8)}",
-                        allow=fluxer_to_neutral(ow.get("allow")),
-                        deny=fluxer_to_neutral(ow.get("deny")),
-                    )
-                )
+            raw_id = str(raw_value)
+            if ow_type == 1 or str(raw_type).lower() in {"member", "user"}:
                 continue
             output.append(
                 PermissionOverwrite(

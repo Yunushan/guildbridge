@@ -1,5 +1,6 @@
 stages:
   - test
+  - package
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -14,8 +15,25 @@ test:
   stage: test
   before_script:
     - python -m pip install --upgrade pip
-    - python -m pip install -e .[dev]
+    - python -m pip install -e ".[dev]"
   script:
-    - ruff check src tests
-    - mypy src
-    - pytest -q
+    - python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+    - python -m mypy src
+    - python -m pytest -q
+    - python scripts/check-platform.py --require cli --format json
+
+package:
+  image: python:3.12
+  stage: package
+  before_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install -e ".[dev]"
+  script:
+    - python -m build
+    - python -m twine check dist/*
+    - python scripts/verify-dist.py
+  artifacts:
+    when: always
+    paths:
+      - dist/
+    expire_in: 14 days

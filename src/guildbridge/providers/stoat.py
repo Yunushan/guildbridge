@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from functools import partial
 from typing import Any
 
 from guildbridge.config import RuntimeConfig
@@ -26,7 +27,7 @@ from guildbridge.utils import (
     without_none,
 )
 
-from .base import ExportOptions, ImportOptions, Provider
+from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id
 
 STOAT_NAME_MAX = 32
 
@@ -44,7 +45,13 @@ class StoatProvider(Provider):
 
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)
-        self.http = HttpClient(config.stoat_api_base, token=None, timeout=config.request_timeout)
+        self.http = HttpClient(
+            config.stoat_api_base,
+            token=None,
+            timeout=config.request_timeout,
+            max_retries=config.max_retries,
+            user_agent=config.user_agent,
+        )
 
     def _headers(self) -> dict[str, str]:
         if not self.config.stoat_token:
@@ -69,12 +76,15 @@ class StoatProvider(Provider):
         server_id = options.target_id
         if not server_id:
             payload = {"name": normalize_name(options.target_name or template.name, max_len=STOAT_NAME_MAX)}
-            result.actions.append(Action(self.name, "POST", "/servers/create", payload, note="create target Stoat server"))
+            action = Action(self.name, "POST", "/servers/create", payload, note="create target Stoat server")
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, "/servers/create", json_body=payload, headers=self._headers()),
+            )
             if options.apply:
-                created = self.http.post("/servers/create", json_body=payload, headers=self._headers())
-                server_id = str(created.get("_id") or created.get("id"))
-                if not server_id:
-                    raise ValueError(f"Stoat server create response did not contain an id: {created!r}")
+                server_id = require_response_id(created, "Stoat server create", "_id", "id")
             else:
                 server_id = "dry_stoat_server"
         result.id_map["server"] = server_id
@@ -86,10 +96,15 @@ class StoatProvider(Provider):
                 role_map[role.id] = "default"
                 continue
             create_payload = {"name": normalize_name(role.name, max_len=STOAT_NAME_MAX, fallback="role")}
-            result.actions.append(Action(self.name, "POST", f"/servers/{server_id}/roles", create_payload))
+            create_action = Action(self.name, "POST", f"/servers/{server_id}/roles", create_payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                create_action,
+                partial(self.http.post, f"/servers/{server_id}/roles", json_body=create_payload, headers=self._headers()),
+            )
             if options.apply:
-                created = self.http.post(f"/servers/{server_id}/roles", json_body=create_payload, headers=self._headers())
-                role_id = str(created.get("id") or created.get("_id") or created.get("role_id") or created.get("role", {}).get("id"))
+                role_id = require_response_id(created, "Stoat role create", "id", "_id", "role_id", "role.id", "role._id")
             else:
                 role_id = f"dry_role_{role.id}"
             role_map[role.id] = role_id
@@ -104,11 +119,16 @@ class StoatProvider(Provider):
                     "rank": role.position,
                 }
             )
-            result.actions.append(Action(self.name, "PATCH", f"/servers/{server_id}/roles/{role_id}", patch_payload))
-            if options.apply:
-                self.http.patch(f"/servers/{server_id}/roles/{role_id}", json_body=patch_payload, headers=self._headers())
+            patch_action = Action(self.name, "PATCH", f"/servers/{server_id}/roles/{role_id}", patch_payload)
+            plan_or_apply_action(
+                options,
+                result,
+                patch_action,
+                partial(self.http.patch, f"/servers/{server_id}/roles/{role_id}", json_body=patch_payload, headers=self._headers()),
+            )
 
         channel_map: dict[str, str] = {}
+        valid_category_ids = {cat.id for cat in template.categories}
         for channel in sorted(template.channels, key=lambda c: (c.position is None, c.position or 0)):
             if channel.type not in {"text", "voice"}:
                 result.warnings.append(f"Skipping unsupported Stoat channel type {channel.type!r} for {channel.name!r}.")
@@ -121,13 +141,22 @@ class StoatProvider(Provider):
                     "nsfw": bool(channel.nsfw),
                 }
             )
-            result.actions.append(Action(self.name, "POST", f"/servers/{server_id}/channels", payload))
+            action = Action(self.name, "POST", f"/servers/{server_id}/channels", payload)
+            created = plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.post, f"/servers/{server_id}/channels", json_body=payload, headers=self._headers()),
+            )
             if options.apply:
-                created = self.http.post(f"/servers/{server_id}/channels", json_body=payload, headers=self._headers())
-                channel_id = str(created.get("_id") or created.get("id"))
+                channel_id = require_response_id(created, "Stoat channel create", "_id", "id", "channel._id", "channel.id")
             else:
                 channel_id = f"dry_channel_{channel.id}"
             channel_map[channel.id] = channel_id
+            if channel.parent_id and channel.parent_id not in valid_category_ids:
+                result.warnings.append(
+                    f"Channel {channel.name!r} references missing category {channel.parent_id!r}; leaving it uncategorized."
+                )
 
             # Role permission patches are channel-local in Stoat/Revolt-style APIs.
             role_perms: dict[str, dict[str, int]] = {}
@@ -138,9 +167,13 @@ class StoatProvider(Provider):
                 role_perms[target] = {"a": neutral_to_stoat(ow.allow), "d": neutral_to_stoat(ow.deny)}
             if role_perms:
                 patch_payload = {"role_permissions": role_perms}
-                result.actions.append(Action(self.name, "PATCH", f"/channels/{channel_id}", patch_payload))
-                if options.apply:
-                    self.http.patch(f"/channels/{channel_id}", json_body=patch_payload, headers=self._headers())
+                action = Action(self.name, "PATCH", f"/channels/{channel_id}", patch_payload)
+                plan_or_apply_action(
+                    options,
+                    result,
+                    action,
+                    partial(self.http.patch, f"/channels/{channel_id}", json_body=patch_payload, headers=self._headers()),
+                )
 
         # Stoat/Revolt categories are a server layout property. They are updated after channels exist.
         if template.categories:
@@ -149,9 +182,13 @@ class StoatProvider(Provider):
                 child_ids = [channel_map[ch.id] for ch in template.channels if ch.parent_id == cat.id and ch.id in channel_map]
                 categories_payload.append({"id": new_ulid(), "title": normalize_name(cat.name, max_len=STOAT_NAME_MAX), "channels": child_ids})
             categories_patch: dict[str, Any] = {"categories": categories_payload}
-            result.actions.append(Action(self.name, "PATCH", f"/servers/{server_id}", categories_patch, note="set Stoat category layout"))
-            if options.apply:
-                self.http.patch(f"/servers/{server_id}", json_body=categories_patch, headers=self._headers())
+            action = Action(self.name, "PATCH", f"/servers/{server_id}", categories_patch, note="set Stoat category layout")
+            plan_or_apply_action(
+                options,
+                result,
+                action,
+                partial(self.http.patch, f"/servers/{server_id}", json_body=categories_patch, headers=self._headers()),
+            )
 
         result.id_map.update(role_map)
         result.id_map.update(channel_map)

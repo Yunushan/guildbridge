@@ -27,7 +27,8 @@ Never commit:
 3. Run `guildbridge redact` if the template was hand-edited.
 4. Run an import without `--apply`.
 5. Review the generated plan.
-6. Run again with `--apply` only after review.
+6. Run again with `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>` only after review.
+7. Keep the generated apply journal with your migration notes. If a run fails, inspect the journal before retrying and use `--resume-journal` to verify the retry matches the failed run and reviewed plan.
 
 ## Scope
 

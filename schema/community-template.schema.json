@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/guildbridge/community-template.schema.json",
+  "$id": "https://raw.githubusercontent.com/Yunushan/guildbridge/main/schema/community-template.schema.json",
   "title": "GuildBridge Community Template",
   "type": "object",
   "required": ["schema", "version", "name", "privacy", "roles", "categories", "channels"],
@@ -40,14 +40,38 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "permissionName": {
+      "enum": [
+        "administrator",
+        "manage_server",
+        "manage_channels",
+        "manage_roles",
+        "manage_permissions",
+        "kick_members",
+        "ban_members",
+        "timeout_members",
+        "view_channel",
+        "send_messages",
+        "read_history",
+        "manage_messages",
+        "mention_everyone",
+        "attach_files",
+        "connect",
+        "speak",
+        "stream",
+        "video",
+        "create_invite",
+        "manage_webhooks"
+      ]
+    },
     "permissionOverwrite": {
       "type": "object",
       "required": ["target_type", "target_id", "allow", "deny"],
       "properties": {
         "target_type": { "enum": ["role", "everyone"] },
         "target_id": { "type": "string" },
-        "allow": { "type": "array", "items": { "type": "string" } },
-        "deny": { "type": "array", "items": { "type": "string" } }
+        "allow": { "type": "array", "items": { "$ref": "#/$defs/permissionName" } },
+        "deny": { "type": "array", "items": { "$ref": "#/$defs/permissionName" } }
       },
       "additionalProperties": false
     },
@@ -57,7 +81,7 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "permissions": { "type": "array", "items": { "type": "string" } },
+        "permissions": { "type": "array", "items": { "$ref": "#/$defs/permissionName" } },
         "color": { "type": ["integer", "string", "null"] },
         "position": { "type": ["integer", "null"] },
         "hoist": { "type": "boolean" },

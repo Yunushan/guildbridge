@@ -25,6 +25,7 @@ dist/
 htmlcov/
 
 # Generated migration artifacts
+.guildbridge/
 *.plan.json
 *.result.json
 community.template.json

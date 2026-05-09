@@ -73,6 +73,51 @@ STOAT_TO_NEUTRAL: dict[int, str] = {
 }
 NEUTRAL_TO_STOAT: dict[str, int] = {v: k for k, v in STOAT_TO_NEUTRAL.items()}
 
+ROCKET_CHAT_TO_NEUTRAL: dict[str, str] = {
+    "admin": "administrator",
+    "view-room-administration": "manage_server",
+    "edit-room": "manage_channels",
+    "create-c": "manage_channels",
+    "create-p": "manage_channels",
+    "manage-roles": "manage_roles",
+    "set-permission": "manage_permissions",
+    "view-c-room": "view_channel",
+    "view-p-room": "view_channel",
+    "post-readonly": "send_messages",
+    "send-message": "send_messages",
+    "delete-message": "manage_messages",
+    "mention-all": "mention_everyone",
+    "upload-file": "attach_files",
+}
+NEUTRAL_TO_ROCKET_CHAT: dict[str, str] = {
+    "administrator": "admin",
+    "manage_server": "view-room-administration",
+    "manage_channels": "create-c",
+    "manage_roles": "manage-roles",
+    "manage_permissions": "set-permission",
+    "view_channel": "view-c-room",
+    "send_messages": "send-message",
+    "manage_messages": "delete-message",
+    "mention_everyone": "mention-all",
+    "attach_files": "upload-file",
+}
+
+MUMBLE_TO_NEUTRAL: dict[str, str] = {
+    "write": "manage_permissions",
+    "traverse": "view_channel",
+    "enter": "connect",
+    "speak": "speak",
+    "mute-deafen": "manage_roles",
+    "move": "manage_channels",
+    "make-channel": "manage_channels",
+    "link-channel": "manage_channels",
+    "register": "manage_server",
+    "kick": "kick_members",
+    "ban": "ban_members",
+    "text-message": "send_messages",
+}
+NEUTRAL_TO_MUMBLE: dict[str, str] = {v: k for k, v in MUMBLE_TO_NEUTRAL.items()}
+
 
 def bitset_to_names(value: int | str | None, mapping: dict[int, str]) -> list[str]:
     try:
@@ -115,3 +160,44 @@ def stoat_to_neutral(value: int | str | None) -> list[str]:
 
 def neutral_to_stoat(names: Iterable[str]) -> int:
     return names_to_bitset(names, NEUTRAL_TO_STOAT)
+
+
+def rocket_chat_to_neutral(names: Iterable[str] | str | None) -> list[str]:
+    return string_names_to_neutral(names, ROCKET_CHAT_TO_NEUTRAL)
+
+
+def neutral_to_rocket_chat(names: Iterable[str]) -> list[str]:
+    return neutral_to_string_names(names, NEUTRAL_TO_ROCKET_CHAT)
+
+
+def mumble_to_neutral(names: Iterable[str] | str | None) -> list[str]:
+    return string_names_to_neutral(names, MUMBLE_TO_NEUTRAL)
+
+
+def neutral_to_mumble(names: Iterable[str]) -> list[str]:
+    return neutral_to_string_names(names, NEUTRAL_TO_MUMBLE)
+
+
+def string_names_to_neutral(names: Iterable[str] | str | None, mapping: dict[str, str]) -> list[str]:
+    if names is None:
+        return []
+    raw_names: Iterable[str]
+    if isinstance(names, str):
+        raw_names = [names]
+    else:
+        raw_names = names
+    output: list[str] = []
+    for name in raw_names:
+        mapped = mapping.get(str(name))
+        if mapped and mapped not in output:
+            output.append(mapped)
+    return output
+
+
+def neutral_to_string_names(names: Iterable[str], mapping: dict[str, str]) -> list[str]:
+    output: list[str] = []
+    for name in names:
+        mapped = mapping.get(name)
+        if mapped and mapped not in output:
+            output.append(mapped)
+    return output

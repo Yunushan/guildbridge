@@ -1,0 +1,47 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Lint
+        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+      - name: Type check
+        run: python -m mypy src
+      - name: Test
+        run: python -m pytest -q
+      - name: Platform check
+        run: python scripts/check-platform.py --require cli --format json
+      - name: Build distributions
+        run: python -m build
+      - name: Check distributions
+        run: python -m twine check dist/*
+      - name: Verify wheel install
+        run: python scripts/verify-dist.py
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: guildbridge-dist
+          path: dist/*
+          if-no-files-found: error

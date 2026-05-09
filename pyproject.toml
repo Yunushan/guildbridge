@@ -1,21 +1,26 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "guildbridge"
 version = "0.1.0"
-description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, and Matrix/Element."
+description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, Matrix/Element, Rocket.Chat, and Mumble."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "GuildBridge contributors"}]
-keywords = ["discord", "fluxer", "stoat", "matrix", "element", "migration", "template", "community", "server"]
+keywords = ["discord", "fluxer", "stoat", "matrix", "element", "rocket.chat", "mumble", "migration", "template", "community", "server"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
+  "Environment :: Web Environment",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: BSD",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -30,20 +35,26 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2.1",
   "pytest>=8.0.0",
   "jsonschema>=4.22.0",
   "ruff>=0.5.0",
   "mypy>=1.10.0",
+  "twine>=5.1.0",
   "types-requests>=2.31.0",
 ]
 
 [project.scripts]
 guildbridge = "guildbridge.cli:main"
+guildbridge-gui = "guildbridge.gui:main"
+guildbridge-web = "guildbridge.web:main"
 
 [project.urls]
-Homepage = "https://github.com/YOUR_ORG/guildbridge"
-Repository = "https://github.com/YOUR_ORG/guildbridge"
-Issues = "https://github.com/YOUR_ORG/guildbridge/issues"
+Homepage = "https://github.com/Yunushan/guildbridge"
+Repository = "https://github.com/Yunushan/guildbridge"
+Issues = "https://github.com/Yunushan/guildbridge/issues"
+Documentation = "https://github.com/Yunushan/guildbridge#readme"
+Security = "https://github.com/Yunushan/guildbridge/security"
 
 [tool.setuptools.packages.find]
 where = ["src"]

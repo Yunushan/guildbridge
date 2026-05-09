@@ -21,7 +21,7 @@
     {
       "id": "everyone",
       "name": "@everyone",
-      "permissions": ["view_channel", "read_message_history"],
+      "permissions": ["view_channel", "read_history"],
       "color": null,
       "position": 0,
       "hoist": false,

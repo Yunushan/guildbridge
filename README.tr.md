@@ -1,0 +1,545 @@
+<div align="center">
+
+# GuildBridge
+
+**Discord, Stoat, Fluxer, Matrix/Element, Rocket.Chat ve Mumble icin gizlilik odakli sunucu/topluluk sablonu ice-disa aktarma araci.**
+
+Uyeleri, mesajlari, DM'leri, token'lari veya ham kullanici kimliklerini acik kaynak sablonlara koymadan topluluk yapisini ice aktarir, disa aktarir, redakte eder, dogrular ve tasir.
+
+![python](https://img.shields.io/badge/python-3.10%2B-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![build](https://img.shields.io/badge/build-ready-brightgreen) ![privacy](https://img.shields.io/badge/privacy-redacted_by_default-success)
+
+**dil** [English](README.md) · [Turkce](README.tr.md)
+
+**saglayicilar** Discord · Fluxer · Stoat · Matrix/Element · Rocket.Chat · Mumble  
+**arayuzler** CLI · masaustu GUI · web/mobil GUI  
+**islemler** export · import · migrate · validate · redact · dry-run · apply
+
+[Hizli Baslangic](#hizli-baslangic) • [GUI](#gui) • [Desteklenen Platformlar](#desteklenen-platformlar) • [Desteklenen Yollar](#desteklenen-yollar) • [Gizlilik Modeli](#gizlilik-modeli) • [Kurtarma Rehberi](#kurtarma-rehberi) • [Yayin Hijyeni](#yayin-hijyeni) • [Yapilandirma](#yapilandirma) • [Ornekler](#ornekler) • [Saglayici Notlari](#saglayici-notlari) • [Katki](#katki) • [Lisans](#lisans)
+
+</div>
+
+---
+
+## GuildBridge nedir?
+
+GuildBridge topluluk/sunucu duzenini tarafsiz bir JSON formatina donusturur ve sonra bu yapiyi baska bir platforma aktarir.
+
+Odak noktasi **tasinabilir yapi**dir; gozetim veya veri klonlama degildir:
+
+- roller ve guvenli rol izinleri
+- kategoriler / kanal gruplari / Matrix space yapilari
+- hedef platform destekliyorsa metin, ses, duyuru, forum, stage ve baglanti benzeri kanallar
+- guvenli kanal konulari ve temel kanal ayarlari
+- mumkun oldugu kadar rol/everyone izin overwrite kayitlari
+- herhangi bir yazma isleminden once dry-run planlari
+
+Bilerek **disa aktarilmayan** veriler:
+
+- mesajlar veya mesaj gecmisi
+- uyeler, uye listeleri, DM'ler, arkadas listeleri, presence bilgisi, e-postalar, IP'ler veya kisisel profiller
+- bot token'lari, access token'lari, oturum token'lari veya cookie'ler
+- uretilen sablonlarda ham saglayici ID'leri; kaynak ID'ler hash'lenir/yerellestirilir
+- kullanici/uyeye ozel izin overwrite kayitlari; diagnostics istense bile guvensiz kullanici hedefleri dusurulur
+
+## En iyi proje adi
+
+Onerilen ad: **GuildBridge**.
+
+Neden uygun:
+
+- "Guild", Discord benzeri topluluklar ve oyun/sohbet platformlari tarafindan kolay anlasilir.
+- "Bridge", ice/disa aktarma amacini netlestirir.
+- CLI komutu ve paket adi icin yeterince kisadir: `guildbridge`.
+- Projeyi tek bir platforma kilitlemez.
+
+Alternatif adlar:
+
+- **ServerPort** - anlasilir, fakat daha cok altyapi/ag izlenimi verir.
+- **CommunityBridge** - daha genis, fakat daha uzun.
+- **ChanFerry** - akilda kalici, fakat daha az profesyonel.
+- **SpaceBridge** - Matrix/Element icin iyi, Discord/Fluxer/Stoat icin daha az acik.
+
+## Hizli Baslangic
+
+### 1. Yerel kurulum
+
+```bash
+git clone https://github.com/Yunushan/guildbridge.git
+cd guildbridge
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+python -m pip install -e ".[dev]"
+```
+
+### 2. Token'lari commit etmeden yapilandir
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+`.env` dosyasini asla commit etmeyin. Depodaki `.gitignore` bunu dislar.
+
+### 3. Saglayicilari gor
+
+```bash
+guildbridge providers
+```
+
+### 4. Platform destegini kontrol et
+
+```bash
+guildbridge platforms --check
+```
+
+### 5. GUI'yi baslat
+
+```bash
+guildbridge-gui
+```
+
+Tarayici ve mobil erisim icin:
+
+```bash
+guildbridge-web
+```
+
+### 6. Discord sunucu sablonunu tarafsiz JSON'a aktar
+
+```bash
+guildbridge export \
+  --from discord \
+  --template "https://discord.new/your-template-code" \
+  --out community.template.json
+```
+
+### 7. Fluxer'a ice aktarma dry-run'i olustur
+
+```bash
+guildbridge import \
+  --to fluxer \
+  --file community.template.json \
+  --target-name "Imported Community" \
+  --plan-out fluxer.plan.json
+```
+
+### 8. Plani inceledikten sonra uygula
+
+```bash
+guildbridge import \
+  --to fluxer \
+  --file community.template.json \
+  --target-name "Imported Community" \
+  --plan-out fluxer.result.json \
+  --plan-in fluxer.plan.json \
+  --apply \
+  --confirm-apply APPLY
+```
+
+Onayli apply calistirmalari `--plan-in` ile incelenmis bir dry-run plani gerektirir. GuildBridge yazma yapmadan once aday plani yeniden hesaplar; komut, hedef, sablon parmak izi, islem sayisi ve islem hash'i incelenmis dosya ile ayni degilse yazmayi reddeder. Apply calistirmalari, saglayici yazmalari baslamadan once yerel bir journal da yazar. Varsayilan journal konumu `.guildbridge/journals/` altidir; belirli bir yol icin `--journal-out path/to/journal.json` kullanin. Bir calistirma yarida kalirsa yeniden denemeden once journal'i inceleyin ve GuildBridge'in ayni komut, hedef, saglayici, sablon parmak izi ve incelenmis plan hash'ini dogrulamasi icin `--resume-journal path/to/journal.json` gecin.
+
+## GUI
+
+GuildBridge, CLI ile ayni export, import, migrate, validate ve redact komutlarini saran iki GUI modu icerir.
+
+Masaustu GUI:
+
+```bash
+guildbridge-gui
+```
+
+Tarayici/mobil GUI:
+
+```bash
+guildbridge-web
+```
+
+Tarayici GUI varsayilan olarak `http://127.0.0.1:8765` adresinde baslar. Telefon ve tablet tarayicilari icin dokunmaya uygun kontroller, sabit gezinme, sonuc durum panelleri ve kaydirma guvenli platform tablolari olan responsive bir duzen kullanir. Ayrica her sunucu icin CSRF token'i kullanir, POST govde boyutunu sinirlar, temel tarayici guvenlik basliklari ekler ve tarayicidan tetiklenen yazma islemlerinin `--apply` ile calismasi icin `APPLY` yazilmasini zorunlu tutar.
+
+Her iki GUI modu da import ve migrate icin CLI ile ayni apply guvenligi kontrollerini sunar: incelenmis plan girdisi, journal ciktisi, resume journal, inceleme sonrasi gecersiz sablonu zorlama ve yazmalari uygulama. Apply islemleri incelenmis plan yolu ve yazilmis `APPLY` ister; GuildBridge saglayici yazmalari baslamadan once incelenmis plani yine dogrular.
+
+Ayni agdaki telefon veya tabletlerin baglanmasini sadece guvenilir aglarda istiyorsaniz `--host 0.0.0.0 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"` kullanin. LAN modu her istekte auth token'i ister; `--auth-token` vermediginizde GuildBridge bir token uretir ve baslangicta bir kez yazdirir.
+
+Alternatif baslatma komutlari:
+
+```bash
+python -m guildbridge.gui
+python -m guildbridge.web
+```
+
+Masaustu GUI, Tkinter kurulu ve masaustu oturumu olan platformlarda calisir. Android ve iOS, `guildbridge-web` icin tarayici istemcisi hedefleridir; cihaz uzerinde CLI kullanimi deneyseldir cunku mobil Python calisma zamanlari degiskenlik gosterir.
+
+## Desteklenen Platformlar
+
+GuildBridge destegi kademelidir; boylece platform iddialari durust kalir:
+
+- CI ile test edilen CLI/runtime: Windows, Ubuntu, macOS ve GitLab Python imaji uzerinden Debian.
+- Kurulum betigi destekli: Windows Server, Linux Mint, RHEL, AlmaLinux, Rocky Linux, Oracle Linux, Fedora, CentOS, CentOS Stream, Arch Linux, Manjaro Linux, Gentoo, FreeBSD, NetBSD ve OpenBSD.
+- Tarayici istemcisi destekli: Android ve Apple iOS, mobil tarayicidan `guildbridge-web` kullanabilir. Cihaz uzerinde CLI destegi deneyseldir ve Python runtime'a baglidir.
+
+Masaustu GUI destegi Tkinter ve masaustu oturumu gerektirir. Headless sunucular CLI veya tarayici GUI kullanabilir.
+
+Platform bagimliliklarini kurmak veya kontrol etmek:
+
+```bash
+./scripts/install-system-deps.sh
+./scripts/install-system-deps.sh --dry-run --require dev
+guildbridge platforms --check
+python scripts/check-platform.py --require cli --format json
+```
+
+Windows:
+
+```powershell
+.\scripts\check-platform.ps1
+.\scripts\check-platform.ps1 -Require desktop-gui
+```
+
+Varsayilan kontrol yalnizca CLI hazirligini zorunlu tutar. Bu yetenekleri katı gereksinim yapmak icin `--require desktop-gui`, `--require web-gui` veya `--require dev` kullanin.
+
+Paket adlari ve platforma ozel notlar icin [docs/PLATFORMS.md](docs/PLATFORMS.md) dosyasina bakin.
+
+## Desteklenen Yollar
+
+Tum saglayicilar ayni tarafsiz semaya export yapar; migration yolu sudur:
+
+```text
+source provider -> neutral community.template.json -> target provider
+```
+
+| Kaynak | Hedef | Durum | Notlar |
+|---|---|---:|---|
+| Discord/Fluxer/Stoat | Rocket.Chat | destekli | Rocket.Chat rolleri ve odalari olusturur; odaya ozel izin semantigi best-effort'tur. |
+| Rocket.Chat | Discord/Fluxer/Stoat/Matrix | destekli | Odalari ve workspace rollerini export eder; mesajlar, kullanicilar, abonelikler ve DM'ler disarida tutulur. |
+| Discord/Fluxer/Stoat/Matrix/Rocket.Chat | Mumble | admin bridge ile destekli | Yapilandirilmis admin API bridge uzerinden Mumble gruplari ve ses kanallari olusturur. |
+| Mumble | Discord/Fluxer/Stoat/Matrix/Rocket.Chat | admin bridge ile destekli | Mumble gruplarini, kanallarini ve ACL benzeri izinleri export eder; canli ses durumu ve kayitlar disarida tutulur. |
+| Discord | Fluxer | destekli | Yapısal uyum iyidir; kanal/rol izinleri best-effort map edilir. |
+| Discord | Stoat | destekli | Yapilandirilabilir Stoat/Revolt tarzı API endpoint'leri kullanir. |
+| Discord | Matrix/Element | destekli | Matrix spaces ve rooms olusturur; roller birebir map edilemez. |
+| Fluxer | Discord | destekli | Mevcut bir Discord guild hedefi gerektirir. |
+| Fluxer | Stoat | destekli | Best-effort rol/kanal mapping. |
+| Fluxer | Matrix/Element | destekli | Kategoriler nested space olur. |
+| Stoat | Discord | destekli | Best-effort rol/kanal mapping. |
+| Stoat | Fluxer | destekli | Best-effort rol/kanal mapping. |
+| Stoat | Matrix/Element | destekli | Kategoriler space olur. |
+| Matrix/Element | Discord/Fluxer/Stoat/Rocket.Chat/Mumble | destekli | Matrix space hiyerarsisini kanal olarak export eder; Matrix'te global sunucu rolleri yoktur. |
+
+## Yapilandirma
+
+GuildBridge ortam degiskenlerini okur. Kaynak dosya olarak `.env.example` kullanin.
+
+### Discord
+
+```bash
+DISCORD_BOT_TOKEN="..."
+DISCORD_API_BASE="https://discord.com/api/v10"
+```
+
+Discord botunun guild rollerini/kanallarini okuyacak ve hedef guild'e ice aktarim sirasinda rol/kanal olusturacak yeterli izne ihtiyaci vardir.
+
+### Fluxer
+
+```bash
+FLUXER_BOT_TOKEN="..."
+FLUXER_API_BASE="https://api.fluxer.app/v1"
+```
+
+Gerekiyorsa `FLUXER_API_BASE` degerini self-hosted instance'iniza ayarlayin.
+
+### Stoat
+
+```bash
+STOAT_BOT_TOKEN="..."
+STOAT_API_BASE="https://api.stoat.chat"
+```
+
+Stoat uyumlu endpoint'ler ve authentication zamanla degisebilir. Kendi instance'iniz icin base URL ve saglayici implementasyonunu duzenlenebilir tutun.
+
+### Matrix/Element
+
+```bash
+MATRIX_ACCESS_TOKEN="..."
+MATRIX_BASE_URL="https://matrix.example.org"
+MATRIX_SERVER_NAME="example.org"
+```
+
+Element bir Matrix istemcisidir; bu nedenle GuildBridge Matrix Client-Server API'sini kullanir.
+
+### Rocket.Chat
+
+```bash
+ROCKET_CHAT_API_BASE="https://chat.example.org/api/v1"
+ROCKET_CHAT_AUTH_TOKEN="..."
+ROCKET_CHAT_USER_ID="..."
+```
+
+Rocket.Chat odalari/kanallari ve workspace rollerini export eder. Mesajlari, kullanicilari, abonelikleri, direkt mesajlari veya ozel kullanici metadata'sini export etmez.
+
+### Mumble
+
+```bash
+MUMBLE_API_BASE="https://mumble-admin.example.org/api/v1"
+MUMBLE_API_TOKEN="..."
+```
+
+Mumble/Murmur ses portu uzerinde evrensel bir HTTP yonetim API'si sunmaz. GuildBridge, `MUMBLE_API_BASE` degerinin sunucu, grup, kanal ve ACL route'lari saglayan bir Murmur/Ice/gRPC yonetim admin API bridge'ine isaret etmesini bekler.
+
+## Ornekler
+
+### Discord sablonu -> Fluxer sunucusu
+
+```bash
+guildbridge migrate \
+  --from discord \
+  --to fluxer \
+  --template "https://discord.new/abc123" \
+  --target-name "Fluxer Copy" \
+  --template-out exported.template.json \
+  --plan-out fluxer.plan.json
+
+# fluxer.plan.json incelendikten sonra:
+guildbridge migrate \
+  --from discord \
+  --to fluxer \
+  --template "https://discord.new/abc123" \
+  --target-name "Fluxer Copy" \
+  --plan-out fluxer.result.json \
+  --plan-in fluxer.plan.json \
+  --apply \
+  --confirm-apply APPLY
+```
+
+### Canli Discord guild -> mevcut Discord guild
+
+```bash
+guildbridge export --from discord --source-id "SOURCE_GUILD_ID" --out source.template.json
+
+guildbridge import \
+  --to discord \
+  --file source.template.json \
+  --target-id "TARGET_GUILD_ID" \
+  --plan-out discord.plan.json
+```
+
+### Fluxer -> Stoat
+
+```bash
+guildbridge migrate \
+  --from fluxer \
+  --to stoat \
+  --source-id "FLUXER_GUILD_ID" \
+  --target-name "Stoat Copy" \
+  --plan-out stoat.plan.json
+```
+
+### Element/Matrix space -> Discord
+
+```bash
+guildbridge export \
+  --from element \
+  --source-id '!spaceid:matrix.example.org' \
+  --out matrix-space.template.json
+
+guildbridge import \
+  --to discord \
+  --file matrix-space.template.json \
+  --target-id "DISCORD_TARGET_GUILD_ID" \
+  --plan-out discord.plan.json
+```
+
+### Dogrula ve redakte et
+
+```bash
+guildbridge validate community.template.json
+
+guildbridge redact community.template.json --out safe.template.json
+```
+
+## Tarafsiz sema
+
+Tarafsiz JSON semasi:
+
+```text
+schema/community-template.schema.json
+```
+
+Bir sablon sunlari icerir:
+
+```json
+{
+  "schema": "guildbridge.community.v1",
+  "version": "1.0",
+  "name": "Example Community",
+  "privacy": {
+    "exports_members": false,
+    "exports_messages": false,
+    "stores_tokens": false
+  },
+  "roles": [],
+  "categories": [],
+  "channels": []
+}
+```
+
+## Gizlilik Modeli
+
+GuildBridge, herkese acik sablon dosyalarinin guvenle yayinlanabilmesi icin tasarlanmistir.
+
+### Katı kurallar
+
+1. **Mesaj yok.** Mesaj gecmisi semanin parcasi degildir.
+2. **Uye yok.** Uye listeleri ve kullanici profilleri semanin parcasi degildir.
+3. **DM yok.** Direkt/ozel konusmalar asla export edilmez.
+4. **Sir yok.** Token ve oturum degerleri yalnizca ortam degiskenlerinden okunur.
+5. **Kararlı incelenmis planlar.** `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>` ayarlanmadikca import hicbir sey yazmaz. GuildBridge mevcut aday plan incelenmis dry-run planindan farkliysa yazmayi reddeder.
+6. **Apply journal'lari.** Onayli apply calistirmalari, kesintiye ugrayan yazmalarin yeniden denemeden once denetlenebilmesi icin baslayan, basarili ve basarisiz islem kayitlari olan yerel bir journal yazar.
+7. **Redaksiyon mevcut.** `guildbridge redact`, elle duzenlenmis sablonlardan guvensiz metadata anahtarlarini, token benzeri degerleri, ham kaynak ID'leri ve guvensiz overwrite placeholder'larini kaldirir.
+
+## Kurtarma Rehberi
+
+Komut hatalari, asıl hata ile birlikte yaygin operator sorunlari icin kurtarma ipuclari icerir: eksik dosyalar, gecersiz JSON, eksik saglayici token'lari, HTTP authentication/rate-limit/saglayici hatalari, incelenmis plan drift'i, gecersiz sablonlar ve journal resume uyumsuzluklari.
+
+Kesintiye ugrayan apply calistirmalari icin once journal'i inceleyin. Yalnizca ayni komut, hedef, sablon ve incelenmis plan ile yeniden deneyin; yazmadan once GuildBridge'in yeniden denemeyi dogrulamasi icin `--resume-journal path/to/journal.json` gecin.
+
+### Kaynak ID'ler
+
+Saglayici ID'leri su sekilde yerel ID'lere donusturulur:
+
+```text
+role_discord_2f1a4c...
+chan_fluxer_91bb20...
+```
+
+Bu, orijinal ham ID'leri aciga cikarmadan sablonu kararlı tutar.
+
+## Saglayici Notlari
+
+### Discord
+
+- Bot token'i ile canli guild'den export yapabilir.
+- Discord sunucu sablonu URL/kodu ile export yapabilir.
+- `--target-id` kullanarak mevcut Discord guild'e import eder.
+- Discord sunucu sablonlari kategorileri, kanallari, rolleri ve izinleri klonlayabilir; ancak Discord'un kendisi bazi community kanal turlerini sablona dahil etmez.
+
+### Fluxer
+
+- Discord'a benzeyen fakat ayri bir API yuzeyi kullanir.
+- `--target-id` verilmezse hedef guild/sunucu olusturabilir.
+- Self-hosted deployment'lar icin yapilandirilabilir base URL kullanir.
+
+### Stoat
+
+- Yapilandirilabilir Stoat/Revolt tarzi HTTP endpoint'leri kullanir.
+- `--target-id` verilmezse hedef sunucu olusturabilir.
+- Izin mapping'i best-effort'tur ve `src/guildbridge/permissions.py` icinde kolay duzenlenebilir olacak sekilde tutulur.
+
+### Matrix/Element
+
+- Element Matrix uzerinde calisir; bu nedenle saglayici Matrix Client-Server endpoint'lerini kullanir.
+- Kategoriler nested Matrix space olarak import edilir.
+- Kanallar Matrix room olarak import edilir.
+- Discord/Fluxer/Stoat tarzi global roller, GuildBridge'in bilerek kullanmadigi uye ID'leri olmadan dogru temsil edilemez.
+
+### Rocket.Chat
+
+- Rocket.Chat REST API kimlik bilgilerini kullanir: `ROCKET_CHAT_AUTH_TOKEN` ve `ROCKET_CHAT_USER_ID`.
+- Workspace odalarini/kanallarini ve rolleri export eder.
+- Metin benzeri kanallari Rocket.Chat channel veya private group olarak import eder.
+- Room-specific rol semantigi best-effort'tur; cunku Rocket.Chat izinleri cogunlukla workspace rol ayarlaridir.
+
+### Mumble
+
+- `MUMBLE_API_BASE` uzerinden yapilandirilmis Mumble/Murmur admin API bridge kullanir.
+- Gruplari, kanal agacini ve ACL tarzı allow/deny kayitlarini export eder.
+- Yapısal kanallari Mumble ses kanali olarak import eder.
+- Canli kullanicilari, kayitlari, sertifikalari, ses durumunu veya text/chat gecmisini export etmez.
+
+## Yayin Hijyeni
+
+Yayin adimlari [docs/RELEASE.md](docs/RELEASE.md) dosyasinda belgelenmistir. Kisa yerel kontrol:
+
+```bash
+make release-check
+```
+
+GitHub release workflow'u `v*` tag'leri ve manuel calistirmalar icin artifact olusturup yukler; PyPI'ye otomatik yayin yapmaz.
+
+## Gelistirme
+
+```bash
+python -m pip install -e ".[dev]"
+python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+python -m mypy src
+python -m pytest -q
+python scripts/check-platform.py --require cli --format json
+python -m build
+python -m twine check dist/*
+python scripts/verify-dist.py
+```
+
+CLI'yi dogrudan calistirma:
+
+```bash
+python -m guildbridge providers
+```
+
+GUI'yi dogrudan calistirma:
+
+```bash
+python -m guildbridge.gui
+```
+
+## GitHub ve GitLab CI
+
+Bu repo ikisini de icerir:
+
+```text
+.github/workflows/ci.yml
+.gitlab-ci.yml
+```
+
+Iki pipeline da kurulum, lint, type check, testler, platform kontrolleri, package build, dagitim metadata kontrolleri ve wheel kurulum dogrulamasini calistirir.
+
+GitHub Actions ayrica `v*` tag'leri ve manuel calistirmalar icin `Release Artifacts` workflow'una sahiptir. Wheel/sdist olusturur ve workflow artifact'i olarak yukler; PyPI'ye otomatik yayin yapmaz.
+
+## Proje yapisi
+
+```text
+guildbridge/
+  src/guildbridge/
+    cli.py
+    models.py
+    permissions.py
+    privacy.py
+    providers/
+      discord.py
+      fluxer.py
+      stoat.py
+      matrix.py
+      rocket_chat.py
+      mumble.py
+  schema/community-template.schema.json
+  examples/template.example.json
+  tests/
+  docs/
+```
+
+## Guvenlik
+
+- `.env` commit etmeyin.
+- Token'lari issue raporlarina yapistirmayin.
+- `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>` calistirmadan once dry-run yapin.
+- Olusturulan planlari uygulamadan once inceleyin.
+- Minimum gerekli izinlere sahip bir bot/application tercih edin.
+
+[SECURITY.md](SECURITY.md) dosyasina bakin.
+
+## Katki
+
+Pull request'ler memnuniyetle karsilanir. Saglayiciya ozel API farkliliklarini provider adapter'lari icinde tutun ve tarafsiz semayi gizlilik acisindan guvenli tutun.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) dosyasina bakin.
+
+## Lisans
+
+MIT. [LICENSE](LICENSE) dosyasina bakin.
