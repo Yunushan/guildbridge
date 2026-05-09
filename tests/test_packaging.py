@@ -176,6 +176,18 @@ def test_powershell_release_scripts_tolerate_crlf_version_lines() -> None:
     assert '(?m)^__version__ = "[^"]+"\\r?$' in release_ps1
 
 
+def test_windows_release_accepts_pinned_wix_v7_eula() -> None:
+    release = _text(".github/workflows/release.yml")
+    windows_dist = _text("scripts/build-windows-dist.ps1")
+    windows_doc = _text("docs/WINDOWS_RELEASE.md")
+
+    assert "dotnet tool install --global wix --version 7.*" in release
+    assert r".\scripts\build-windows-dist.ps1 -WixEulaId wix7" in release
+    assert '[string]$WixEulaId = "wix7"' in windows_dist
+    assert '"-acceptEula", $WixEulaId' in windows_dist
+    assert "`-acceptEula wix7`" in windows_doc
+
+
 def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     github_ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")

@@ -35,6 +35,8 @@ The GitHub `Release Artifacts` workflow builds Windows artifacts on a Windows ru
 
 The Windows job uses PyInstaller for the executable launchers and WiX for the MSI.
 
+The workflow pins WiX Toolset v7 and passes `-acceptEula wix7` to `wix build` through `scripts/build-windows-dist.ps1`. WiX v7 requires this explicit EULA acceptance in build scripts and CI/CD. If you do not want to build an MSI locally, use `-SkipMsi` and publish only the portable ZIP.
+
 ## Code Signing
 
 Unsigned Windows executables and MSI packages can trigger Microsoft Defender SmartScreen or antivirus warnings. Public releases should be signed with a trusted code-signing certificate before publishing outside GitHub Actions artifacts.

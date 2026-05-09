@@ -62,10 +62,10 @@ jobs:
           python -m pip install -e ".[dev,windows-build]"
       - name: Install WiX Toolset
         run: |
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version 7.*
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Build Windows ZIP and MSI
-        run: .\scripts\build-windows-dist.ps1
+        run: .\scripts\build-windows-dist.ps1 -WixEulaId wix7
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
         with:

@@ -3,6 +3,7 @@ param(
     [string]$Python = "python",
     [string]$OutputDir = "dist",
     [string]$Version = "",
+    [string]$WixEulaId = "wix7",
     [switch]$SkipMsi,
     [switch]$SkipZip,
     [switch]$Clean
@@ -135,14 +136,18 @@ if (-not $SkipMsi) {
         if (Test-Path -LiteralPath $MsiPath) {
             Remove-Item -LiteralPath $MsiPath -Force
         }
-        Invoke-Checked -FilePath $wix.Source -Arguments @(
-            "build",
+        $wixArguments = @("build")
+        if (-not [string]::IsNullOrWhiteSpace($WixEulaId)) {
+            $wixArguments += @("-acceptEula", $WixEulaId)
+        }
+        $wixArguments += @(
             (Join-Path $RepoRootPath "packaging\windows\GuildBridge.wxs"),
             "-arch", "x64",
             "-d", "SourceDir=$BundleRoot",
             "-d", "ProductVersion=$Version",
             "-out", $MsiPath
         )
+        Invoke-Checked -FilePath $wix.Source -Arguments $wixArguments
         Write-Host "Created $MsiPath"
     }
 }
