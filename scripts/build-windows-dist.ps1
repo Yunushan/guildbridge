@@ -15,6 +15,8 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $RepoRootPath = [System.IO.Path]::GetFullPath($RepoRoot.Path)
 $PyInstallerWork = Join-Path $RepoRootPath "build\pyinstaller"
 $PyInstallerSpecs = Join-Path $PyInstallerWork "spec"
+$IconPath = Join-Path $RepoRootPath "packaging\windows\guildbridge.ico"
+$AssetDataPath = "$(Join-Path $RepoRootPath 'src\guildbridge\assets');guildbridge/assets"
 $OutputRoot = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
     [System.IO.Path]::GetFullPath($OutputDir)
 } else {
@@ -100,13 +102,15 @@ foreach ($launcher in $launchers) {
         "--distpath", $BundleRoot,
         "--workpath", $PyInstallerWork,
         "--specpath", $PyInstallerSpecs,
+        "--icon", $IconPath,
+        "--add-data", $AssetDataPath,
         "--name", $launcher.Name,
         $modeArg,
         $scriptPath
     )
 }
 
-foreach ($file in @("README.md", "README.tr.md", "LICENSE", ".env.example", "docs\WINDOWS_RELEASE.md")) {
+foreach ($file in @("README.md", "README.tr.md", "LICENSE", ".env.example", "docs\WINDOWS_RELEASE.md", "packaging\windows\guildbridge.ico")) {
     Copy-Item -LiteralPath (Join-Path $RepoRootPath $file) -Destination $BundleRoot -Force
 }
 

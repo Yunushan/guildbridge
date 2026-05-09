@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 from dataclasses import dataclass
 from functools import partial
+from importlib import resources
 from pathlib import Path
 from tkinter import (
     BooleanVar,
     Canvas,
     Listbox,
+    PhotoImage,
     StringVar,
     Tk,
     filedialog,
@@ -17,6 +20,7 @@ from tkinter import (
     simpledialog,
     ttk,
 )
+from typing import Any
 
 from guildbridge.gui_commands import (
     CommandResult,
@@ -79,6 +83,7 @@ GUI_THEMES: dict[str, dict[str, str]] = {
 class GuildBridgeGUI(ttk.Frame):
     def __init__(self, master: Tk) -> None:
         super().__init__(master, padding=12)
+        self.root = master
         self.master = master
         self.master.title("GuildBridge")
         self.master.minsize(980, 720)
@@ -91,12 +96,30 @@ class GuildBridgeGUI(ttk.Frame):
         self.style = ttk.Style(master)
         self.theme = StringVar(value="Light")
         self.output = scrolledtext.ScrolledText(self, height=10, wrap="word")
+        self.icon_image: PhotoImage | None = None
         self.themed_canvases: list[Canvas] = []
         self.themed_listboxes: list[Listbox] = []
         self.themed_trees: list[ttk.Treeview] = []
 
+        self._set_window_icon()
         self._build()
         self._apply_theme()
+        self.master.bind_all("<MouseWheel>", self._on_tab_mousewheel, add="+")
+        self.master.bind_all("<Button-4>", self._on_tab_mousewheel, add="+")
+        self.master.bind_all("<Button-5>", self._on_tab_mousewheel, add="+")
+
+    def _set_window_icon(self) -> None:
+        try:
+            png_resource = resources.files("guildbridge").joinpath("assets/guildbridge-icon.png")
+            with resources.as_file(png_resource) as png_path:
+                self.icon_image = PhotoImage(file=str(png_path))
+            self.root.iconphoto(True, self.icon_image)
+            if sys.platform == "win32":
+                ico_resource = resources.files("guildbridge").joinpath("assets/guildbridge-icon.ico")
+                with resources.as_file(ico_resource) as ico_path:
+                    self.root.iconbitmap(default=str(ico_path))
+        except Exception:
+            self.icon_image = None
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -269,14 +292,14 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _provider_combo(self, frame: ttk.Frame, label: str, row: int, variable: StringVar) -> None:
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
-        combo = ttk.Combobox(frame, textvariable=variable, values=self.providers)
+        combo = ttk.Combobox(frame, textvariable=variable, values=self.providers, state="readonly")
         combo.grid(row=row, column=1, sticky="ew", pady=4)
         if self.providers and not variable.get():
             variable.set(self.providers[0])
 
     def _provider_listbox(self, frame: ttk.Frame, label: str, row: int, defaults: tuple[str, ...]) -> Listbox:
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8), pady=4)
-        listbox = Listbox(frame, selectmode="extended", exportselection=False, height=min(max(len(self.providers), 3), 8))
+        listbox = Listbox(frame, selectmode="multiple", exportselection=False, height=min(max(len(self.providers), 3), 8))
         for provider in self.providers:
             listbox.insert("end", provider)
         selected = False
@@ -289,6 +312,22 @@ class GuildBridgeGUI(ttk.Frame):
         listbox.grid(row=row, column=1, sticky="ew", pady=4)
         self.themed_listboxes.append(listbox)
         return listbox
+
+    def _tab_canvas_for_event(self, event: Any) -> Canvas | None:
+        widget = self.master.winfo_containing(event.x_root, event.y_root)
+        while widget is not None:
+            if widget in self.themed_canvases:
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
+
+    def _on_tab_mousewheel(self, event: Any) -> str | None:
+        canvas = self._tab_canvas_for_event(event)
+        if canvas is None:
+            return None
+        units = 3 if getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0 else -3
+        canvas.yview_scroll(units, "units")
+        return "break"
 
     @staticmethod
     def _selected_providers(listbox: Listbox) -> list[str]:
@@ -547,7 +586,7 @@ class GuildBridgeGUI(ttk.Frame):
     def _run(self, args: list[str], *, apply_requested: bool = False, reviewed_plan: str = "") -> None:
         if apply_requested and not self._confirm_apply(reviewed_plan):
             return
-        self._append_output(f"$ {command_preview(args)}\n")
+        self._append_output(f"$ {command_preview(args)}\nStatus: running...\n")
         worker = threading.Thread(target=self._worker, args=(args,), daemon=True)
         worker.start()
         self.after(100, self._poll)
@@ -584,17 +623,23 @@ class GuildBridgeGUI(ttk.Frame):
         self._show_result(result)
 
     def _show_result(self, result: CommandResult) -> None:
+        status = "completed successfully" if result.returncode == 0 and not result.timed_out else "failed"
         if result.timed_out:
-            self._append_output("Status: timed out\n")
+            status = "timed out"
         if result.stdout:
             self._append_output(result.stdout)
         if result.stderr:
             self._append_output(result.stderr)
-        self._append_output(f"Exit code: {result.returncode}\nDuration: {result.duration_seconds:.2f}s\n\n")
+        self._append_output(f"Status: {status}\nExit code: {result.returncode}\nDuration: {result.duration_seconds:.2f}s\n\n")
+        if result.returncode == 0 and not result.timed_out:
+            messagebox.showinfo("GuildBridge", f"Command completed successfully in {result.duration_seconds:.2f}s.", parent=self.master)
+        else:
+            messagebox.showerror("GuildBridge", f"Command {status}. Exit code: {result.returncode}.", parent=self.master)
 
     def _append_output(self, text: str) -> None:
         self.output.insert("end", text)
         self.output.see("end")
+        self.output.update_idletasks()
 
 
 def main() -> int:

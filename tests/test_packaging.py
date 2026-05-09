@@ -138,10 +138,12 @@ def test_source_distribution_manifest_includes_project_assets() -> None:
     assert "include LICENSE" in manifest
     assert "include README.tr.md" in manifest
     assert "recursive-include docs *.md" in manifest
+    assert "recursive-include docs/assets *.svg" in manifest
     assert "Release Checklist" in _text("docs/RELEASE.md")
     assert "recursive-include examples *.json" in manifest
     assert "recursive-include schema *.json" in manifest
     assert "recursive-include scripts *.sh *.py *.ps1" in manifest
+    assert "recursive-include src/guildbridge/assets *.ico *.png *.svg" in manifest
 
 
 def test_dev_dependencies_include_release_build_tools() -> None:
@@ -157,8 +159,11 @@ def test_distribution_verifier_is_shipped() -> None:
 
     assert "REQUIRED_SDIST_SUFFIXES" in verifier
     assert "README.tr.md" in verifier
+    assert "docs/assets/guildbridge-icon.svg" in verifier
     assert "docs/RELEASE.md" in verifier
     assert "REQUIRED_WHEEL_SUFFIXES" in verifier
+    assert "guildbridge/assets/guildbridge-icon.png" in verifier
+    assert "guildbridge/assets/guildbridge-icon.ico" in verifier
     assert "guildbridge-web" in verifier
     assert "guildbridge/providers/spacebar.py" in verifier
     assert "guildbridge/providers/daccord.py" in verifier
@@ -167,6 +172,14 @@ def test_distribution_verifier_is_shipped() -> None:
     assert "guildbridge/providers/mattermost.py" in verifier
     assert "guildbridge/providers/zulip.py" in verifier
     assert "recursive-include scripts *.sh *.py *.ps1" in manifest
+
+
+def test_readmes_show_project_icon() -> None:
+    readme = _text("README.md")
+    turkish_readme = _text("README.tr.md")
+
+    assert "docs/assets/guildbridge-icon.svg" in readme
+    assert "docs/assets/guildbridge-icon.svg" in turkish_readme
 
 
 def test_powershell_release_scripts_tolerate_crlf_version_lines() -> None:

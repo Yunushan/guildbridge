@@ -7,6 +7,8 @@
     Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of GuildBridge is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <Icon Id="GuildBridgeIcon" SourceFile="$(var.SourceDir)\guildbridge.ico" />
+    <Property Id="ARPPRODUCTICON" Value="GuildBridgeIcon" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="GuildBridge" />
@@ -44,6 +46,9 @@
       <Component Id="GuildBridgeEnvExample" Guid="F59E2896-08D5-4E60-BB1E-2824F0756D20">
         <File Id="GuildBridgeEnvExampleFile" Source="$(var.SourceDir)\.env.example" KeyPath="yes" />
       </Component>
+      <Component Id="GuildBridgeIconAsset" Guid="4D363906-80D9-44F7-9E14-07DA1D881F7D">
+        <File Id="GuildBridgeIconFile" Source="$(var.SourceDir)\guildbridge.ico" KeyPath="yes" />
+      </Component>
     </ComponentGroup>
   </Fragment>
 
@@ -53,17 +58,20 @@
         Id="GuildBridgeGuiShortcut"
         Name="GuildBridge GUI"
         Target="[INSTALLFOLDER]guildbridge-gui.exe"
-        WorkingDirectory="INSTALLFOLDER" />
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="GuildBridgeIcon" />
       <Shortcut
         Id="GuildBridgeWebShortcut"
         Name="GuildBridge Web GUI"
         Target="[INSTALLFOLDER]guildbridge-web.exe"
-        WorkingDirectory="INSTALLFOLDER" />
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="GuildBridgeIcon" />
       <Shortcut
         Id="GuildBridgeCliShortcut"
         Name="GuildBridge CLI"
         Target="[INSTALLFOLDER]guildbridge.exe"
-        WorkingDirectory="INSTALLFOLDER" />
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="GuildBridgeIcon" />
       <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\GuildBridge" Name="installed" Type="integer" Value="1" KeyPath="yes" />
     </Component>

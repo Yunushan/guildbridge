@@ -16,6 +16,7 @@ from guildbridge.gui_commands import (
     command_preview,
     run_cli_args,
     subprocess_command,
+    subprocess_creationflags,
 )
 
 
@@ -126,6 +127,11 @@ def test_subprocess_command_uses_bundled_cli_when_frozen(
     assert subprocess_command(["providers"]) == [str(tmp_path / launcher_name), "providers"]
 
 
+def test_subprocess_creationflags_hide_windows_console() -> None:
+    expected = int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0
+    assert subprocess_creationflags() == expected
+
+
 def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
@@ -149,6 +155,7 @@ def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
         "text": True,
         "timeout": 5,
         "check": False,
+        "creationflags": subprocess_creationflags(),
     }
 
 

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/guildbridge-icon.svg" alt="GuildBridge simgesi" width="96" height="96">
+
 # GuildBridge
 
 **Discord, Stoat, Fluxer, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost ve Zulip icin gizlilik odakli sunucu/topluluk sablonu ice-disa aktarma araci.**

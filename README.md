@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/guildbridge-icon.svg" alt="GuildBridge icon" width="96" height="96">
+
 # GuildBridge
 
 **Privacy-first server/community template importer-exporter for Discord, Stoat, Fluxer, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost, and Zulip.**

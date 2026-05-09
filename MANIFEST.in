@@ -3,7 +3,9 @@ include README.md
 include README.tr.md
 include .env.example
 recursive-include docs *.md
+recursive-include docs/assets *.svg
 recursive-include examples *.json
-recursive-include packaging *.py *.wxs
+recursive-include packaging *.py *.wxs *.ico
 recursive-include schema *.json
 recursive-include scripts *.sh *.py *.ps1
+recursive-include src/guildbridge/assets *.ico *.png *.svg

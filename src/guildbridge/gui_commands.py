@@ -168,6 +168,12 @@ def subprocess_command(args: Sequence[str]) -> list[str]:
     return [sys.executable, "-m", "guildbridge", *args]
 
 
+def subprocess_creationflags() -> int:
+    if sys.platform != "win32":
+        return 0
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 def _text(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -192,6 +198,7 @@ def run_cli_args(
             text=True,
             timeout=timeout_seconds,
             check=False,
+            creationflags=subprocess_creationflags(),
         )
         duration = time.monotonic() - started
         return CommandResult(

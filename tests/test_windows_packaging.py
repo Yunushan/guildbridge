@@ -18,8 +18,10 @@ def test_windows_build_extra_and_assets_are_declared() -> None:
     assert "windows-build = [" in pyproject
     assert '"pyinstaller>=6.16.0"' in pyproject
     assert "recursive-include packaging *.py *.wxs" in manifest
+    assert "*.ico" in manifest
     assert "docs/WINDOWS_RELEASE.md" in verifier
     assert "packaging/windows/GuildBridge.wxs" in verifier
+    assert "packaging/windows/guildbridge.ico" in verifier
     assert "packaging/windows/guildbridge-cli.py" in verifier
     assert "scripts/build-windows-dist.ps1" in verifier
 
@@ -35,6 +37,9 @@ def test_windows_build_script_creates_zip_exe_and_optional_msi() -> None:
 
     assert "PyInstaller" in script
     assert "--onefile" in script
+    assert "--icon" in script
+    assert "--add-data" in script
+    assert "guildbridge.ico" in script
     assert "guildbridge.exe" in script
     assert "guildbridge-gui.exe" in script
     assert "guildbridge-web.exe" in script
@@ -54,6 +59,9 @@ def test_windows_msi_source_has_expected_executables_and_shortcuts() -> None:
     assert 'Source="$(var.SourceDir)\\guildbridge.exe"' in wxs
     assert 'Source="$(var.SourceDir)\\guildbridge-gui.exe"' in wxs
     assert 'Source="$(var.SourceDir)\\guildbridge-web.exe"' in wxs
+    assert 'SourceFile="$(var.SourceDir)\\guildbridge.ico"' in wxs
+    assert 'Property Id="ARPPRODUCTICON" Value="GuildBridgeIcon"' in wxs
+    assert 'Icon="GuildBridgeIcon"' in wxs
     assert 'Name="GuildBridge GUI"' in wxs
     assert 'Name="GuildBridge Web GUI"' in wxs
     assert 'Name="GuildBridge CLI"' in wxs

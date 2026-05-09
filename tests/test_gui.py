@@ -14,3 +14,5 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "simpledialog.askstring" in source
     assert "apply_confirmation_error" in source
     assert "Type APPLY to run provider writes using the reviewed plan." in source
+    assert "assets/guildbridge-icon.png" in source
+    assert "iconphoto" in source

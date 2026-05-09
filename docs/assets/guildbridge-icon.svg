@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="GuildBridge icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#153044"/>
+    </linearGradient>
+    <linearGradient id="bridge" x1="54" y1="92" x2="202" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="48" fill="url(#bg)"/>
+  <path d="M62 166 Q128 82 194 166" fill="none" stroke="url(#bridge)" stroke-width="16" stroke-linecap="round"/>
+  <path d="M60 172 H196" fill="none" stroke="#2dd4bf" stroke-width="14" stroke-linecap="round"/>
+  <rect x="54" y="86" width="34" height="92" rx="12" fill="#111827" stroke="#7dd3fc" stroke-width="8"/>
+  <rect x="168" y="86" width="34" height="92" rx="12" fill="#111827" stroke="#2dd4bf" stroke-width="8"/>
+  <path d="M128 84 L164 102 L158 158 L128 186 L98 158 L92 102 Z" fill="#172033" stroke="#e2e8f0" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M108 133 H145" fill="none" stroke="#f8fafc" stroke-width="10" stroke-linecap="round"/>
+  <path d="M137 119 L154 133 L137 147" fill="none" stroke="#f8fafc" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="72" cy="122" r="10" fill="#7dd3fc"/>
+  <circle cx="184" cy="122" r="10" fill="#2dd4bf"/>
+</svg>
