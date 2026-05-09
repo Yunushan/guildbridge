@@ -22,7 +22,7 @@ $OutputRoot = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
 
 function Get-ProjectVersion {
     $pyproject = Get-Content -LiteralPath (Join-Path $RepoRootPath "pyproject.toml") -Raw
-    $match = [regex]::Match($pyproject, '(?m)^version = "([^"]+)"$')
+    $match = [regex]::Match($pyproject, '(?m)^version = "([^"]+)"\r?$')
     if (-not $match.Success) {
         throw "Could not read project version from pyproject.toml."
     }

@@ -165,6 +165,17 @@ def test_distribution_verifier_is_shipped() -> None:
     assert "recursive-include scripts *.sh *.py *.ps1" in manifest
 
 
+def test_powershell_release_scripts_tolerate_crlf_version_lines() -> None:
+    windows_dist = _text("scripts/build-windows-dist.ps1")
+    release_ps1 = _text("scripts/release.ps1")
+
+    assert '(?m)^version = "([^"]+)"\\r?$' in windows_dist
+    assert '(?m)^version = "([^"]+)"\\r?$' in release_ps1
+    assert '(?m)^__version__ = "([^"]+)"\\r?$' in release_ps1
+    assert '(?m)^version = "[^"]+"\\r?$' in release_ps1
+    assert '(?m)^__version__ = "[^"]+"\\r?$' in release_ps1
+
+
 def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     github_ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")

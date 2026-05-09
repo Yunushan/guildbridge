@@ -96,7 +96,7 @@ function Assert-TagAvailable {
 
 function Get-ProjectVersion {
     $text = Get-Content -LiteralPath $PyprojectPath -Raw
-    $match = [regex]::Match($text, '(?m)^version = "([^"]+)"$')
+    $match = [regex]::Match($text, '(?m)^version = "([^"]+)"\r?$')
     if (-not $match.Success) {
         throw "Could not read version from pyproject.toml."
     }
@@ -105,7 +105,7 @@ function Get-ProjectVersion {
 
 function Get-PackageVersion {
     $text = Get-Content -LiteralPath $InitPath -Raw
-    $match = [regex]::Match($text, '(?m)^__version__ = "([^"]+)"$')
+    $match = [regex]::Match($text, '(?m)^__version__ = "([^"]+)"\r?$')
     if (-not $match.Success) {
         throw "Could not read __version__ from src\guildbridge\__init__.py."
     }
@@ -124,14 +124,14 @@ function Write-Utf8NoBom {
 
 function Set-Version {
     $pyproject = Get-Content -LiteralPath $PyprojectPath -Raw
-    $updatedPyproject = [regex]::Replace($pyproject, '(?m)^version = "[^"]+"$', "version = `"$Version`"")
+    $updatedPyproject = [regex]::Replace($pyproject, '(?m)^version = "[^"]+"\r?$', "version = `"$Version`"")
     if ($updatedPyproject -eq $pyproject -and (Get-ProjectVersion) -ne $Version) {
         throw "Could not update pyproject.toml version."
     }
     Write-Utf8NoBom -Path $PyprojectPath -Content $updatedPyproject
 
     $init = Get-Content -LiteralPath $InitPath -Raw
-    $updatedInit = [regex]::Replace($init, '(?m)^__version__ = "[^"]+"$', "__version__ = `"$Version`"")
+    $updatedInit = [regex]::Replace($init, '(?m)^__version__ = "[^"]+"\r?$', "__version__ = `"$Version`"")
     if ($updatedInit -eq $init -and (Get-PackageVersion) -ne $Version) {
         throw "Could not update src\guildbridge\__init__.py version."
     }
