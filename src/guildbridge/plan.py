@@ -88,8 +88,7 @@ def load_reviewed_plan(path: str | Path) -> dict[str, Any]:
     return data
 
 
-def validate_reviewed_plan(path: str | Path, expected: dict[str, Any]) -> dict[str, Any]:
-    data = load_reviewed_plan(path)
+def validate_reviewed_plan_data(data: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
     reviewed_plan = data["plan"]
     reviewed_actions = data.get("actions")
     if not isinstance(reviewed_actions, list):
@@ -114,3 +113,7 @@ def validate_reviewed_plan(path: str | Path, expected: dict[str, Any]) -> dict[s
                 f"{reviewed_plan.get(key)!r} != {expected.get(key)!r}."
             )
     return reviewed_plan
+
+
+def validate_reviewed_plan(path: str | Path, expected: dict[str, Any]) -> dict[str, Any]:
+    return validate_reviewed_plan_data(load_reviewed_plan(path), expected)

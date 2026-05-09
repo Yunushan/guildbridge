@@ -4,7 +4,7 @@ import argparse
 import html
 import ipaddress
 import secrets
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -35,6 +35,13 @@ def _first(form: Mapping[str, list[str]], key: str, default: str = "") -> str:
     if not values:
         return default
     return values[0]
+
+
+def _values(form: Mapping[str, list[str]], key: str, default: str = "") -> list[str]:
+    values = [value.strip() for value in form.get(key, []) if value.strip()]
+    if values:
+        return values
+    return [default] if default else []
 
 
 def _checked(form: Mapping[str, list[str]], key: str) -> bool:
@@ -87,7 +94,7 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
         )
     if action == "import":
         return build_import_args(
-            _first(form, "provider_to", "discord"),
+            _values(form, "provider_to", "discord"),
             file=_first(form, "file"),
             target_id=_first(form, "target_id"),
             target_name=_first(form, "target_name"),
@@ -103,7 +110,7 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
     if action == "migrate":
         return build_migrate_args(
             _first(form, "provider_from", "discord"),
-            _first(form, "provider_to", "fluxer"),
+            _values(form, "provider_to", "fluxer"),
             source_id=_first(form, "source_id"),
             template=_first(form, "template"),
             target_id=_first(form, "target_id"),
@@ -128,10 +135,11 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
     raise ValueError(f"Unknown web action: {action}")
 
 
-def _provider_options(selected: str = "") -> str:
+def _provider_options(selected: str | Sequence[str] = "") -> str:
+    selected_values = {selected} if isinstance(selected, str) else set(selected)
     options = []
     for name in sorted(provider_names()):
-        mark = " selected" if name == selected else ""
+        mark = " selected" if name in selected_values else ""
         options.append(f'<option value="{html.escape(name)}"{mark}>{html.escape(name)}</option>')
     return "\n".join(options)
 
@@ -156,6 +164,14 @@ def _text_field(
 
 def _select_field(label: str, name: str, options: str) -> str:
     return f'<label class="field"><span>{html.escape(label)}</span><select name="{html.escape(name)}">{options}</select></label>'
+
+
+def _multi_select_field(label: str, name: str, options: str) -> str:
+    size = min(max(len(provider_names()), 4), 8)
+    return (
+        f'<label class="field"><span>{html.escape(label)}</span>'
+        f'<select name="{html.escape(name)}" multiple size="{size}">{options}</select></label>'
+    )
 
 
 def _checkbox_field(label: str, name: str, *, checked: bool = False, danger: bool = False) -> str:
@@ -377,6 +393,8 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       background: #ffffff;
       color: var(--text);
     }}
+    select[multiple] {{ min-height: 168px; padding: 6px; }}
+    select[multiple] option {{ padding: 6px 8px; }}
     input:focus-visible, select:focus-visible, button:focus-visible {{
       outline: 3px solid #9cc2ff;
       outline-offset: 2px;
@@ -507,7 +525,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
         {auth}
         <input type="hidden" name="action" value="migrate">
         {_select_field("From", "provider_from", providers_default)}
-        {_select_field("To", "provider_to", providers_fluxer)}
+        {_multi_select_field("To", "provider_to", providers_fluxer)}
         {_text_field("Source ID", "source_id")}
         {_text_field("Template URL/code", "template")}
         {_text_field("Target ID", "target_id")}
@@ -548,7 +566,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
         {csrf}
         {auth}
         <input type="hidden" name="action" value="import">
-        {_select_field("To", "provider_to", providers_default)}
+        {_multi_select_field("To", "provider_to", providers_default)}
         {_text_field("Template file", "file")}
         {_text_field("Target ID", "target_id")}
         {_text_field("Target name", "target_name")}

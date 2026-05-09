@@ -138,6 +138,21 @@ guildbridge import \
 
 Onayli apply calistirmalari `--plan-in` ile incelenmis bir dry-run plani gerektirir. GuildBridge yazma yapmadan once aday plani yeniden hesaplar; komut, hedef, sablon parmak izi, islem sayisi ve islem hash'i incelenmis dosya ile ayni degilse yazmayi reddeder. Apply calistirmalari, saglayici yazmalari baslamadan once yerel bir journal da yazar. Varsayilan journal konumu `.guildbridge/journals/` altidir; belirli bir yol icin `--journal-out path/to/journal.json` kullanin. Bir calistirma yarida kalirsa yeniden denemeden once journal'i inceleyin ve GuildBridge'in ayni komut, hedef, saglayici, sablon parmak izi ve incelenmis plan hash'ini dogrulamasi icin `--resume-journal path/to/journal.json` gecin.
 
+Import ve migrate tek bir incelenmis planda birden fazla hedefe yazabilir. `--to` tekrar edilebilir veya hedefler virgulle ayrilabilir; hedef ID veya adlari hedefe gore degisiyorsa `provider=value` kullanin:
+
+```bash
+guildbridge migrate \
+  --from discord \
+  --to stoat \
+  --to fluxer \
+  --template "https://discord.new/your-template-code" \
+  --target-name stoat="Stoat Copy" \
+  --target-name fluxer="Fluxer Copy" \
+  --plan-out multi-target.plan.json
+```
+
+Coklu hedef dry-run'i, her hedef saglayici icin ayri dogrulanmis sonuc iceren `guildbridge.batch-result.v1` plani yazar. Uygulamak icin ayni komut sekline `--plan-in multi-target.plan.json --apply --confirm-apply APPLY` eklenir. Birden fazla hedefte `--journal-out journal.json` kullanilirsa GuildBridge `journal.stoat.json` ve `journal.fluxer.json` gibi saglayiciya ozel journal dosyalari yazar.
+
 ## GUI
 
 GuildBridge, CLI ile ayni export, import, migrate, validate ve redact komutlarini saran iki GUI modu icerir.
@@ -167,7 +182,7 @@ guildbridge-web.exe
 2. `guildbridge-gui` veya `guildbridge-gui.exe` acin.
 3. Once **Platforms** sekmesini kullanarak CLI, masaustu GUI ve web GUI hazirligini kontrol edin.
 4. Kaynak saglayicidan tarafsiz template olusturmak icin **Export** kullanin. Source ID veya provider template URL/code girin, sonra output JSON yolu secin.
-5. Mevcut template'i hedef saglayiciya aktarmak icin **Import**, export ve import'u tek akista yapmak icin **Migrate** kullanin.
+5. Mevcut template'i bir veya daha fazla hedef saglayiciya aktarmak icin **Import**, tek export ile bir veya daha fazla hedefe import icin **Migrate** kullanin.
 6. Ilk calistirmada **Apply writes** isaretli olmasin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
 7. Olusturulan plan JSON dosyasini inceleyin.
 8. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin, **Apply writes** isaretleyin ve onay penceresi istediginde `APPLY` yazin.
@@ -420,6 +435,18 @@ guildbridge migrate \
   --source-id "FLUXER_GUILD_ID" \
   --target-name "Stoat Copy" \
   --plan-out stoat.plan.json
+```
+
+### Tek kaynak -> birden fazla hedef
+
+```bash
+guildbridge migrate \
+  --from discord \
+  --to stoat,fluxer \
+  --template "https://discord.new/abc123" \
+  --target-name stoat="Stoat Copy" \
+  --target-name fluxer="Fluxer Copy" \
+  --plan-out discord-to-many.plan.json
 ```
 
 ### Element/Matrix space -> Discord

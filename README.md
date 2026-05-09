@@ -138,6 +138,21 @@ guildbridge import \
 
 Confirmed apply runs require a reviewed dry-run plan through `--plan-in`. GuildBridge recomputes a no-write candidate plan, compares the command, target, template fingerprint, action count, and action hash to the reviewed file, and refuses writes if anything drifted. Apply runs also write a local journal before provider writes start. By default the journal is saved under `.guildbridge/journals/`; use `--journal-out path/to/journal.json` for an explicit path. If a run fails halfway through, inspect the journal before retrying and pass `--resume-journal path/to/journal.json` so GuildBridge verifies the retry uses the same command, target, provider, template fingerprint, and reviewed plan hash.
 
+Import and migrate can target more than one destination in a single reviewed plan. Repeat `--to` or comma-separate targets; use `provider=value` when target IDs or names differ per destination:
+
+```bash
+guildbridge migrate \
+  --from discord \
+  --to stoat \
+  --to fluxer \
+  --template "https://discord.new/your-template-code" \
+  --target-name stoat="Stoat Copy" \
+  --target-name fluxer="Fluxer Copy" \
+  --plan-out multi-target.plan.json
+```
+
+The multi-target dry run writes a `guildbridge.batch-result.v1` plan with one validated provider result per destination. Applying it uses the same command shape plus `--plan-in multi-target.plan.json --apply --confirm-apply APPLY`. If `--journal-out journal.json` is used with multiple destinations, GuildBridge writes provider-specific journals such as `journal.stoat.json` and `journal.fluxer.json`.
+
 ## GUI
 
 GuildBridge includes two GUI modes that wrap the same export, import, migrate, validate, and redact commands as the CLI.
@@ -167,7 +182,7 @@ guildbridge-web.exe
 2. Open `guildbridge-gui` or `guildbridge-gui.exe`.
 3. Use the **Platforms** tab first to confirm CLI, desktop GUI, and web GUI readiness.
 4. Use **Export** to create a neutral template from a source provider. Provide either a source ID or a provider template URL/code, then choose an output JSON path.
-5. Use **Import** to import an existing template into a target provider, or **Migrate** to export and import in one flow.
+5. Use **Import** to import an existing template into one or more target providers, or **Migrate** to export once and import into one or more destinations in one flow.
 6. Keep **Apply writes** unchecked for the first run. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
 7. Review the generated plan JSON.
 8. To perform real writes, select the reviewed plan in **Reviewed plan JSON**, check **Apply writes**, and type `APPLY` when the confirmation dialog asks for it.
@@ -420,6 +435,18 @@ guildbridge migrate \
   --source-id "FLUXER_GUILD_ID" \
   --target-name "Stoat Copy" \
   --plan-out stoat.plan.json
+```
+
+### One source -> multiple destinations
+
+```bash
+guildbridge migrate \
+  --from discord \
+  --to stoat,fluxer \
+  --template "https://discord.new/abc123" \
+  --target-name stoat="Stoat Copy" \
+  --target-name fluxer="Fluxer Copy" \
+  --plan-out discord-to-many.plan.json
 ```
 
 ### Element/Matrix space -> Discord

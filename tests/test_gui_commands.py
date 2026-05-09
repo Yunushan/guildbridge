@@ -60,6 +60,12 @@ def test_build_import_args_apply_redact() -> None:
     assert args[:5] == ["import", "--to", "fluxer", "--file", "community.json"]
 
 
+def test_build_import_args_accepts_multiple_targets() -> None:
+    args = build_import_args(["fluxer", "stoat"], file="community.json")
+
+    assert args[:7] == ["import", "--to", "fluxer", "--to", "stoat", "--file", "community.json"]
+
+
 def test_build_migrate_args_preview() -> None:
     args = build_migrate_args(
         "discord",
@@ -79,6 +85,12 @@ def test_build_migrate_args_preview() -> None:
     assert args[args.index("--journal-out") + 1] == "journal.json"
     assert args[args.index("--resume-journal") + 1] == "failed-journal.json"
     assert command_preview(args).startswith("guildbridge migrate")
+
+
+def test_build_migrate_args_accepts_comma_separated_targets() -> None:
+    args = build_migrate_args("discord", "matrix,rocket.chat", source_id="123")
+
+    assert args[:7] == ["migrate", "--from", "discord", "--to", "matrix", "--to", "rocket.chat"]
 
 
 def test_apply_confirmation_error_requires_reviewed_plan_and_token() -> None:

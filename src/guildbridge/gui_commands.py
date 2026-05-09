@@ -35,6 +35,19 @@ def _add_flag(args: list[str], flag: str, enabled: bool) -> None:
         args.append(flag)
 
 
+def _provider_values(value: str | Sequence[str]) -> list[str]:
+    values = [value] if isinstance(value, str) else list(value)
+    providers: list[str] = []
+    for raw_value in values:
+        providers.extend(part.strip() for part in raw_value.split(",") if part.strip())
+    return providers
+
+
+def _add_providers(args: list[str], flag: str, values: str | Sequence[str]) -> None:
+    for value in _provider_values(values):
+        args.extend([flag, value])
+
+
 def build_export_args(
     provider_from: str,
     *,
@@ -52,7 +65,7 @@ def build_export_args(
 
 
 def build_import_args(
-    provider_to: str,
+    provider_to: str | Sequence[str],
     *,
     file: str,
     target_id: str = "",
@@ -66,7 +79,9 @@ def build_import_args(
     journal_out: str = "",
     resume_journal: str = "",
 ) -> list[str]:
-    args = ["import", "--to", provider_to, "--file", file]
+    args = ["import"]
+    _add_providers(args, "--to", provider_to)
+    args.extend(["--file", file])
     _add_value(args, "--target-id", target_id)
     _add_value(args, "--target-name", target_name)
     _add_value(args, "--plan-out", plan_out)
@@ -83,7 +98,7 @@ def build_import_args(
 
 def build_migrate_args(
     provider_from: str,
-    provider_to: str,
+    provider_to: str | Sequence[str],
     *,
     source_id: str = "",
     template: str = "",
@@ -100,7 +115,8 @@ def build_migrate_args(
     journal_out: str = "",
     resume_journal: str = "",
 ) -> list[str]:
-    args = ["migrate", "--from", provider_from, "--to", provider_to]
+    args = ["migrate", "--from", provider_from]
+    _add_providers(args, "--to", provider_to)
     _add_value(args, "--source-id", source_id)
     _add_value(args, "--template", template)
     _add_value(args, "--target-id", target_id)

@@ -5,7 +5,17 @@ import threading
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from tkinter import BooleanVar, StringVar, Tk, filedialog, messagebox, scrolledtext, simpledialog, ttk
+from tkinter import (
+    BooleanVar,
+    Listbox,
+    StringVar,
+    Tk,
+    filedialog,
+    messagebox,
+    scrolledtext,
+    simpledialog,
+    ttk,
+)
 
 from guildbridge.gui_commands import (
     CommandResult,
@@ -78,6 +88,28 @@ class GuildBridgeGUI(ttk.Frame):
         if self.providers and not variable.get():
             variable.set(self.providers[0])
 
+    def _provider_listbox(self, frame: ttk.Frame, label: str, row: int, defaults: tuple[str, ...]) -> Listbox:
+        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8), pady=4)
+        listbox = Listbox(frame, selectmode="extended", exportselection=False, height=min(max(len(self.providers), 3), 8))
+        for provider in self.providers:
+            listbox.insert("end", provider)
+        selected = False
+        for index, provider in enumerate(self.providers):
+            if provider in defaults:
+                listbox.selection_set(index)
+                selected = True
+        if self.providers and not selected:
+            listbox.selection_set(0)
+        listbox.grid(row=row, column=1, sticky="ew", pady=4)
+        return listbox
+
+    @staticmethod
+    def _selected_providers(listbox: Listbox) -> list[str]:
+        selected = [str(listbox.get(index)) for index in listbox.curselection()]
+        if selected or listbox.size() == 0:
+            return selected
+        return [str(listbox.get(0))]
+
     def _fields(self, frame: ttk.Frame, start_row: int, fields: tuple[Field, ...]) -> int:
         row = start_row
         for field in fields:
@@ -136,7 +168,6 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _import_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         frame = self._new_tab(parent)
-        provider = StringVar(value="discord")
         file = StringVar()
         target_id = StringVar()
         target_name = StringVar()
@@ -149,7 +180,7 @@ class GuildBridgeGUI(ttk.Frame):
         apply = BooleanVar(value=False)
         force_invalid_template = BooleanVar(value=False)
 
-        self._provider_combo(frame, "To", 0, provider)
+        provider_to = self._provider_listbox(frame, "To", 0, ("discord",))
         row = self._fields(
             frame,
             1,
@@ -174,7 +205,7 @@ class GuildBridgeGUI(ttk.Frame):
             text="Run Import",
             command=lambda: self._run(
                 build_import_args(
-                    provider.get(),
+                    self._selected_providers(provider_to),
                     file=file.get(),
                     target_id=target_id.get(),
                     target_name=target_name.get(),
@@ -196,7 +227,6 @@ class GuildBridgeGUI(ttk.Frame):
     def _migrate_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         frame = self._new_tab(parent)
         provider_from = StringVar(value="discord")
-        provider_to = StringVar(value="fluxer")
         source_id = StringVar()
         template = StringVar()
         target_id = StringVar()
@@ -213,7 +243,7 @@ class GuildBridgeGUI(ttk.Frame):
         force_invalid_template = BooleanVar(value=False)
 
         self._provider_combo(frame, "From", 0, provider_from)
-        self._provider_combo(frame, "To", 1, provider_to)
+        provider_to = self._provider_listbox(frame, "To", 1, ("fluxer",))
         row = self._fields(
             frame,
             2,
@@ -242,7 +272,7 @@ class GuildBridgeGUI(ttk.Frame):
             command=lambda: self._run(
                 build_migrate_args(
                     provider_from.get(),
-                    provider_to.get(),
+                    self._selected_providers(provider_to),
                     source_id=source_id.get(),
                     template=template.get(),
                     target_id=target_id.get(),

@@ -6,12 +6,18 @@ from typing import Any
 
 from guildbridge.cli import main
 from guildbridge.models import Action, CommunityTemplate, ImportResult, Role
-from guildbridge.providers.base import ImportOptions, plan_or_apply_action
+from guildbridge.providers.base import ExportOptions, ImportOptions, plan_or_apply_action
 from guildbridge.safety import APPLY_CONFIRMATION
 
 
 class PlanProvider:
     name = "fake"
+
+    def __init__(self, name: str = "fake") -> None:
+        self.name = name
+
+    def export_template(self, options: ExportOptions) -> CommunityTemplate:
+        return CommunityTemplate(name=options.template or "Exported", roles=[Role(id="everyone", name="@everyone")])
 
     def import_template(self, template: CommunityTemplate, options: ImportOptions) -> ImportResult:
         result = ImportResult(provider=self.name, applied=options.apply)
@@ -46,6 +52,127 @@ def test_dry_run_writes_stable_plan_metadata(tmp_path: Path, monkeypatch) -> Non
     assert data["plan"]["context"]["target_name"] == "Target"
     assert data["plan"]["action_count"] == 1
     assert data["plan"]["action_hash"]
+
+
+def test_multi_target_import_writes_batch_plan(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    template_path = tmp_path / "template.json"
+    plan_path = tmp_path / "batch-plan.json"
+    write_template(template_path)
+    monkeypatch.setattr("guildbridge.cli.get_provider", lambda name, _config: PlanProvider(str(name)))
+
+    rc = main(
+        [
+            "import",
+            "--to",
+            "stoat",
+            "--to",
+            "fluxer",
+            "--file",
+            str(template_path),
+            "--target-name",
+            "stoat=Stoat Target",
+            "--target-name",
+            "fluxer=Fluxer Target",
+            "--plan-out",
+            str(plan_path),
+        ]
+    )
+
+    assert rc == 0
+    data = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert data["schema"] == "guildbridge.batch-result.v1"
+    assert data["command"] == "import"
+    assert data["applied"] is False
+    assert data["target_providers"] == ["stoat", "fluxer"]
+    assert data["action_count"] == 2
+    assert [result["provider"] for result in data["results"]] == ["stoat", "fluxer"]
+    contexts = {result["provider"]: result["plan"]["context"] for result in data["results"]}
+    assert contexts["stoat"]["target_name"] == "Stoat Target"
+    assert contexts["fluxer"]["target_name"] == "Fluxer Target"
+
+
+def test_multi_target_import_apply_accepts_batch_plan(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    template_path = tmp_path / "template.json"
+    plan_path = tmp_path / "batch-plan.json"
+    result_path = tmp_path / "batch-result.json"
+    journal_path = tmp_path / "journal.json"
+    write_template(template_path)
+    monkeypatch.setattr("guildbridge.cli.get_provider", lambda name, _config: PlanProvider(str(name)))
+
+    assert (
+        main(
+            [
+                "import",
+                "--to",
+                "stoat,fluxer",
+                "--file",
+                str(template_path),
+                "--target-name",
+                "Target",
+                "--plan-out",
+                str(plan_path),
+            ]
+        )
+        == 0
+    )
+
+    rc = main(
+        [
+            "import",
+            "--to",
+            "stoat",
+            "--to",
+            "fluxer",
+            "--file",
+            str(template_path),
+            "--target-name",
+            "Target",
+            "--apply",
+            "--confirm-apply",
+            APPLY_CONFIRMATION,
+            "--plan-in",
+            str(plan_path),
+            "--plan-out",
+            str(result_path),
+            "--journal-out",
+            str(journal_path),
+        ]
+    )
+
+    assert rc == 0
+    data = json.loads(result_path.read_text(encoding="utf-8"))
+    assert data["schema"] == "guildbridge.batch-result.v1"
+    assert data["applied"] is True
+    assert [result["id_map"]["resource"] for result in data["results"]] == ["created-id", "created-id"]
+    assert (tmp_path / "journal.stoat.json").exists()
+    assert (tmp_path / "journal.fluxer.json").exists()
+
+
+def test_multi_target_migrate_writes_batch_plan(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    plan_path = tmp_path / "migrate-batch-plan.json"
+    monkeypatch.setattr("guildbridge.cli.get_provider", lambda name, _config: PlanProvider(str(name)))
+
+    rc = main(
+        [
+            "migrate",
+            "--from",
+            "discord",
+            "--to",
+            "stoat,fluxer",
+            "--template",
+            "Template",
+            "--plan-out",
+            str(plan_path),
+        ]
+    )
+
+    assert rc == 0
+    data = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert data["schema"] == "guildbridge.batch-result.v1"
+    assert data["command"] == "migrate"
+    assert data["source_provider"] == "discord"
+    assert data["target_providers"] == ["stoat", "fluxer"]
+    assert [result["plan"]["context"]["source_provider"] for result in data["results"]] == ["discord", "discord"]
 
 
 def test_apply_requires_reviewed_plan(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]

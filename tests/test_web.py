@@ -64,7 +64,7 @@ def test_build_web_migrate_args() -> None:
         {
             "action": ["migrate"],
             "provider_from": ["discord"],
-            "provider_to": ["matrix"],
+            "provider_to": ["matrix", "rocket.chat"],
             "source_id": ["123"],
             "target_name": ["Target Space"],
             "plan_out": ["plan.json"],
@@ -75,7 +75,7 @@ def test_build_web_migrate_args() -> None:
             "force_invalid_template": ["on"],
         }
     )
-    assert args[:5] == ["migrate", "--from", "discord", "--to", "matrix"]
+    assert args[:7] == ["migrate", "--from", "discord", "--to", "matrix", "--to", "rocket.chat"]
     assert "--source-id" in args
     assert args[args.index("--plan-in") + 1] == "reviewed.plan.json"
     assert args[args.index("--journal-out") + 1] == "journal.json"
@@ -102,6 +102,7 @@ def test_render_page_includes_mobile_platforms() -> None:
     assert f'name="{CSRF_FIELD}" value="test-token"' in page
     assert f'name="{AUTH_FIELD}" value="lan-token"' in page
     assert f"Type {APPLY_CONFIRMATION}" in page
+    assert 'select name="provider_to" multiple' in page
 
 
 def test_render_page_has_mobile_layout_contracts() -> None:
