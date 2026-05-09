@@ -146,7 +146,7 @@ python -m guildbridge.web
 
 The web GUI listens on `127.0.0.1:8765` by default. It uses a responsive layout with touch-sized controls, anchored navigation, result status panels, and scroll-safe platform tables for phone and tablet browsers. It also uses a per-server CSRF token, limits POST body size, adds basic browser security headers, and requires typing `APPLY` before browser-triggered write operations run with `--apply`.
 
-Both GUI modes expose the same apply-safety controls as the CLI for import and migrate: Reviewed plan input, Journal output, Resume journal, Force invalid template after review, and Apply writes. Apply operations need a reviewed dry-run plan path and typed `APPLY`; GuildBridge still verifies the current candidate plan before writing.
+The desktop GUI exposes separate **Dry-run Check** and **Actual Run** buttons for import and migrate. Actual runs need a reviewed dry-run plan path and a Yes/No confirmation that previews the target provider, target server, action count, and incoming changes; GuildBridge still verifies the current candidate plan before writing. The browser GUI keeps typed `APPLY` confirmation for web-triggered write operations.
 
 To allow another device on the same trusted network to connect:
 

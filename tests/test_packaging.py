@@ -68,7 +68,8 @@ def test_readmes_demonstrate_end_user_gui_workflows() -> None:
 
     assert "### Desktop GUI workflow" in readme
     assert "guildbridge-gui.exe" in readme
-    assert "Keep **Apply writes** unchecked for the first run" in readme
+    assert "Click **Dry-run Check** first" in readme
+    assert "click **Actual Run**" in readme
     assert "Use the **Theme** selector" in readme
     assert "light/dark theme selection" in readme
     assert "Reviewed plan JSON" in readme
@@ -80,7 +81,8 @@ def test_readmes_demonstrate_end_user_gui_workflows() -> None:
 
     assert "### Masaustu GUI akisi" in turkish_readme
     assert "guildbridge-gui.exe" in turkish_readme
-    assert "**Apply writes** isaretli olmasin" in turkish_readme
+    assert "Once **Dry-run Check** dugmesine basin" in turkish_readme
+    assert "**Actual Run** dugmesine basin" in turkish_readme
     assert "**Theme** secicisini" in turkish_readme
     assert "acik/koyu tema secimi" in turkish_readme
     assert "Reviewed plan JSON" in turkish_readme

@@ -21,7 +21,6 @@ from guildbridge.permissions import neutral_to_stoat, stoat_to_neutral
 from guildbridge.utils import (
     hash_id,
     local_id,
-    new_ulid,
     normalize_channel_name,
     normalize_name,
     without_none,
@@ -180,7 +179,13 @@ class StoatProvider(Provider):
             categories_payload: list[dict[str, Any]] = []
             for cat in sorted(template.categories, key=lambda c: (c.position is None, c.position or 0)):
                 child_ids = [channel_map[ch.id] for ch in template.channels if ch.parent_id == cat.id and ch.id in channel_map]
-                categories_payload.append({"id": new_ulid(), "title": normalize_name(cat.name, max_len=STOAT_NAME_MAX), "channels": child_ids})
+                categories_payload.append(
+                    {
+                        "id": local_id("stoat_cat", self.name, cat.id),
+                        "title": normalize_name(cat.name, max_len=STOAT_NAME_MAX),
+                        "channels": child_ids,
+                    }
+                )
             categories_patch: dict[str, Any] = {"categories": categories_payload}
             action = Action(self.name, "PATCH", f"/servers/{server_id}", categories_patch, note="set Stoat category layout")
             plan_or_apply_action(

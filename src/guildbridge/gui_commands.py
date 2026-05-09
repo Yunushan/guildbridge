@@ -145,11 +145,11 @@ def apply_confirmation_error(
     if not apply:
         return None
     if not plan_in.strip():
-        return "Apply writes require a reviewed plan JSON path."
+        return "Actual run requires a reviewed plan JSON path."
     if _same_plan_path(plan_in, plan_out):
-        return "Apply writes require Plan/result JSON to be empty, '-', or a different file than Reviewed plan JSON."
+        return "Actual run requires Plan/result JSON to be empty, '-', or a different file than Reviewed plan JSON."
     if (confirmation or "").strip() != APPLY_CONFIRMATION:
-        return f"Apply writes require typing {APPLY_CONFIRMATION!r}."
+        return "Actual run was not confirmed."
     return None
 
 

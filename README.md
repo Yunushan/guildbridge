@@ -186,9 +186,9 @@ guildbridge-web.exe
 4. Use **Export** to create a neutral template from a source provider. Provide either a source ID or a provider template URL/code, then choose an output JSON path.
 5. Use **Import** to import an existing template into one or more target providers, or **Migrate** to export once and import into one or more destinations in one flow.
 6. Use the **Theme** selector to switch between light and dark mode.
-7. Keep **Apply writes** unchecked for the first run. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
+7. Click **Dry-run Check** first. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
 8. Review the generated plan JSON.
-9. To perform real writes, select the reviewed plan in **Reviewed plan JSON**, check **Apply writes**, and type `APPLY` when the confirmation dialog asks for it.
+9. To perform real writes, select the reviewed plan in **Reviewed plan JSON** and click **Actual Run**. The desktop GUI shows the target platform/server and incoming changes, then asks a Yes/No confirmation before writes start.
 10. Use **Journal output JSON** for apply runs so interrupted writes can be audited. Use **Resume journal JSON** only when retrying an interrupted apply with the same command, target, template, and reviewed plan.
 11. Use **Validate / Redact** before sharing templates.
 
@@ -196,7 +196,7 @@ The output panel shows the exact `guildbridge ...` command that the GUI ran, std
 
 The browser GUI starts at `http://127.0.0.1:8765` by default. It uses a responsive layout with touch-sized controls, anchored navigation, light/dark theme selection, result status panels, and scroll-safe platform tables for phone and tablet browsers. It also uses a per-server CSRF token, limits POST body size, adds basic browser security headers, and requires typing `APPLY` before browser-triggered write operations run with `--apply`.
 
-Both GUI modes expose the same apply-safety controls as the CLI for import and migrate: Reviewed plan input, Journal output, Resume journal, Force invalid template after review, and Apply writes. Apply operations need a reviewed plan path and typed `APPLY`; GuildBridge still validates the reviewed plan before provider writes start.
+The desktop GUI exposes separate **Dry-run Check** and **Actual Run** buttons for import and migrate. Actual runs need a reviewed plan path and a Yes/No confirmation that previews the target provider, target server, action count, and incoming changes; GuildBridge still validates the reviewed plan before provider writes start. The browser GUI keeps the typed `APPLY` confirmation for web-triggered write operations.
 
 Use `--host 0.0.0.0 --allow-lan --auth-token "choose-a-long-random-token"` only on trusted networks when you want phones or tablets on the same network to connect. LAN mode requires an auth token on every request; if you omit `--auth-token`, GuildBridge generates one and prints it once at startup.
 

@@ -11,9 +11,11 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "Journal output JSON" in source
     assert "Resume journal JSON" in source
     assert "Force invalid template after review" in source
-    assert "simpledialog.askstring" in source
+    assert "Dry-run Check" in source
+    assert "Actual Run" in source
+    assert "messagebox.askyesno" in source
+    assert "_reviewed_plan_preview" in source
     assert "apply_confirmation_error" in source
-    assert "Type APPLY to run provider writes using the reviewed plan." in source
     assert "assets/guildbridge-icon.png" in source
     assert "iconphoto" in source
     assert "iconbitmap" in source
@@ -22,4 +24,6 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "_refresh_windows_titlebar" in source
     assert "_apply_windows_titlebar" in source
     assert "_result_dialog_message" in source
-    assert "Plan/result JSON to be empty" in (ROOT / "src" / "guildbridge" / "gui_commands.py").read_text(encoding="utf-8")
+    assert "Actual run requires Plan/result JSON to be empty" in (
+        ROOT / "src" / "guildbridge" / "gui_commands.py"
+    ).read_text(encoding="utf-8")

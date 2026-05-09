@@ -98,17 +98,15 @@ def test_build_migrate_args_accepts_comma_separated_targets() -> None:
 def test_apply_confirmation_error_requires_reviewed_plan_and_token() -> None:
     assert apply_confirmation_error(apply=False, plan_in="", confirmation=None) is None
     assert apply_confirmation_error(apply=True, plan_in="", confirmation="APPLY") == (
-        "Apply writes require a reviewed plan JSON path."
+        "Actual run requires a reviewed plan JSON path."
     )
     assert apply_confirmation_error(
         apply=True,
         plan_in="reviewed.plan.json",
         plan_out="reviewed.plan.json",
         confirmation="APPLY",
-    ) == "Apply writes require Plan/result JSON to be empty, '-', or a different file than Reviewed plan JSON."
-    assert apply_confirmation_error(apply=True, plan_in="plan.json", confirmation="wrong") == (
-        "Apply writes require typing 'APPLY'."
-    )
+    ) == "Actual run requires Plan/result JSON to be empty, '-', or a different file than Reviewed plan JSON."
+    assert apply_confirmation_error(apply=True, plan_in="plan.json", confirmation="wrong") == "Actual run was not confirmed."
     assert apply_confirmation_error(apply=True, plan_in="plan.json", confirmation="APPLY") is None
 
 

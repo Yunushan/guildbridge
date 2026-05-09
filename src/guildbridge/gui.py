@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import queue
 import sys
 import threading
+from collections import Counter
 from dataclasses import dataclass
 from functools import partial
 from importlib import resources
@@ -17,10 +19,9 @@ from tkinter import (
     filedialog,
     messagebox,
     scrolledtext,
-    simpledialog,
     ttk,
 )
-from typing import Any
+from typing import Any, cast
 
 from guildbridge.gui_commands import (
     CommandResult,
@@ -35,6 +36,7 @@ from guildbridge.gui_commands import (
 )
 from guildbridge.platforms import SUPPORTED_PLATFORMS, runtime_check
 from guildbridge.providers import provider_names
+from guildbridge.safety import APPLY_CONFIRMATION
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,15 @@ class Field:
     label: str
     variable: StringVar
     browse: str | None = None
+
+
+@dataclass(frozen=True)
+class ApplyPrompt:
+    operation: str
+    source_provider: str | None
+    target_providers: tuple[str, ...]
+    target_id: str
+    target_name: str
 
 
 GUI_THEMES: dict[str, dict[str, str]] = {
@@ -464,7 +475,6 @@ class GuildBridgeGUI(ttk.Frame):
         resume_journal = StringVar()
         audit = StringVar()
         redact = BooleanVar(value=False)
-        apply = BooleanVar(value=False)
         force_invalid_template = BooleanVar(value=False)
 
         provider_to = self._provider_listbox(frame, "To", 0, ("discord",))
@@ -486,10 +496,31 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
             row=row + 1, column=1, sticky="w"
         )
-        ttk.Checkbutton(frame, text="Apply writes", variable=apply).grid(row=row + 2, column=1, sticky="w")
+        actions = ttk.Frame(frame)
+        actions.grid(row=row + 2, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
-            frame,
-            text="Run Import",
+            actions,
+            text="Dry-run Check",
+            command=lambda: self._run(
+                build_import_args(
+                    self._selected_providers(provider_to),
+                    file=file.get(),
+                    target_id=target_id.get(),
+                    target_name=target_name.get(),
+                    plan_out=plan_out.get(),
+                    plan_in="",
+                    journal_out=journal_out.get(),
+                    resume_journal=resume_journal.get(),
+                    audit_log_reason=audit.get(),
+                    redact=redact.get(),
+                    apply=False,
+                    force_invalid_template=force_invalid_template.get(),
+                )
+            ),
+        ).grid(row=0, column=0, sticky="e", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Actual Run",
             command=lambda: self._run(
                 build_import_args(
                     self._selected_providers(provider_to),
@@ -502,14 +533,21 @@ class GuildBridgeGUI(ttk.Frame):
                     resume_journal=resume_journal.get(),
                     audit_log_reason=audit.get(),
                     redact=redact.get(),
-                    apply=apply.get(),
+                    apply=True,
                     force_invalid_template=force_invalid_template.get(),
                 ),
-                apply_requested=apply.get(),
+                apply_requested=True,
                 reviewed_plan=plan_in.get(),
                 plan_out=plan_out.get(),
+                apply_prompt=ApplyPrompt(
+                    operation="Import",
+                    source_provider=None,
+                    target_providers=tuple(self._selected_providers(provider_to)),
+                    target_id=target_id.get(),
+                    target_name=target_name.get(),
+                ),
             ),
-        ).grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
+        ).grid(row=0, column=1, sticky="e")
         return tab
 
     def _migrate_tab(self, parent: ttk.Notebook) -> ttk.Frame:
@@ -527,7 +565,6 @@ class GuildBridgeGUI(ttk.Frame):
         audit = StringVar()
         include_overwrites = BooleanVar(value=False)
         redact = BooleanVar(value=True)
-        apply = BooleanVar(value=False)
         force_invalid_template = BooleanVar(value=False)
 
         self._provider_combo(frame, "From", 0, provider_from)
@@ -553,10 +590,35 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
             row=row + 2, column=1, sticky="w"
         )
-        ttk.Checkbutton(frame, text="Apply writes", variable=apply).grid(row=row + 3, column=1, sticky="w")
+        actions = ttk.Frame(frame)
+        actions.grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
-            frame,
-            text="Run Migrate",
+            actions,
+            text="Dry-run Check",
+            command=lambda: self._run(
+                build_migrate_args(
+                    provider_from.get(),
+                    self._selected_providers(provider_to),
+                    source_id=source_id.get(),
+                    template=template.get(),
+                    target_id=target_id.get(),
+                    target_name=target_name.get(),
+                    template_out=template_out.get(),
+                    plan_out=plan_out.get(),
+                    plan_in="",
+                    journal_out=journal_out.get(),
+                    resume_journal=resume_journal.get(),
+                    audit_log_reason=audit.get(),
+                    include_user_overwrites=include_overwrites.get(),
+                    redact=redact.get(),
+                    apply=False,
+                    force_invalid_template=force_invalid_template.get(),
+                )
+            ),
+        ).grid(row=0, column=0, sticky="e", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Actual Run",
             command=lambda: self._run(
                 build_migrate_args(
                     provider_from.get(),
@@ -573,14 +635,21 @@ class GuildBridgeGUI(ttk.Frame):
                     audit_log_reason=audit.get(),
                     include_user_overwrites=include_overwrites.get(),
                     redact=redact.get(),
-                    apply=apply.get(),
+                    apply=True,
                     force_invalid_template=force_invalid_template.get(),
                 ),
-                apply_requested=apply.get(),
+                apply_requested=True,
                 reviewed_plan=plan_in.get(),
                 plan_out=plan_out.get(),
+                apply_prompt=ApplyPrompt(
+                    operation="Migrate",
+                    source_provider=provider_from.get(),
+                    target_providers=tuple(self._selected_providers(provider_to)),
+                    target_id=target_id.get(),
+                    target_name=target_name.get(),
+                ),
             ),
-        ).grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
+        ).grid(row=0, column=1, sticky="e")
         return tab
 
     def _tools_tab(self, parent: ttk.Notebook) -> ttk.Frame:
@@ -653,34 +722,111 @@ class GuildBridgeGUI(ttk.Frame):
         apply_requested: bool = False,
         reviewed_plan: str = "",
         plan_out: str = "",
+        apply_prompt: ApplyPrompt | None = None,
     ) -> None:
-        if apply_requested and not self._confirm_apply(reviewed_plan, plan_out):
+        if apply_requested and not self._confirm_apply(reviewed_plan, plan_out, apply_prompt):
             return
         self._append_output(f"$ {command_preview(args)}\nStatus: running...\n")
         worker = threading.Thread(target=self._worker, args=(args,), daemon=True)
         worker.start()
         self.after(100, self._poll)
 
-    def _confirm_apply(self, reviewed_plan: str, plan_out: str) -> bool:
+    def _confirm_apply(self, reviewed_plan: str, plan_out: str, prompt: ApplyPrompt | None) -> bool:
         plan_error = apply_confirmation_error(
             apply=True,
             plan_in=reviewed_plan,
-            confirmation="APPLY",
+            confirmation=APPLY_CONFIRMATION,
             plan_out=plan_out,
         )
         if plan_error:
-            messagebox.showerror("Apply writes", plan_error, parent=self.master)
+            messagebox.showerror("Actual run", plan_error, parent=self.master)
             return False
-        typed = simpledialog.askstring(
-            "Confirm apply writes",
-            "Type APPLY to run provider writes using the reviewed plan.",
-            parent=self.master,
+        try:
+            preview = self._reviewed_plan_preview(reviewed_plan)
+        except ValueError as exc:
+            messagebox.showerror("Actual run", str(exc), parent=self.master)
+            return False
+        return bool(
+            messagebox.askyesno(
+                "Confirm actual run",
+                self._apply_confirmation_message(prompt, reviewed_plan, plan_out, preview),
+                icon="warning",
+                parent=self.master,
+            )
         )
-        error = apply_confirmation_error(apply=True, plan_in=reviewed_plan, confirmation=typed, plan_out=plan_out)
-        if error:
-            messagebox.showerror("Apply writes", error, parent=self.master)
-            return False
-        return True
+
+    @staticmethod
+    def _reviewed_plan_preview(reviewed_plan: str) -> list[str]:
+        path = Path(reviewed_plan).expanduser()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise ValueError(f"Could not read reviewed plan JSON:\n{path}\n\n{exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Reviewed plan JSON is not valid JSON:\n{path}\n\n{exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("Reviewed plan JSON must contain an object.")
+        plan = data.get("plan")
+        actions = data.get("actions")
+        if not isinstance(plan, dict) or not isinstance(actions, list):
+            raise ValueError("Reviewed plan JSON must be a dry-run result with plan metadata and actions.")
+        context_raw = plan.get("context")
+        context = cast(dict[str, Any], context_raw) if isinstance(context_raw, dict) else {}
+        action_count = int(plan.get("action_count") or len(actions))
+        providers = Counter(str(action.get("provider") or "unknown") for action in actions if isinstance(action, dict))
+        methods = Counter(str(action.get("method") or "UNKNOWN") for action in actions if isinstance(action, dict))
+        paths = Counter(
+            f"{action.get('provider') or 'unknown'} {action.get('method') or 'UNKNOWN'} {action.get('path') or ''}".strip()
+            for action in actions
+            if isinstance(action, dict)
+        )
+
+        lines = [
+            f"Reviewed plan file: {path}",
+            f"Source provider: {context.get('source_provider') or 'n/a'}",
+            f"Target provider: {context.get('provider') or 'n/a'}",
+            f"Target ID: {context.get('target_id') or 'new target if supported'}",
+            f"Target name: {context.get('target_name') or 'not set'}",
+            f"Planned write actions: {action_count}",
+        ]
+        if providers:
+            lines.append("Action providers: " + ", ".join(f"{name} ({count})" for name, count in providers.most_common()))
+        if methods:
+            lines.append("Action types: " + ", ".join(f"{name} {count}" for name, count in methods.most_common()))
+        if paths:
+            lines.append("Most common incoming changes:")
+            lines.extend(f"  - {name} x{count}" for name, count in paths.most_common(8))
+        return lines
+
+    @staticmethod
+    def _apply_confirmation_message(
+        prompt: ApplyPrompt | None,
+        reviewed_plan: str,
+        plan_out: str,
+        preview: list[str],
+    ) -> str:
+        lines = [
+            "This actual run will write changes to the selected platform/server.",
+            "",
+        ]
+        if prompt is not None:
+            lines.append(f"Operation: {prompt.operation}")
+            if prompt.source_provider:
+                lines.append(f"From: {prompt.source_provider}")
+            lines.append(f"To: {', '.join(prompt.target_providers) or 'n/a'}")
+            lines.append(f"Selected target ID: {prompt.target_id or 'new target if supported'}")
+            lines.append(f"Selected target name: {prompt.target_name or 'not set'}")
+            lines.append("")
+        lines.extend(preview)
+        lines.extend(
+            [
+                "",
+                f"Apply result output: {plan_out or 'output panel only'}",
+                "",
+                "Continue with the actual run?",
+            ]
+        )
+        return "\n".join(lines)
 
     def _worker(self, args: list[str]) -> None:
         self.result_queue.put(run_cli_args(args))

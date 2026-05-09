@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 
 from guildbridge.config import RuntimeConfig
-from guildbridge.models import Channel, CommunityTemplate, Role
+from guildbridge.models import Category, Channel, CommunityTemplate, Role
+from guildbridge.plan import action_fingerprint
 from guildbridge.providers.base import ExportOptions, ImportOptions, require_response_id, safe_int
 from guildbridge.providers.daccord import DaccordProvider
 from guildbridge.providers.discord import DiscordProvider
@@ -264,6 +265,22 @@ def test_stoat_apply_requires_server_id() -> None:
 
     with pytest.raises(ValueError, match="Stoat server create response did not contain an id"):
         provider.import_template(CommunityTemplate(name="Example"), ImportOptions(apply=True))
+
+
+def test_stoat_dry_run_category_layout_is_deterministic() -> None:
+    provider = StoatProvider(RuntimeConfig())
+    template = CommunityTemplate(
+        name="Example",
+        roles=[Role(id="everyone", name="@everyone")],
+        categories=[Category(id="cat_general", name="General")],
+        channels=[Channel(id="chan_general", name="general", parent_id="cat_general")],
+    )
+
+    first = provider.import_template(template, ImportOptions(target_id="server1"))
+    second = provider.import_template(template, ImportOptions(target_id="server1"))
+
+    assert action_fingerprint(first.actions) == action_fingerprint(second.actions)
+    assert first.actions[-1].payload == second.actions[-1].payload
 
 
 def test_spacebar_apply_requires_role_create_id() -> None:

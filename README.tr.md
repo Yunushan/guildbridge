@@ -186,9 +186,9 @@ guildbridge-web.exe
 4. Kaynak saglayicidan tarafsiz template olusturmak icin **Export** kullanin. Source ID veya provider template URL/code girin, sonra output JSON yolu secin.
 5. Mevcut template'i bir veya daha fazla hedef saglayiciya aktarmak icin **Import**, tek export ile bir veya daha fazla hedefe import icin **Migrate** kullanin.
 6. Acik ve koyu mod arasinda gecmek icin **Theme** secicisini kullanin.
-7. Ilk calistirmada **Apply writes** isaretli olmasin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
+7. Once **Dry-run Check** dugmesine basin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
 8. Olusturulan plan JSON dosyasini inceleyin.
-9. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin, **Apply writes** isaretleyin ve onay penceresi istediginde `APPLY` yazin.
+9. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin ve **Actual Run** dugmesine basin. Masaustu GUI hedef platform/sunucuyu ve gelecek degisiklikleri gosterir, sonra yazmalar baslamadan once Evet/Hayir onayi ister.
 10. Apply calistirmalarinda **Journal output JSON** kullanin ki yarida kalan yazmalar denetlenebilsin. **Resume journal JSON** yalnizca ayni komut, hedef, template ve incelenmis planla yarida kalmis apply'i tekrar denerken kullanin.
 11. Template paylasmadan once **Validate / Redact** kullanin.
 
@@ -196,7 +196,7 @@ Output paneli GUI'nin calistirdigi tam `guildbridge ...` komutunu, stdout/stderr
 
 Tarayici GUI varsayilan olarak `http://127.0.0.1:8765` adresinde baslar. Telefon ve tablet tarayicilari icin dokunmaya uygun kontroller, sabit gezinme, acik/koyu tema secimi, sonuc durum panelleri ve kaydirma guvenli platform tablolari olan responsive bir duzen kullanir. Ayrica her sunucu icin CSRF token'i kullanir, POST govde boyutunu sinirlar, temel tarayici guvenlik basliklari ekler ve tarayicidan tetiklenen yazma islemlerinin `--apply` ile calismasi icin `APPLY` yazilmasini zorunlu tutar.
 
-Her iki GUI modu da import ve migrate icin CLI ile ayni apply guvenligi kontrollerini sunar: incelenmis plan girdisi, journal ciktisi, resume journal, inceleme sonrasi gecersiz sablonu zorlama ve yazmalari uygulama. Apply islemleri incelenmis plan yolu ve yazilmis `APPLY` ister; GuildBridge saglayici yazmalari baslamadan once incelenmis plani yine dogrular.
+Masaustu GUI import ve migrate icin ayri **Dry-run Check** ve **Actual Run** dugmeleri sunar. Actual run icin incelenmis plan yolu ve hedef provider, hedef sunucu, aksiyon sayisi ve gelecek degisiklikleri gosteren Evet/Hayir onayi gerekir; GuildBridge saglayici yazmalari baslamadan once incelenmis plani yine dogrular. Tarayici GUI web uzerinden tetiklenen yazma islemleri icin yazili `APPLY` onayini kullanmaya devam eder.
 
 Ayni agdaki telefon veya tabletlerin baglanmasini sadece guvenilir aglarda istiyorsaniz `--host 0.0.0.0 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"` kullanin. LAN modu her istekte auth token'i ister; `--auth-token` vermediginizde GuildBridge bir token uretir ve baslangicta bir kez yazdirir.
 
