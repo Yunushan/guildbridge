@@ -507,6 +507,7 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
                 apply_requested=apply.get(),
                 reviewed_plan=plan_in.get(),
+                plan_out=plan_out.get(),
             ),
         ).grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
         return tab
@@ -577,6 +578,7 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
                 apply_requested=apply.get(),
                 reviewed_plan=plan_in.get(),
+                plan_out=plan_out.get(),
             ),
         ).grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
         return tab
@@ -644,19 +646,27 @@ class GuildBridgeGUI(ttk.Frame):
         frame.rowconfigure(1, weight=1)
         return tab
 
-    def _run(self, args: list[str], *, apply_requested: bool = False, reviewed_plan: str = "") -> None:
-        if apply_requested and not self._confirm_apply(reviewed_plan):
+    def _run(
+        self,
+        args: list[str],
+        *,
+        apply_requested: bool = False,
+        reviewed_plan: str = "",
+        plan_out: str = "",
+    ) -> None:
+        if apply_requested and not self._confirm_apply(reviewed_plan, plan_out):
             return
         self._append_output(f"$ {command_preview(args)}\nStatus: running...\n")
         worker = threading.Thread(target=self._worker, args=(args,), daemon=True)
         worker.start()
         self.after(100, self._poll)
 
-    def _confirm_apply(self, reviewed_plan: str) -> bool:
+    def _confirm_apply(self, reviewed_plan: str, plan_out: str) -> bool:
         plan_error = apply_confirmation_error(
             apply=True,
             plan_in=reviewed_plan,
             confirmation="APPLY",
+            plan_out=plan_out,
         )
         if plan_error:
             messagebox.showerror("Apply writes", plan_error, parent=self.master)
@@ -666,7 +676,7 @@ class GuildBridgeGUI(ttk.Frame):
             "Type APPLY to run provider writes using the reviewed plan.",
             parent=self.master,
         )
-        error = apply_confirmation_error(apply=True, plan_in=reviewed_plan, confirmation=typed)
+        error = apply_confirmation_error(apply=True, plan_in=reviewed_plan, confirmation=typed, plan_out=plan_out)
         if error:
             messagebox.showerror("Apply writes", error, parent=self.master)
             return False
@@ -693,9 +703,24 @@ class GuildBridgeGUI(ttk.Frame):
             self._append_output(result.stderr)
         self._append_output(f"Status: {status}\nExit code: {result.returncode}\nDuration: {result.duration_seconds:.2f}s\n\n")
         if result.returncode == 0 and not result.timed_out:
-            messagebox.showinfo("GuildBridge", f"Command completed successfully in {result.duration_seconds:.2f}s.", parent=self.master)
+            messagebox.showinfo(
+                "GuildBridge",
+                self._result_dialog_message(result, "Command completed successfully"),
+                parent=self.master,
+            )
         else:
-            messagebox.showerror("GuildBridge", f"Command {status}. Exit code: {result.returncode}.", parent=self.master)
+            messagebox.showerror("GuildBridge", self._result_dialog_message(result, f"Command {status}"), parent=self.master)
+
+    @staticmethod
+    def _result_dialog_message(result: CommandResult, heading: str) -> str:
+        details = (result.stderr or result.stdout).strip()
+        message = f"{heading}. Exit code: {result.returncode}. Duration: {result.duration_seconds:.2f}s."
+        if details:
+            max_length = 1800
+            if len(details) > max_length:
+                details = details[:max_length].rstrip() + "\n..."
+            message += f"\n\n{details}"
+        return message
 
     def _append_output(self, text: str) -> None:
         self.output.insert("end", text)

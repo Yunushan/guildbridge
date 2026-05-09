@@ -21,3 +21,5 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "GetAncestor" in source
     assert "_refresh_windows_titlebar" in source
     assert "_apply_windows_titlebar" in source
+    assert "_result_dialog_message" in source
+    assert "Plan/result JSON to be empty" in (ROOT / "src" / "guildbridge" / "gui_commands.py").read_text(encoding="utf-8")

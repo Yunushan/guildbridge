@@ -135,14 +135,31 @@ def build_migrate_args(
     return args
 
 
-def apply_confirmation_error(*, apply: bool, plan_in: str, confirmation: str | None) -> str | None:
+def apply_confirmation_error(
+    *,
+    apply: bool,
+    plan_in: str,
+    confirmation: str | None,
+    plan_out: str = "",
+) -> str | None:
     if not apply:
         return None
     if not plan_in.strip():
         return "Apply writes require a reviewed plan JSON path."
+    if _same_plan_path(plan_in, plan_out):
+        return "Apply writes require Plan/result JSON to be empty, '-', or a different file than Reviewed plan JSON."
     if (confirmation or "").strip() != APPLY_CONFIRMATION:
         return f"Apply writes require typing {APPLY_CONFIRMATION!r}."
     return None
+
+
+def _same_plan_path(plan_in: str, plan_out: str) -> bool:
+    if not plan_in.strip() or not plan_out.strip() or plan_out.strip() == "-":
+        return False
+    try:
+        return Path(plan_in).expanduser().resolve() == Path(plan_out).expanduser().resolve()
+    except OSError:
+        return Path(plan_in).expanduser().absolute() == Path(plan_out).expanduser().absolute()
 
 
 def build_validate_args(file: str) -> list[str]:
