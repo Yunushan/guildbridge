@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.models import CommunityTemplate, ImportResult
@@ -10,17 +9,17 @@ from guildbridge.models import CommunityTemplate, ImportResult
 
 @dataclass
 class ExportOptions:
-    source_id: Optional[str] = None
-    template: Optional[str] = None
+    source_id: str | None = None
+    template: str | None = None
     include_user_overwrites: bool = False
 
 
 @dataclass
 class ImportOptions:
-    target_id: Optional[str] = None
-    target_name: Optional[str] = None
+    target_id: str | None = None
+    target_name: str | None = None
     apply: bool = False
-    audit_log_reason: Optional[str] = None
+    audit_log_reason: str | None = None
 
 
 class Provider(ABC):

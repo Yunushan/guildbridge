@@ -4,12 +4,12 @@ import hashlib
 import os
 import re
 import string
-from typing import Any, Dict, Optional
+from typing import Any
 
 ID_ALPHABET = string.ascii_lowercase + string.digits
 
 
-def env(*names: str, default: Optional[str] = None) -> Optional[str]:
+def env(*names: str, default: str | None = None) -> str | None:
     for name in names:
         value = os.getenv(name)
         if value:
@@ -18,7 +18,7 @@ def env(*names: str, default: Optional[str] = None) -> Optional[str]:
 
 
 def hash_id(namespace: str, raw_id: Any, length: int = 16) -> str:
-    digest = hashlib.sha256(f"{namespace}:{raw_id}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{namespace}:{raw_id}".encode()).hexdigest()
     return digest[:length]
 
 
@@ -42,11 +42,11 @@ def normalize_channel_name(name: str, *, max_len: int = 100) -> str:
     return (clean or "channel")[:max_len]
 
 
-def without_none(data: Dict[str, Any]) -> Dict[str, Any]:
+def without_none(data: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in data.items() if v is not None}
 
 
-def parse_bool(value: Optional[str], default: bool = False) -> bool:
+def parse_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}

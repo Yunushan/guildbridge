@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.models import CommunityTemplate
@@ -18,7 +18,7 @@ def load_template(path: str | Path) -> CommunityTemplate:
     return CommunityTemplate.from_dict(data)
 
 
-def write_json(data: Dict[str, Any], path: Optional[str]) -> None:
+def write_json(data: dict[str, Any], path: str | None) -> None:
     text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
     if not path or path == "-":
         print(text)
@@ -179,7 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.version:

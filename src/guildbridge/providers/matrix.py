@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 from urllib.parse import quote, urlparse
 
 from guildbridge.config import RuntimeConfig
@@ -65,7 +66,7 @@ class MatrixProvider(Provider):
                 main_space_id = "!dryMainSpace:example.org"
         result.id_map["space"] = main_space_id
 
-        category_space_map: Dict[str, str] = {}
+        category_space_map: dict[str, str] = {}
         for cat in sorted(template.categories, key=lambda c: (c.position is None, c.position or 0)):
             payload = {
                 "name": normalize_name(cat.name, max_len=100, fallback="category"),
@@ -107,19 +108,20 @@ class MatrixProvider(Provider):
         result.warnings.append("Matrix/Element has no Discord-style global server roles; GuildBridge creates rooms/spaces and applies only coarse room defaults.")
         return result
 
-    def _build_from_hierarchy(self, source_id: str, rooms: Iterable[Dict[str, Any]]) -> CommunityTemplate:
-        out_channels: List[Channel] = []
-        out_categories: List[Category] = []
+    def _build_from_hierarchy(self, source_id: str, rooms: Iterable[dict[str, Any]]) -> CommunityTemplate:
+        out_channels: list[Channel] = []
+        out_categories: list[Category] = []
         category_for_rooms = Category(id="cat_matrix_rooms", name="Matrix Rooms", position=0)
         out_categories.append(category_for_rooms)
         source_name = "Matrix space"
         for idx, room in enumerate(rooms or []):
             room_id = str(room.get("room_id") or idx)
             room_type = room.get("room_type")
-            name = room.get("name") or room.get("canonical_alias") or f"room-{idx}"
+            room_name = room.get("name")
+            name = room_name or room.get("canonical_alias") or f"room-{idx}"
             if room_id == source_id or room_type == "m.space":
-                if room_id == source_id and room.get("name"):
-                    source_name = room.get("name")
+                if room_id == source_id and room_name:
+                    source_name = str(room_name)
                 continue
             out_channels.append(
                 Channel(
@@ -142,7 +144,7 @@ class MatrixProvider(Provider):
             warnings=[self.supported_warning(), "Matrix message history, members, and per-user power levels were not exported."],
         )
 
-    def _build_from_state(self, room_id: str, state: Iterable[Dict[str, Any]], *, warning: str) -> CommunityTemplate:
+    def _build_from_state(self, room_id: str, state: Iterable[dict[str, Any]], *, warning: str) -> CommunityTemplate:
         name = "Matrix room"
         topic = None
         for event in state or []:
@@ -159,7 +161,7 @@ class MatrixProvider(Provider):
             warnings=[self.supported_warning(), warning, "Matrix message history, members, and per-user power levels were not exported."],
         )
 
-    def _plan_or_apply_space_link(self, result: ImportResult, parent_id: str, child_id: str, server_name: str, *, order: Optional[int], apply: bool) -> None:
+    def _plan_or_apply_space_link(self, result: ImportResult, parent_id: str, child_id: str, server_name: str, *, order: int | None, apply: bool) -> None:
         order_str = f"{order:04d}" if isinstance(order, int) else None
         child_payload = without_none({"via": [server_name], "order": order_str, "suggested": True})
         parent_payload = {"via": [server_name], "canonical": True}
@@ -172,7 +174,7 @@ class MatrixProvider(Provider):
             self.http.put(parent_path, json_body=parent_payload)
 
     @staticmethod
-    def _power_levels_for_channel(channel: Channel) -> Dict[str, Any]:
+    def _power_levels_for_channel(channel: Channel) -> dict[str, Any]:
         # Conservative defaults: creators/admins keep state power, normal users can chat.
         # Role-specific permissions do not map cleanly to Matrix without user IDs, which
         # GuildBridge intentionally avoids storing.

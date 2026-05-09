@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.http import HttpClient
@@ -16,7 +17,14 @@ from guildbridge.models import (
     TemplateSource,
 )
 from guildbridge.permissions import neutral_to_stoat, stoat_to_neutral
-from guildbridge.utils import hash_id, local_id, new_ulid, normalize_channel_name, normalize_name, without_none
+from guildbridge.utils import (
+    hash_id,
+    local_id,
+    new_ulid,
+    normalize_channel_name,
+    normalize_name,
+    without_none,
+)
 
 from .base import ExportOptions, ImportOptions, Provider
 
@@ -38,7 +46,7 @@ class StoatProvider(Provider):
         super().__init__(config)
         self.http = HttpClient(config.stoat_api_base, token=None, timeout=config.request_timeout)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         if not self.config.stoat_token:
             return {}
         return {"X-Bot-Token": self.config.stoat_token}
@@ -71,7 +79,7 @@ class StoatProvider(Provider):
                 server_id = "dry_stoat_server"
         result.id_map["server"] = server_id
 
-        role_map: Dict[str, str] = {"everyone": "default"}
+        role_map: dict[str, str] = {"everyone": "default"}
         # Stoat's default/everyone permissions are server-level. Avoid modifying them automatically.
         for role in sorted(template.roles, key=lambda r: (r.position is None, r.position or 0)):
             if role.name == "@everyone" or role.id == "everyone":
@@ -100,7 +108,7 @@ class StoatProvider(Provider):
             if options.apply:
                 self.http.patch(f"/servers/{server_id}/roles/{role_id}", json_body=patch_payload, headers=self._headers())
 
-        channel_map: Dict[str, str] = {}
+        channel_map: dict[str, str] = {}
         for channel in sorted(template.channels, key=lambda c: (c.position is None, c.position or 0)):
             if channel.type not in {"text", "voice"}:
                 result.warnings.append(f"Skipping unsupported Stoat channel type {channel.type!r} for {channel.name!r}.")
@@ -122,7 +130,7 @@ class StoatProvider(Provider):
             channel_map[channel.id] = channel_id
 
             # Role permission patches are channel-local in Stoat/Revolt-style APIs.
-            role_perms: Dict[str, Dict[str, int]] = {}
+            role_perms: dict[str, dict[str, int]] = {}
             for ow in channel.permission_overwrites:
                 target = role_map.get(ow.target_id)
                 if not target or target == "default":
@@ -136,20 +144,20 @@ class StoatProvider(Provider):
 
         # Stoat/Revolt categories are a server layout property. They are updated after channels exist.
         if template.categories:
-            categories_payload = []
+            categories_payload: list[dict[str, Any]] = []
             for cat in sorted(template.categories, key=lambda c: (c.position is None, c.position or 0)):
                 child_ids = [channel_map[ch.id] for ch in template.channels if ch.parent_id == cat.id and ch.id in channel_map]
                 categories_payload.append({"id": new_ulid(), "title": normalize_name(cat.name, max_len=STOAT_NAME_MAX), "channels": child_ids})
-            payload = {"categories": categories_payload}
-            result.actions.append(Action(self.name, "PATCH", f"/servers/{server_id}", payload, note="set Stoat category layout"))
+            categories_patch: dict[str, Any] = {"categories": categories_payload}
+            result.actions.append(Action(self.name, "PATCH", f"/servers/{server_id}", categories_patch, note="set Stoat category layout"))
             if options.apply:
-                self.http.patch(f"/servers/{server_id}", json_body=payload, headers=self._headers())
+                self.http.patch(f"/servers/{server_id}", json_body=categories_patch, headers=self._headers())
 
         result.id_map.update(role_map)
         result.id_map.update(channel_map)
         return result
 
-    def _roles_from_server(self, server: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _roles_from_server(self, server: dict[str, Any]) -> list[dict[str, Any]]:
         roles = server.get("roles") or {}
         if isinstance(roles, list):
             return roles
@@ -161,9 +169,9 @@ class StoatProvider(Provider):
             return output
         return []
 
-    def _channels_from_server(self, server: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _channels_from_server(self, server: dict[str, Any]) -> list[dict[str, Any]]:
         channels = server.get("channels") or []
-        output: List[Dict[str, Any]] = []
+        output: list[dict[str, Any]] = []
         for item in channels:
             if isinstance(item, dict):
                 output.append(item)
@@ -174,10 +182,10 @@ class StoatProvider(Provider):
                     output.append({"_id": str(item), "name": f"unfetched-{item}", "channel_type": "Unknown", "_warning": str(exc)})
         return output
 
-    def _build_template(self, server: Dict[str, Any], roles: Iterable[Dict[str, Any]], channels: Iterable[Dict[str, Any]], *, options: ExportOptions) -> CommunityTemplate:
+    def _build_template(self, server: dict[str, Any], roles: Iterable[dict[str, Any]], channels: Iterable[dict[str, Any]], *, options: ExportOptions) -> CommunityTemplate:
         server_id = str(server.get("_id") or server.get("id") or options.source_id)
-        role_id_map: Dict[str, str] = {"default": "everyone"}
-        out_roles: List[Role] = [Role(id="everyone", name="@everyone", permissions=stoat_to_neutral(server.get("default_permissions")))]
+        role_id_map: dict[str, str] = {"default": "everyone"}
+        out_roles: list[Role] = [Role(id="everyone", name="@everyone", permissions=stoat_to_neutral(server.get("default_permissions")))]
         for role in roles or []:
             raw_id = str(role.get("id") or role.get("_id") or role.get("name"))
             lid = local_id("role", self.name, raw_id)
@@ -199,9 +207,9 @@ class StoatProvider(Provider):
                 )
             )
 
-        category_id_map: Dict[str, str] = {}
-        channel_parent_map: Dict[str, str] = {}
-        out_categories: List[Category] = []
+        category_id_map: dict[str, str] = {}
+        channel_parent_map: dict[str, str] = {}
+        out_categories: list[Category] = []
         for idx, cat in enumerate(server.get("categories") or []):
             if not isinstance(cat, dict):
                 continue
@@ -212,7 +220,7 @@ class StoatProvider(Provider):
             for ch_id in cat.get("channels") or []:
                 channel_parent_map[str(ch_id)] = lid
 
-        out_channels: List[Channel] = []
+        out_channels: list[Channel] = []
         for idx, ch in enumerate(channels or []):
             raw_id = str(ch.get("_id") or ch.get("id") or ch.get("name"))
             channel_kind = ch.get("channel_type") or ch.get("type") or "TextChannel"
@@ -246,8 +254,8 @@ class StoatProvider(Provider):
             warnings=warnings,
         )
 
-    def _role_permissions_from_stoat(self, role_permissions: Dict[str, Any], role_id_map: Dict[str, str]) -> List[PermissionOverwrite]:
-        output: List[PermissionOverwrite] = []
+    def _role_permissions_from_stoat(self, role_permissions: dict[str, Any], role_id_map: dict[str, str]) -> list[PermissionOverwrite]:
+        output: list[PermissionOverwrite] = []
         for raw_id, value in role_permissions.items():
             if not isinstance(value, dict):
                 continue

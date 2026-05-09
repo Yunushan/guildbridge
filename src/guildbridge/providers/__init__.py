@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Dict, Type
-
 from guildbridge.config import RuntimeConfig
 
 from .base import Provider
@@ -10,7 +8,7 @@ from .fluxer import FluxerProvider
 from .matrix import MatrixProvider
 from .stoat import StoatProvider
 
-PROVIDER_CLASSES: tuple[Type[Provider], ...] = (
+PROVIDER_CLASSES: tuple[type[Provider], ...] = (
     DiscordProvider,
     FluxerProvider,
     StoatProvider,
@@ -27,5 +25,5 @@ def get_provider(name: str, config: RuntimeConfig) -> Provider:
     raise ValueError(f"Unknown provider {name!r}. Valid providers: {valid}")
 
 
-def provider_names() -> Dict[str, tuple[str, ...]]:
+def provider_names() -> dict[str, tuple[str, ...]]:
     return {cls.name: cls.aliases for cls in PROVIDER_CLASSES}

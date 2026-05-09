@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Set
+from collections.abc import Iterable
 
 # Neutral permissions intentionally cover only structure-level template work.
 # They are not a legal/security substitute for reviewing target permissions.
-NEUTRAL_PERMISSIONS: Set[str] = {
+NEUTRAL_PERMISSIONS: set[str] = {
     "administrator",
     "manage_server",
     "manage_channels",
@@ -27,7 +27,7 @@ NEUTRAL_PERMISSIONS: Set[str] = {
     "manage_webhooks",
 }
 
-DISCORD_TO_NEUTRAL: Dict[int, str] = {
+DISCORD_TO_NEUTRAL: dict[int, str] = {
     1 << 0: "create_invite",
     1 << 1: "kick_members",
     1 << 2: "ban_members",
@@ -46,15 +46,15 @@ DISCORD_TO_NEUTRAL: Dict[int, str] = {
     1 << 29: "manage_webhooks",
     1 << 40: "timeout_members",
 }
-NEUTRAL_TO_DISCORD: Dict[str, int] = {v: k for k, v in DISCORD_TO_NEUTRAL.items()}
+NEUTRAL_TO_DISCORD: dict[str, int] = {v: k for k, v in DISCORD_TO_NEUTRAL.items()}
 
 # Fluxer deliberately mirrors much of Discord's API surface for guilds/channels.
 # Keep a separate mapping for easy edits if Fluxer changes a permission flag.
-FLUXER_TO_NEUTRAL: Dict[int, str] = dict(DISCORD_TO_NEUTRAL)
-NEUTRAL_TO_FLUXER: Dict[str, int] = dict(NEUTRAL_TO_DISCORD)
+FLUXER_TO_NEUTRAL: dict[int, str] = dict(DISCORD_TO_NEUTRAL)
+NEUTRAL_TO_FLUXER: dict[str, int] = dict(NEUTRAL_TO_DISCORD)
 
 # Stoat/Revolt style permission flags observed in developer docs and SDKs.
-STOAT_TO_NEUTRAL: Dict[int, str] = {
+STOAT_TO_NEUTRAL: dict[int, str] = {
     1 << 0: "manage_channels",      # ManageChannel
     1 << 1: "manage_server",        # ManageServer
     1 << 2: "manage_permissions",   # ManagePermissions
@@ -71,29 +71,29 @@ STOAT_TO_NEUTRAL: Dict[int, str] = {
     1 << 27: "speak",
     1 << 28: "video",
 }
-NEUTRAL_TO_STOAT: Dict[str, int] = {v: k for k, v in STOAT_TO_NEUTRAL.items()}
+NEUTRAL_TO_STOAT: dict[str, int] = {v: k for k, v in STOAT_TO_NEUTRAL.items()}
 
 
-def bitset_to_names(value: int | str | None, mapping: Dict[int, str]) -> List[str]:
+def bitset_to_names(value: int | str | None, mapping: dict[int, str]) -> list[str]:
     try:
         bitset = int(value or 0)
     except (TypeError, ValueError):
         bitset = 0
-    names: List[str] = []
+    names: list[str] = []
     for bit, name in sorted(mapping.items(), key=lambda x: x[0]):
         if bitset & bit:
             names.append(name)
     return names
 
 
-def names_to_bitset(names: Iterable[str], mapping: Dict[str, int]) -> int:
+def names_to_bitset(names: Iterable[str], mapping: dict[str, int]) -> int:
     total = 0
     for name in names:
         total |= mapping.get(name, 0)
     return total
 
 
-def discord_to_neutral(value: int | str | None) -> List[str]:
+def discord_to_neutral(value: int | str | None) -> list[str]:
     return bitset_to_names(value, DISCORD_TO_NEUTRAL)
 
 
@@ -101,7 +101,7 @@ def neutral_to_discord(names: Iterable[str]) -> int:
     return names_to_bitset(names, NEUTRAL_TO_DISCORD)
 
 
-def fluxer_to_neutral(value: int | str | None) -> List[str]:
+def fluxer_to_neutral(value: int | str | None) -> list[str]:
     return bitset_to_names(value, FLUXER_TO_NEUTRAL)
 
 
@@ -109,7 +109,7 @@ def neutral_to_fluxer(names: Iterable[str]) -> int:
     return names_to_bitset(names, NEUTRAL_TO_FLUXER)
 
 
-def stoat_to_neutral(value: int | str | None) -> List[str]:
+def stoat_to_neutral(value: int | str | None) -> list[str]:
     return bitset_to_names(value, STOAT_TO_NEUTRAL)
 
 

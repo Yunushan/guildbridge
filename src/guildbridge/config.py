@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from .utils import env
 
@@ -14,22 +13,22 @@ except Exception:  # pragma: no cover - dotenv is optional at runtime
 @dataclass(frozen=True)
 class RuntimeConfig:
     discord_api_base: str = "https://discord.com/api/v10"
-    discord_token: Optional[str] = None
+    discord_token: str | None = None
 
     fluxer_api_base: str = "https://api.fluxer.app/v1"
-    fluxer_token: Optional[str] = None
+    fluxer_token: str | None = None
 
     stoat_api_base: str = "https://api.stoat.chat"
-    stoat_token: Optional[str] = None
+    stoat_token: str | None = None
 
-    matrix_base_url: Optional[str] = None
-    matrix_access_token: Optional[str] = None
-    matrix_server_name: Optional[str] = None
+    matrix_base_url: str | None = None
+    matrix_access_token: str | None = None
+    matrix_server_name: str | None = None
 
     request_timeout: int = 30
 
     @staticmethod
-    def from_env() -> "RuntimeConfig":
+    def from_env() -> RuntimeConfig:
         if load_dotenv is not None:
             load_dotenv()
         return RuntimeConfig(

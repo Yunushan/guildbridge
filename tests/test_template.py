@@ -5,7 +5,7 @@ from pathlib import Path
 
 import jsonschema
 
-from guildbridge.models import Channel, CommunityTemplate, Role, SCHEMA_ID
+from guildbridge.models import SCHEMA_ID, Channel, CommunityTemplate, Role
 
 
 def test_template_round_trip() -> None:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.http import HttpClient
@@ -67,7 +68,7 @@ class DiscordProvider(Provider):
             raise ValueError("Discord import requires DISCORD_BOT_TOKEN or DISCORD_TOKEN when --apply is used.")
 
         result = ImportResult(provider=self.name, applied=options.apply)
-        role_map: Dict[str, str] = {"everyone": options.target_id}
+        role_map: dict[str, str] = {"everyone": options.target_id}
         headers = {"X-Audit-Log-Reason": options.audit_log_reason} if options.audit_log_reason else None
 
         # Create roles from low to high-ish position. Discord's @everyone role is represented by the guild id.
@@ -91,7 +92,7 @@ class DiscordProvider(Provider):
             else:
                 role_map[role.id] = f"dry_role_{role.id}"
 
-        category_map: Dict[str, str] = {}
+        category_map: dict[str, str] = {}
         for cat in sorted(template.categories, key=lambda c: (c.position is None, c.position or 0)):
             payload = without_none(
                 {
@@ -153,15 +154,15 @@ class DiscordProvider(Provider):
 
     def _build_template(
         self,
-        guild: Dict[str, Any],
-        roles: Iterable[Dict[str, Any]],
-        channels: Iterable[Dict[str, Any]],
+        guild: dict[str, Any],
+        roles: Iterable[dict[str, Any]],
+        channels: Iterable[dict[str, Any]],
         *,
         source_note: str,
         options: ExportOptions,
     ) -> CommunityTemplate:
-        role_id_map: Dict[str, str] = {}
-        out_roles: List[Role] = []
+        role_id_map: dict[str, str] = {}
+        out_roles: list[Role] = []
         for role in roles or []:
             raw_id = str(role.get("id") or role.get("_id") or role.get("name"))
             if role.get("name") == "@everyone" or raw_id == str(guild.get("id")):
@@ -186,9 +187,9 @@ class DiscordProvider(Provider):
             out_roles.insert(0, Role(id="everyone", name="@everyone", permissions=[]))
             role_id_map[str(guild.get("id"))] = "everyone"
 
-        category_id_map: Dict[str, str] = {}
-        out_categories: List[Category] = []
-        out_channels: List[Channel] = []
+        category_id_map: dict[str, str] = {}
+        out_categories: list[Category] = []
+        out_channels: list[Channel] = []
         raw_channels = list(channels or [])
 
         for ch in raw_channels:
@@ -243,11 +244,11 @@ class DiscordProvider(Provider):
 
     def _overwrites_from_discord(
         self,
-        overwrites: Iterable[Dict[str, Any]],
-        role_id_map: Dict[str, str],
+        overwrites: Iterable[dict[str, Any]],
+        role_id_map: dict[str, str],
         options: ExportOptions,
-    ) -> List[PermissionOverwrite]:
-        output: List[PermissionOverwrite] = []
+    ) -> list[PermissionOverwrite]:
+        output: list[PermissionOverwrite] = []
         for ow in overwrites or []:
             ow_type = int(ow.get("type", 0))
             raw_id = str(ow.get("id"))
@@ -275,8 +276,8 @@ class DiscordProvider(Provider):
             )
         return output
 
-    def _overwrites_to_discord(self, overwrites: Iterable[PermissionOverwrite], role_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        output: List[Dict[str, Any]] = []
+    def _overwrites_to_discord(self, overwrites: Iterable[PermissionOverwrite], role_map: dict[str, str]) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
         for ow in overwrites or []:
             target_id = role_map.get(ow.target_id)
             if not target_id:

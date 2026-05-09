@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import Any, Literal
 
 SCHEMA_ID = "guildbridge.community.v1"
 TEMPLATE_VERSION = "1.0"
@@ -32,29 +32,29 @@ class PermissionOverwrite:
 
     target_type: TargetType
     target_id: str
-    allow: List[str] = field(default_factory=list)
-    deny: List[str] = field(default_factory=list)
+    allow: list[str] = field(default_factory=list)
+    deny: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Role:
     id: str
     name: str
-    permissions: List[str] = field(default_factory=list)
-    color: Optional[int | str] = None
-    position: Optional[int] = None
+    permissions: list[str] = field(default_factory=list)
+    color: int | str | None = None
+    position: int | None = None
     hoist: bool = False
     mentionable: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Category:
     id: str
     name: str
-    position: Optional[int] = None
-    permission_overwrites: List[PermissionOverwrite] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    position: int | None = None
+    permission_overwrites: list[PermissionOverwrite] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -62,22 +62,22 @@ class Channel:
     id: str
     name: str
     type: ChannelType = "text"
-    position: Optional[int] = None
-    parent_id: Optional[str] = None
-    topic: Optional[str] = None
+    position: int | None = None
+    parent_id: str | None = None
+    topic: str | None = None
     nsfw: bool = False
-    bitrate: Optional[int] = None
-    user_limit: Optional[int] = None
-    permission_overwrites: List[PermissionOverwrite] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    bitrate: int | None = None
+    user_limit: int | None = None
+    permission_overwrites: list[PermissionOverwrite] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class TemplateSource:
     platform: str
-    id_hash: Optional[str] = None
+    id_hash: str | None = None
     exported_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    note: Optional[str] = None
+    note: str | None = None
 
 
 @dataclass
@@ -93,22 +93,22 @@ class TemplatePrivacy:
 @dataclass
 class CommunityTemplate:
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     schema: str = SCHEMA_ID
     version: str = TEMPLATE_VERSION
     source: TemplateSource = field(default_factory=lambda: TemplateSource(platform="unknown"))
     privacy: TemplatePrivacy = field(default_factory=TemplatePrivacy)
-    roles: List[Role] = field(default_factory=list)
-    categories: List[Category] = field(default_factory=list)
-    channels: List[Channel] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    roles: list[Role] = field(default_factory=list)
+    categories: list[Category] = field(default_factory=list)
+    channels: list[Channel] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "CommunityTemplate":
+    def from_dict(data: dict[str, Any]) -> CommunityTemplate:
         if data.get("schema") != SCHEMA_ID:
             raise ValueError(f"Unsupported schema: {data.get('schema')!r}; expected {SCHEMA_ID!r}")
         source_raw = data.get("source", {}) or {}
@@ -138,8 +138,8 @@ class CommunityTemplate:
             metadata=dict(data.get("metadata", {})),
         )
 
-    def validate(self) -> List[str]:
-        problems: List[str] = []
+    def validate(self) -> list[str]:
+        problems: list[str] = []
         seen = set()
         for collection_name, collection in (
             ("roles", self.roles),
@@ -166,17 +166,17 @@ class Action:
     provider: str
     method: str
     path: str
-    payload: Optional[Dict[str, Any]] = None
-    note: Optional[str] = None
+    payload: dict[str, Any] | None = None
+    note: str | None = None
 
 
 @dataclass
 class ImportResult:
     provider: str
     applied: bool
-    actions: List[Action] = field(default_factory=list)
-    id_map: Dict[str, str] = field(default_factory=dict)
-    warnings: List[str] = field(default_factory=list)
+    actions: list[Action] = field(default_factory=list)
+    id_map: dict[str, str] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.http import HttpClient
@@ -71,7 +72,7 @@ class FluxerProvider(Provider):
                 guild_id = "dry_fluxer_guild"
         result.id_map["guild"] = guild_id
 
-        role_map: Dict[str, str] = {"everyone": guild_id}
+        role_map: dict[str, str] = {"everyone": guild_id}
         for role in sorted(template.roles, key=lambda r: (r.position is None, r.position or 0)):
             if role.name == "@everyone" or role.id == "everyone":
                 role_map[role.id] = guild_id
@@ -92,7 +93,7 @@ class FluxerProvider(Provider):
             else:
                 role_map[role.id] = f"dry_role_{role.id}"
 
-        category_map: Dict[str, str] = {}
+        category_map: dict[str, str] = {}
         for cat in sorted(template.categories, key=lambda c: (c.position is None, c.position or 0)):
             payload = without_none(
                 {
@@ -136,9 +137,9 @@ class FluxerProvider(Provider):
         result.id_map.update(category_map)
         return result
 
-    def _build_template(self, guild: Dict[str, Any], roles: Iterable[Dict[str, Any]], channels: Iterable[Dict[str, Any]], *, options: ExportOptions) -> CommunityTemplate:
-        role_id_map: Dict[str, str] = {}
-        out_roles: List[Role] = []
+    def _build_template(self, guild: dict[str, Any], roles: Iterable[dict[str, Any]], channels: Iterable[dict[str, Any]], *, options: ExportOptions) -> CommunityTemplate:
+        role_id_map: dict[str, str] = {}
+        out_roles: list[Role] = []
         guild_id = str(guild.get("id") or guild.get("guild_id") or options.source_id)
         for role in roles or []:
             raw_id = str(role.get("id") or role.get("role_id") or role.get("name"))
@@ -159,9 +160,9 @@ class FluxerProvider(Provider):
             out_roles.insert(0, Role(id="everyone", name="@everyone", permissions=[]))
             role_id_map[guild_id] = "everyone"
 
-        category_id_map: Dict[str, str] = {}
-        out_categories: List[Category] = []
-        out_channels: List[Channel] = []
+        category_id_map: dict[str, str] = {}
+        out_categories: list[Category] = []
+        out_channels: list[Channel] = []
         raw_channels = list(channels or [])
         for ch in raw_channels:
             ctype = FLUXER_CHANNEL_TYPES.get(int(ch.get("type", 0)), "unknown")
@@ -208,8 +209,8 @@ class FluxerProvider(Provider):
             warnings=[self.supported_warning(), "Fluxer DM/group-DM channels are not exported as server structure."],
         )
 
-    def _overwrites_from_fluxer(self, overwrites: Iterable[Dict[str, Any]], role_id_map: Dict[str, str], options: ExportOptions) -> List[PermissionOverwrite]:
-        output: List[PermissionOverwrite] = []
+    def _overwrites_from_fluxer(self, overwrites: Iterable[dict[str, Any]], role_id_map: dict[str, str], options: ExportOptions) -> list[PermissionOverwrite]:
+        output: list[PermissionOverwrite] = []
         for ow in overwrites or []:
             ow_type = int(ow.get("type", 0))
             raw_id = str(ow.get("id") or ow.get("role_id") or ow.get("target_id"))
@@ -235,8 +236,8 @@ class FluxerProvider(Provider):
             )
         return output
 
-    def _overwrites_to_fluxer(self, overwrites: Iterable[PermissionOverwrite], role_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        output: List[Dict[str, Any]] = []
+    def _overwrites_to_fluxer(self, overwrites: Iterable[PermissionOverwrite], role_map: dict[str, str]) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
         for ow in overwrites or []:
             target_id = role_map.get(ow.target_id)
             if not target_id:
@@ -245,7 +246,7 @@ class FluxerProvider(Provider):
         return output
 
     @staticmethod
-    def _unwrap_list(value: Any, key: str) -> List[Dict[str, Any]]:
+    def _unwrap_list(value: Any, key: str) -> list[dict[str, Any]]:
         if isinstance(value, list):
             return value
         if isinstance(value, dict):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
@@ -21,7 +21,7 @@ class HttpError(RuntimeError):
 
 
 class HttpClient:
-    def __init__(self, base_url: str, *, token: Optional[str] = None, auth_scheme: str = "Bot", timeout: int = 30):
+    def __init__(self, base_url: str, *, token: str | None = None, auth_scheme: str = "Bot", timeout: int = 30):
         self.base_url = base_url.rstrip("/") + "/"
         self.token = token
         self.auth_scheme = auth_scheme
@@ -29,8 +29,8 @@ class HttpClient:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "GuildBridge/0.1 (+https://github.com/your-org/guildbridge)"})
 
-    def headers(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+    def headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.token:
             if self.auth_scheme:
                 headers["Authorization"] = f"{self.auth_scheme} {self.token}"
@@ -45,9 +45,9 @@ class HttpClient:
         method: str,
         path: str,
         *,
-        json_body: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         retries: int = 3,
     ) -> Any:
         url = path if path.startswith("http://") or path.startswith("https://") else urljoin(self.base_url, path.lstrip("/"))
@@ -87,13 +87,13 @@ class HttpClient:
     def get(self, path: str, **kwargs: Any) -> Any:
         return self.request("GET", path, **kwargs)
 
-    def post(self, path: str, json_body: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
+    def post(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("POST", path, json_body=json_body, **kwargs)
 
-    def patch(self, path: str, json_body: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
+    def patch(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("PATCH", path, json_body=json_body, **kwargs)
 
-    def put(self, path: str, json_body: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Any:
+    def put(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("PUT", path, json_body=json_body, **kwargs)
 
     def delete(self, path: str, **kwargs: Any) -> Any:

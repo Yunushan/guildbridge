@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict
+from typing import Any
 
 from guildbridge.models import CommunityTemplate, TemplatePrivacy
 
