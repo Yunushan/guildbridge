@@ -200,6 +200,7 @@ def test_release_workflow_attaches_built_files_to_github_release() -> None:
     assert "contents: write" in release
     assert "actions/download-artifact@v7" in release
     assert "merge-multiple: true" in release
+    assert "GH_REPO: ${{ github.repository }}" in release
     assert "gh release create" in release
     assert "gh release upload" in release
     assert "release-assets/* --clobber" in release
