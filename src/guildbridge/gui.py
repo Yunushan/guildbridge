@@ -104,6 +104,8 @@ class GuildBridgeGUI(ttk.Frame):
         self._set_window_icon()
         self._build()
         self._apply_theme()
+        self.root.after(100, self._refresh_windows_titlebar)
+        self.root.after(500, self._refresh_windows_titlebar)
         self.master.bind_all("<MouseWheel>", self._on_tab_mousewheel, add="+")
         self.master.bind_all("<Button-4>", self._on_tab_mousewheel, add="+")
         self.master.bind_all("<Button-5>", self._on_tab_mousewheel, add="+")
@@ -274,28 +276,52 @@ class GuildBridgeGUI(ttk.Frame):
                 tree.item(item, tags=("odd" if row_index % 2 else "even",))
             tree.tag_configure("even", background=palette["field"], foreground=palette["text"])
             tree.tag_configure("odd", background=palette["surface"], foreground=palette["text"])
+        if sys.platform == "win32":
+            self.root.after(100, self._refresh_windows_titlebar)
 
     def _apply_windows_titlebar(self, palette: dict[str, str]) -> None:
         if sys.platform != "win32":
             return
         try:
             import ctypes
+            from ctypes import wintypes
 
             self.root.update_idletasks()
             dwmapi = ctypes.windll.dwmapi
-            hwnd = ctypes.c_void_p(self.root.winfo_id())
             dark = ctypes.c_int(1 if self.theme.get() == "Dark" else 0)
-            for attribute in (20, 19):
-                dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(dark), ctypes.sizeof(dark))
-            for attribute, color in (
-                (34, palette["border"]),
-                (35, palette["bg"]),
-                (36, palette["text"]),
-            ):
-                colorref = ctypes.c_int(self._windows_colorref(color))
-                dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(colorref), ctypes.sizeof(colorref))
+            hwnds = self._windows_titlebar_hwnds(ctypes, wintypes)
+
+            for hwnd in hwnds:
+                for attribute in (20, 19):
+                    dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(dark), ctypes.sizeof(dark))
+                for attribute, color in (
+                    (34, palette["border"]),
+                    (35, palette["bg"]),
+                    (36, palette["text"]),
+                ):
+                    colorref = ctypes.c_int(self._windows_colorref(color))
+                    dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(colorref), ctypes.sizeof(colorref))
+            ctypes.windll.user32.RedrawWindow(hwnds[-1], None, None, 0x0400 | 0x0100 | 0x0001)
         except Exception:
             pass
+
+    def _refresh_windows_titlebar(self) -> None:
+        self._apply_windows_titlebar(GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"]))
+
+    def _windows_titlebar_hwnds(self, ctypes: Any, wintypes: Any) -> list[Any]:
+        ctypes.windll.user32.GetParent.argtypes = (wintypes.HWND,)
+        ctypes.windll.user32.GetParent.restype = wintypes.HWND
+        ctypes.windll.user32.GetAncestor.argtypes = (wintypes.HWND, wintypes.UINT)
+        ctypes.windll.user32.GetAncestor.restype = wintypes.HWND
+        hwnd = wintypes.HWND(self.root.winfo_id())
+        hwnds = [hwnd]
+        for handle in (
+            ctypes.windll.user32.GetParent(hwnd),
+            ctypes.windll.user32.GetAncestor(hwnd, 2),
+        ):
+            if handle and all(int(existing.value or 0) != int(handle) for existing in hwnds):
+                hwnds.append(wintypes.HWND(handle))
+        return hwnds
 
     @staticmethod
     def _windows_colorref(hex_color: str) -> int:

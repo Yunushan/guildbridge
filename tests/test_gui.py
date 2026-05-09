@@ -18,4 +18,6 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "iconphoto" in source
     assert "iconbitmap" in source
     assert "DwmSetWindowAttribute" in source
+    assert "GetAncestor" in source
+    assert "_refresh_windows_titlebar" in source
     assert "_apply_windows_titlebar" in source
