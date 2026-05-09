@@ -659,6 +659,18 @@ Both pipelines run install, lint, type checks, tests, platform checks, package b
 
 GitHub Actions also has a `Release Artifacts` workflow for `v*` tags and manual runs. Normal CI builds and verifies wheel/sdist packages but does not upload downloadable artifacts. The release workflow rebuilds the wheel/sdist, Windows ZIP, and Windows MSI, then uploads them as workflow artifacts; it does not publish to PyPI automatically.
 
+For a local release prep that bumps the version, runs checks, builds/verifies `dist/`, commits, and creates an annotated tag without pushing:
+
+```powershell
+.\scripts\release.ps1 -Version 1.0.0
+```
+
+On Linux, BSD, macOS, Android terminal environments, and iOS terminal environments with `sh`, `git`, and Python:
+
+```bash
+scripts/release.sh 1.0.0
+```
+
 ## Project layout
 
 ```text

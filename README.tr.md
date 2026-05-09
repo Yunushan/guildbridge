@@ -659,6 +659,18 @@ Iki pipeline da kurulum, lint, type check, testler, platform kontrolleri, packag
 
 GitHub Actions ayrica `v*` tag'leri ve manuel calistirmalar icin `Release Artifacts` workflow'una sahiptir. Normal CI wheel/sdist package'lari build edip dogrular ama indirilebilir artifact yuklemez. Release workflow wheel/sdist, Windows ZIP ve Windows MSI yeniden olusturur, sonra workflow artifact'i olarak yukler; PyPI'ye otomatik yayin yapmaz.
 
+Versiyonu guncelleyen, kontrolleri calistiran, `dist/` ciktisini build edip dogrulayan, commit atan ve push yapmadan annotated tag olusturan yerel release hazirligi icin:
+
+```powershell
+.\scripts\release.ps1 -Version 1.0.0
+```
+
+Linux, BSD, macOS, Android terminal ortamlari ve `sh`, `git`, Python sunan iOS terminal ortamlari icin:
+
+```bash
+scripts/release.sh 1.0.0
+```
+
 ## Proje yapisi
 
 ```text
