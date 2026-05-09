@@ -333,7 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     p_export = sub.add_parser("export", help="export a provider server/community to a neutral JSON template")
-    p_export.add_argument("--from", dest="provider_from", required=True, help="source provider: discord, fluxer, stoat, matrix/element, rocket.chat, mumble")
+    p_export.add_argument(
+        "--from",
+        dest="provider_from",
+        required=True,
+        help="source provider: discord, fluxer, stoat, spacebar, daccord, matrix/element, rocket.chat, mumble, mattermost, zulip",
+    )
     p_export.add_argument("--source-id", help="source guild/server/space id")
     p_export.add_argument("--template", help="provider template URL/code, currently useful for Discord")
     p_export.add_argument("--out", default="community.template.json", help="output template JSON path or - for stdout")
@@ -341,7 +346,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.set_defaults(func=command_export)
 
     p_import = sub.add_parser("import", help="import a neutral JSON template into a provider")
-    p_import.add_argument("--to", dest="provider_to", required=True, help="target provider: discord, fluxer, stoat, matrix/element, rocket.chat, mumble")
+    p_import.add_argument(
+        "--to",
+        dest="provider_to",
+        required=True,
+        help="target provider: discord, fluxer, stoat, spacebar, daccord, matrix/element, rocket.chat, mumble, mattermost, zulip",
+    )
     p_import.add_argument("--file", required=True, help="neutral template JSON file")
     p_import.add_argument("--target-id", help="existing target guild/server/space id; optional for providers that can create a new target")
     p_import.add_argument("--target-name", help="name to use if the target provider creates a new community")

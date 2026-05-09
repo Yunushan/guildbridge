@@ -21,6 +21,13 @@ class RuntimeConfig:
     stoat_api_base: str = "https://api.stoat.chat"
     stoat_token: str | None = None
 
+    spacebar_api_base: str = "https://api.spacebar.chat/api/v9"
+    spacebar_token: str | None = None
+
+    daccord_api_base: str = "http://localhost:3000/api/v1"
+    daccord_token: str | None = None
+    daccord_auth_scheme: str = "Bot"
+
     matrix_base_url: str | None = None
     matrix_access_token: str | None = None
     matrix_server_name: str | None = None
@@ -31,6 +38,13 @@ class RuntimeConfig:
 
     mumble_api_base: str = "http://localhost:64738/api/v1"
     mumble_api_token: str | None = None
+
+    mattermost_api_base: str = "http://localhost:8065/api/v4"
+    mattermost_token: str | None = None
+
+    zulip_api_base: str = "https://chat.zulip.org/api/v1"
+    zulip_email: str | None = None
+    zulip_api_key: str | None = None
 
     request_timeout: int = 30
     max_retries: int = 5
@@ -49,6 +63,12 @@ class RuntimeConfig:
             fluxer_token=env("FLUXER_BOT_TOKEN", "FLUXER_TOKEN"),
             stoat_api_base=env("STOAT_API_BASE", "REVOLT_API_BASE", default="https://api.stoat.chat") or "https://api.stoat.chat",
             stoat_token=env("STOAT_BOT_TOKEN", "STOAT_TOKEN", "REVOLT_TOKEN"),
+            spacebar_api_base=env("SPACEBAR_API_BASE", "FOSSCORD_API_BASE", default="https://api.spacebar.chat/api/v9")
+            or "https://api.spacebar.chat/api/v9",
+            spacebar_token=env("SPACEBAR_BOT_TOKEN", "SPACEBAR_TOKEN", "FOSSCORD_BOT_TOKEN", "FOSSCORD_TOKEN"),
+            daccord_api_base=env("DACCORD_API_BASE", default="http://localhost:3000/api/v1") or "http://localhost:3000/api/v1",
+            daccord_token=env("DACCORD_BOT_TOKEN", "DACCORD_TOKEN"),
+            daccord_auth_scheme=env("DACCORD_AUTH_SCHEME", default="Bot") or "Bot",
             matrix_base_url=env("MATRIX_BASE_URL", "ELEMENT_MATRIX_BASE_URL"),
             matrix_access_token=env("MATRIX_ACCESS_TOKEN", "ELEMENT_ACCESS_TOKEN"),
             matrix_server_name=env("MATRIX_SERVER_NAME"),
@@ -58,6 +78,11 @@ class RuntimeConfig:
             rocket_chat_user_id=env("ROCKET_CHAT_USER_ID", "ROCKETCHAT_USER_ID"),
             mumble_api_base=env("MUMBLE_API_BASE", default="http://localhost:64738/api/v1") or "http://localhost:64738/api/v1",
             mumble_api_token=env("MUMBLE_API_TOKEN"),
+            mattermost_api_base=env("MATTERMOST_API_BASE", default="http://localhost:8065/api/v4") or "http://localhost:8065/api/v4",
+            mattermost_token=env("MATTERMOST_TOKEN", "MATTERMOST_PERSONAL_ACCESS_TOKEN"),
+            zulip_api_base=env("ZULIP_API_BASE", default="https://chat.zulip.org/api/v1") or "https://chat.zulip.org/api/v1",
+            zulip_email=env("ZULIP_EMAIL", "ZULIP_BOT_EMAIL"),
+            zulip_api_key=env("ZULIP_API_KEY", "ZULIP_BOT_API_KEY"),
             request_timeout=request_timeout,
             max_retries=max_retries,
             user_agent=env("GUILDBRIDGE_USER_AGENT", default="GuildBridge/0.1 (+https://github.com/Yunushan/guildbridge)") or "GuildBridge/0.1 (+https://github.com/Yunushan/guildbridge)",

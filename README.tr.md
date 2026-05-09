@@ -2,7 +2,7 @@
 
 # GuildBridge
 
-**Discord, Stoat, Fluxer, Matrix/Element, Rocket.Chat ve Mumble icin gizlilik odakli sunucu/topluluk sablonu ice-disa aktarma araci.**
+**Discord, Stoat, Fluxer, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost ve Zulip icin gizlilik odakli sunucu/topluluk sablonu ice-disa aktarma araci.**
 
 Uyeleri, mesajlari, DM'leri, token'lari veya ham kullanici kimliklerini acik kaynak sablonlara koymadan topluluk yapisini ice aktarir, disa aktarir, redakte eder, dogrular ve tasir.
 
@@ -10,7 +10,7 @@ Uyeleri, mesajlari, DM'leri, token'lari veya ham kullanici kimliklerini acik kay
 
 **dil** [English](README.md) · [Turkce](README.tr.md)
 
-**saglayicilar** Discord · Fluxer · Stoat · Matrix/Element · Rocket.Chat · Mumble  
+**saglayicilar** Discord · Fluxer · Stoat · Spacebar · Daccord · Matrix/Element · Rocket.Chat · Mumble · Mattermost · Zulip  
 **arayuzler** CLI · masaustu GUI · web/mobil GUI  
 **islemler** export · import · migrate · validate · redact · dry-run · apply
 
@@ -154,11 +154,51 @@ Tarayici/mobil GUI:
 guildbridge-web
 ```
 
+Windows release build'lerinde kullanicilar Python kurmadan ayni arayuzleri calistirabilir:
+
+```text
+guildbridge-gui.exe
+guildbridge-web.exe
+```
+
+### Masaustu GUI akisi
+
+1. GUI'yi acmadan once saglayici token'larini `.env` icinde yapilandirin.
+2. `guildbridge-gui` veya `guildbridge-gui.exe` acin.
+3. Once **Platforms** sekmesini kullanarak CLI, masaustu GUI ve web GUI hazirligini kontrol edin.
+4. Kaynak saglayicidan tarafsiz template olusturmak icin **Export** kullanin. Source ID veya provider template URL/code girin, sonra output JSON yolu secin.
+5. Mevcut template'i hedef saglayiciya aktarmak icin **Import**, export ve import'u tek akista yapmak icin **Migrate** kullanin.
+6. Ilk calistirmada **Apply writes** isaretli olmasin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
+7. Olusturulan plan JSON dosyasini inceleyin.
+8. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin, **Apply writes** isaretleyin ve onay penceresi istediginde `APPLY` yazin.
+9. Apply calistirmalarinda **Journal output JSON** kullanin ki yarida kalan yazmalar denetlenebilsin. **Resume journal JSON** yalnizca ayni komut, hedef, template ve incelenmis planla yarida kalmis apply'i tekrar denerken kullanin.
+10. Template paylasmadan once **Validate / Redact** kullanin.
+
+Output paneli GUI'nin calistirdigi tam `guildbridge ...` komutunu, stdout/stderr ciktisini, exit code'u ve sureyi gosterir.
+
 Tarayici GUI varsayilan olarak `http://127.0.0.1:8765` adresinde baslar. Telefon ve tablet tarayicilari icin dokunmaya uygun kontroller, sabit gezinme, sonuc durum panelleri ve kaydirma guvenli platform tablolari olan responsive bir duzen kullanir. Ayrica her sunucu icin CSRF token'i kullanir, POST govde boyutunu sinirlar, temel tarayici guvenlik basliklari ekler ve tarayicidan tetiklenen yazma islemlerinin `--apply` ile calismasi icin `APPLY` yazilmasini zorunlu tutar.
 
 Her iki GUI modu da import ve migrate icin CLI ile ayni apply guvenligi kontrollerini sunar: incelenmis plan girdisi, journal ciktisi, resume journal, inceleme sonrasi gecersiz sablonu zorlama ve yazmalari uygulama. Apply islemleri incelenmis plan yolu ve yazilmis `APPLY` ister; GuildBridge saglayici yazmalari baslamadan once incelenmis plani yine dogrular.
 
 Ayni agdaki telefon veya tabletlerin baglanmasini sadece guvenilir aglarda istiyorsaniz `--host 0.0.0.0 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"` kullanin. LAN modu her istekte auth token'i ister; `--auth-token` vermediginizde GuildBridge bir token uretir ve baslangicta bir kez yazdirir.
+
+### Tarayici ve mobil akis
+
+1. Yerel web GUI'yi baslatin:
+
+```bash
+guildbridge-web
+```
+
+2. Tarayicida `http://127.0.0.1:8765` acin.
+3. Masaustu GUI ile ayni **Migrate**, **Export**, **Import**, **Validate**, **Redact**, **Runtime** ve **Platforms** bolumlerini kullanin.
+4. Ayni guvenilir agdaki telefon veya tabletten erisim icin sunucuyu LAN modunda baslatin:
+
+```bash
+guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"
+```
+
+5. Yazdirilan LAN URL'sini mobil tarayicida acin ve auth token'i ekleyin. Bu token'i gizli tutun; web GUI onaydan sonra provider yazma islemleri calistirabilir.
 
 Alternatif baslatma komutlari:
 
@@ -209,22 +249,32 @@ Tum saglayicilar ayni tarafsiz semaya export yapar; migration yolu sudur:
 source provider -> neutral community.template.json -> target provider
 ```
 
-| Kaynak | Hedef | Durum | Notlar |
-|---|---|---:|---|
-| Discord/Fluxer/Stoat | Rocket.Chat | destekli | Rocket.Chat rolleri ve odalari olusturur; odaya ozel izin semantigi best-effort'tur. |
-| Rocket.Chat | Discord/Fluxer/Stoat/Matrix | destekli | Odalari ve workspace rollerini export eder; mesajlar, kullanicilar, abonelikler ve DM'ler disarida tutulur. |
-| Discord/Fluxer/Stoat/Matrix/Rocket.Chat | Mumble | admin bridge ile destekli | Yapilandirilmis admin API bridge uzerinden Mumble gruplari ve ses kanallari olusturur. |
-| Mumble | Discord/Fluxer/Stoat/Matrix/Rocket.Chat | admin bridge ile destekli | Mumble gruplarini, kanallarini ve ACL benzeri izinleri export eder; canli ses durumu ve kayitlar disarida tutulur. |
-| Discord | Fluxer | destekli | Yapısal uyum iyidir; kanal/rol izinleri best-effort map edilir. |
-| Discord | Stoat | destekli | Yapilandirilabilir Stoat/Revolt tarzı API endpoint'leri kullanir. |
-| Discord | Matrix/Element | destekli | Matrix spaces ve rooms olusturur; roller birebir map edilemez. |
-| Fluxer | Discord | destekli | Mevcut bir Discord guild hedefi gerektirir. |
-| Fluxer | Stoat | destekli | Best-effort rol/kanal mapping. |
-| Fluxer | Matrix/Element | destekli | Kategoriler nested space olur. |
-| Stoat | Discord | destekli | Best-effort rol/kanal mapping. |
-| Stoat | Fluxer | destekli | Best-effort rol/kanal mapping. |
-| Stoat | Matrix/Element | destekli | Kategoriler space olur. |
-| Matrix/Element | Discord/Fluxer/Stoat/Rocket.Chat/Mumble | destekli | Matrix space hiyerarsisini kanal olarak export eder; Matrix'te global sunucu rolleri yoktur. |
+### Enterprise chat ve voice yollari
+
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix -> Rocket.Chat**: destekli. Rocket.Chat rolleri ve odalari olusturur; odaya ozel izin semantigi best-effort'tur.
+- **Rocket.Chat -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix**: destekli. Odalari ve workspace rollerini export eder; mesajlar, kullanicilar, abonelikler ve DM'ler disarida tutulur.
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mattermost/Zulip -> Mumble**: admin bridge ile destekli. Yapilandirilmis admin API bridge uzerinden Mumble gruplari ve ses kanallari olusturur.
+- **Mumble -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mattermost/Zulip**: admin bridge ile destekli. Mumble gruplarini, kanallarini ve ACL benzeri izinleri export eder; canli ses durumu ve kayitlar disarida tutulur.
+- **Mattermost -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Zulip**: destekli. Team kanallarini ve tasinabilir rol ipuclarini export eder; post'lar, kullanicilar, DM'ler ve kullaniciya ozel sidebar kategorileri disarida tutulur.
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Zulip -> Mattermost**: destekli. Team ve metin benzeri kanal olusturur; keyfi rol olusturma ve permission scheme'leri Mattermost yonetiminde best-effort kalir.
+- **Zulip -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Mattermost**: destekli. Zulip kanallarini ve user group'lari export eder; topic'ler, mesajlar, abonelikler, kullanicilar ve DM'ler disarida tutulur.
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Mattermost -> Zulip**: destekli. Subscription uzerinden kanal olusturur ve rolleri user group'a map eder; kategori ve overwrite semantigi best-effort'tur.
+
+### Temel saglayici yollari
+
+- **Discord -> Fluxer**: destekli. Yapısal uyum iyidir; kanal/rol izinleri best-effort map edilir.
+- **Discord -> Stoat**: destekli. Yapilandirilabilir Stoat/Revolt tarzı API endpoint'leri kullanir.
+- **Discord -> Spacebar**: destekli. Spacebar Discord uyumludur; GuildBridge Discord tarzı guild, rol, kanal ve izin payload'lari kullanir.
+- **Discord -> Daccord**: destekli. Daccord space/kanal/rol olusturur ve rol permission overwrite'larini Daccord admin API uzerinden uygular.
+- **Discord -> Matrix/Element**: destekli. Matrix spaces ve rooms olusturur; roller birebir map edilemez.
+- **Fluxer -> Discord**: destekli. Mevcut bir Discord guild hedefi gerektirir.
+- **Fluxer -> Stoat**: destekli. Best-effort rol/kanal mapping.
+- **Fluxer/Stoat/Spacebar/Daccord cross-migration**: destekli. Discord benzeri yapilar iyi map edilir; saglayiciya ozel bayraklar best-effort kalir.
+- **Fluxer -> Matrix/Element**: destekli. Kategoriler nested space olur.
+- **Stoat -> Discord**: destekli. Best-effort rol/kanal mapping.
+- **Stoat -> Fluxer**: destekli. Best-effort rol/kanal mapping.
+- **Stoat -> Matrix/Element**: destekli. Kategoriler space olur.
+- **Matrix/Element -> Discord/Fluxer/Stoat/Spacebar/Daccord/Rocket.Chat/Mumble/Mattermost/Zulip**: destekli. Matrix space hiyerarsisini kanal olarak export eder; Matrix'te global sunucu rolleri yoktur.
 
 ## Yapilandirma
 
@@ -257,6 +307,25 @@ STOAT_API_BASE="https://api.stoat.chat"
 
 Stoat uyumlu endpoint'ler ve authentication zamanla degisebilir. Kendi instance'iniz icin base URL ve saglayici implementasyonunu duzenlenebilir tutun.
 
+### Spacebar
+
+```bash
+SPACEBAR_BOT_TOKEN="..."
+SPACEBAR_API_BASE="https://api.spacebar.chat/api/v9"
+```
+
+Spacebar Discord uyumludur. GuildBridge yapilandirilmis Spacebar instance'ina karsi Discord tarzi guild, rol, kanal ve izin endpoint'lerini kullanir.
+
+### Daccord
+
+```bash
+DACCORD_API_BASE="https://daccord.example.org/api/v1"
+DACCORD_BOT_TOKEN="..."
+DACCORD_AUTH_SCHEME="Bot"
+```
+
+Daccord `Bot` ve `Bearer` authorization scheme'lerini destekler. Instance'iniz bot token yerine user bearer token veriyorsa `DACCORD_AUTH_SCHEME=Bearer` kullanin.
+
 ### Matrix/Element
 
 ```bash
@@ -285,6 +354,25 @@ MUMBLE_API_TOKEN="..."
 ```
 
 Mumble/Murmur ses portu uzerinde evrensel bir HTTP yonetim API'si sunmaz. GuildBridge, `MUMBLE_API_BASE` degerinin sunucu, grup, kanal ve ACL route'lari saglayan bir Murmur/Ice/gRPC yonetim admin API bridge'ine isaret etmesini bekler.
+
+### Mattermost
+
+```bash
+MATTERMOST_API_BASE="https://mattermost.example.org/api/v4"
+MATTERMOST_TOKEN="..."
+```
+
+Mattermost import'u team ve metin benzeri kanal olusturur. Mattermost rolleri ve permission scheme'leri keyfi Discord tarzi roller degildir; bu nedenle GuildBridge tasinamayan rol ve overwrite niyetini uyari/metadata olarak korur.
+
+### Zulip
+
+```bash
+ZULIP_API_BASE="https://zulip.example.org/api/v1"
+ZULIP_EMAIL="bot@example.org"
+ZULIP_API_KEY="..."
+```
+
+Zulip import'u kanallari subscription uzerinden olusturur ve everyone disi rolleri user group'a map eder. Zulip topic'leri, mesaj gecmisi, abonelikler, kullanicilar ve private DM'ler bilerek export edilmez.
 
 ## Ornekler
 
@@ -435,6 +523,18 @@ Bu, orijinal ham ID'leri aciga cikarmadan sablonu kararlı tutar.
 - `--target-id` verilmezse hedef sunucu olusturabilir.
 - Izin mapping'i best-effort'tur ve `src/guildbridge/permissions.py` icinde kolay duzenlenebilir olacak sekilde tutulur.
 
+### Spacebar
+
+- `SPACEBAR_API_BASE` altindaki Spacebar Discord uyumlu HTTP API'sini kullanir.
+- `--target-id` kullanarak mevcut guild/sunucuya import eder.
+- Spacebar Discord API uyumlulugunu hedefledigi icin Discord tarzi permission bitset'leri kullanir.
+
+### Daccord
+
+- Daccord `/api/v1` space, rol, kanal ve permission route'larini kullanir.
+- `--target-id` verilmezse hedef space olusturabilir.
+- `manage_space`, `view_channel` ve `send_messages` gibi Daccord rol permission adlarini destekler.
+
 ### Matrix/Element
 
 - Element Matrix uzerinde calisir; bu nedenle saglayici Matrix Client-Server endpoint'lerini kullanir.
@@ -456,6 +556,20 @@ Bu, orijinal ham ID'leri aciga cikarmadan sablonu kararlı tutar.
 - Yapısal kanallari Mumble ses kanali olarak import eder.
 - Canli kullanicilari, kayitlari, sertifikalari, ses durumunu veya text/chat gecmisini export etmez.
 
+### Mattermost
+
+- Mattermost API v4 ve bearer token kullanir.
+- Team kanallarini ve tasinabilir team rol ipuclarini export eder.
+- Team ve public/private metin benzeri kanallari import eder.
+- Keyfi Discord tarzi roller, channel scheme'leri ve kullaniciya ozel sidebar kategorileri otomatik olusturulmaz.
+
+### Zulip
+
+- `ZULIP_EMAIL` ve `ZULIP_API_KEY` ile Zulip API v1 Basic authentication kullanir.
+- Kanallari ve user group'lari export eder.
+- Kanallari `users/me/subscriptions`, rolleri user group uzerinden import eder.
+- Topic'ler, mesajlar, abonelikler, kullanicilar ve private DM'ler bilerek disarida tutulur.
+
 ## Yayin Hijyeni
 
 Yayin adimlari [docs/RELEASE.md](docs/RELEASE.md) dosyasinda belgelenmistir. Kisa yerel kontrol:
@@ -465,6 +579,20 @@ make release-check
 ```
 
 GitHub release workflow'u `v*` tag'leri ve manuel calistirmalar icin artifact olusturup yukler; PyPI'ye otomatik yayin yapmaz. Windows release calistirmalari ayrica `guildbridge.exe`, `guildbridge-gui.exe`, `guildbridge-web.exe` iceren portable ZIP ve WiX varsa MSI installer uretir.
+
+Release artifact olusturma yalnizca `Release Artifacts` workflow'unda calisir; her normal push'ta calismaz. GitHub Actions uzerinden manuel baslatin veya bir surum tag'i push edin:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Beklenen workflow artifact'leri:
+
+- `guildbridge-dist`: Python wheel ve source distribution.
+- `guildbridge-windows`: Windows portable ZIP ve MSI installer.
+
+Windows artifact build ayrintilari [docs/WINDOWS_RELEASE.md](docs/WINDOWS_RELEASE.md) dosyasinda belgelenmistir.
 
 ## Gelistirme
 
@@ -502,7 +630,7 @@ Bu repo ikisini de icerir:
 
 Iki pipeline da kurulum, lint, type check, testler, platform kontrolleri, package build, dagitim metadata kontrolleri ve wheel kurulum dogrulamasini calistirir.
 
-GitHub Actions ayrica `v*` tag'leri ve manuel calistirmalar icin `Release Artifacts` workflow'una sahiptir. Wheel/sdist, Windows ZIP ve Windows MSI olusturur, sonra workflow artifact'i olarak yukler; PyPI'ye otomatik yayin yapmaz.
+GitHub Actions ayrica `v*` tag'leri ve manuel calistirmalar icin `Release Artifacts` workflow'una sahiptir. Normal CI wheel/sdist package'lari build edip dogrular ama indirilebilir artifact yuklemez. Release workflow wheel/sdist, Windows ZIP ve Windows MSI yeniden olusturur, sonra workflow artifact'i olarak yukler; PyPI'ye otomatik yayin yapmaz.
 
 ## Proje yapisi
 
@@ -517,9 +645,13 @@ guildbridge/
       discord.py
       fluxer.py
       stoat.py
+      spacebar.py
+      daccord.py
       matrix.py
       rocket_chat.py
       mumble.py
+      mattermost.py
+      zulip.py
   schema/community-template.schema.json
   examples/template.example.json
   tests/

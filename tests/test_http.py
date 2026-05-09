@@ -89,9 +89,20 @@ def test_http_error_sanitizes_response_text() -> None:
     assert "[redacted]" in str(exc_info.value)
 
 
+def test_http_post_form_sends_urlencoded_body() -> None:
+    session = FakeSession([FakeResponse(200, body={"ok": True})])
+    client = HttpClient("https://api.example", max_retries=0)
+    client.session = session  # type: ignore[assignment]
+
+    assert client.post_form("/thing", form_body={"name": "general"}) == {"ok": True}
+    assert session.calls[0]["data"] == {"name": "general"}
+    assert session.calls[0]["json"] is None
+    assert session.calls[0]["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+
+
 def test_retry_delay_uses_retry_after_header() -> None:
     response = FakeResponse(429, headers={"Retry-After": "2.5"})
-    assert retry_delay_seconds(0, response) == 2.5
+    assert retry_delay_seconds(0, response) == 2.5  # type: ignore[arg-type]
 
 
 def test_sanitize_text_redacts_common_secret_shapes() -> None:

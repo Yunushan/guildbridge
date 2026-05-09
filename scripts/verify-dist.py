@@ -37,9 +37,13 @@ REQUIRED_WHEEL_SUFFIXES = (
     "guildbridge/__init__.py",
     "guildbridge/__main__.py",
     "guildbridge/cli.py",
+    "guildbridge/providers/daccord.py",
+    "guildbridge/providers/mattermost.py",
     "guildbridge/gui.py",
     "guildbridge/providers/mumble.py",
     "guildbridge/providers/rocket_chat.py",
+    "guildbridge/providers/spacebar.py",
+    "guildbridge/providers/zulip.py",
     "guildbridge/web.py",
 )
 

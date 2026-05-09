@@ -14,9 +14,13 @@ def test_providers_command(capsys) -> None:  # type: ignore[no-untyped-def]
     assert "discord" in out
     assert "fluxer" in out
     assert "stoat" in out
+    assert "spacebar" in out
+    assert "daccord" in out
     assert "matrix" in out
     assert "rocket.chat" in out
     assert "mumble" in out
+    assert "mattermost" in out
+    assert "zulip" in out
 
 
 def test_validate_example() -> None:

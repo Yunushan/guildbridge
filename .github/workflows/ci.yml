@@ -87,9 +87,3 @@ jobs:
         run: python -m twine check dist/*
       - name: Verify wheel install
         run: python scripts/verify-dist.py
-      - name: Upload distributions
-        uses: actions/upload-artifact@v7
-        with:
-          name: guildbridge-dist
-          path: dist/*
-          if-no-files-found: error

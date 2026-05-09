@@ -37,17 +37,68 @@ def test_project_metadata_lists_current_providers() -> None:
     env_example = _text(".env.example")
     api_notes = _text("docs/API_NOTES.md")
 
+    assert "Spacebar" in pyproject
+    assert "Daccord" in pyproject
+    assert "Mattermost" in pyproject
+    assert "Zulip" in pyproject
     assert "Rocket.Chat" in pyproject
     assert "Mumble" in pyproject
-    assert "Rocket.Chat · Mumble" in readme
-    assert "Rocket.Chat · Mumble" in turkish_readme
+    assert "Spacebar · Daccord · Matrix/Element · Rocket.Chat · Mumble · Mattermost · Zulip" in readme
+    assert "Spacebar · Daccord · Matrix/Element · Rocket.Chat · Mumble · Mattermost · Zulip" in turkish_readme
     assert "masaustu GUI" in turkish_readme
     assert "web/mobil GUI" in turkish_readme
     assert "--confirm-apply APPLY" in turkish_readme
+    assert "SPACEBAR_BOT_TOKEN" in env_example
+    assert "DACCORD_BOT_TOKEN" in env_example
     assert "ROCKET_CHAT_AUTH_TOKEN" in env_example
     assert "MUMBLE_API_TOKEN" in env_example
+    assert "MATTERMOST_TOKEN" in env_example
+    assert "ZULIP_API_KEY" in env_example
+    assert "## Spacebar" in api_notes
+    assert "## Daccord" in api_notes
     assert "## Rocket.Chat" in api_notes
     assert "## Mumble / Murmur" in api_notes
+    assert "## Mattermost" in api_notes
+    assert "## Zulip" in api_notes
+
+
+def test_readmes_demonstrate_end_user_gui_workflows() -> None:
+    readme = _text("README.md")
+    turkish_readme = _text("README.tr.md")
+
+    assert "### Desktop GUI workflow" in readme
+    assert "guildbridge-gui.exe" in readme
+    assert "Keep **Apply writes** unchecked for the first run" in readme
+    assert "Reviewed plan JSON" in readme
+    assert "Journal output JSON" in readme
+    assert "### Browser and mobile workflow" in readme
+    assert "http://127.0.0.1:8765" in readme
+    assert "--allow-lan --auth-token" in readme
+    assert "Keep this token private" in readme
+
+    assert "### Masaustu GUI akisi" in turkish_readme
+    assert "guildbridge-gui.exe" in turkish_readme
+    assert "**Apply writes** isaretli olmasin" in turkish_readme
+    assert "Reviewed plan JSON" in turkish_readme
+    assert "Journal output JSON" in turkish_readme
+    assert "### Tarayici ve mobil akis" in turkish_readme
+    assert "http://127.0.0.1:8765" in turkish_readme
+    assert "--allow-lan --auth-token" in turkish_readme
+    assert "Bu token'i gizli tutun" in turkish_readme
+
+
+def test_supported_paths_use_readable_list_layout() -> None:
+    readme = _text("README.md")
+    turkish_readme = _text("README.tr.md")
+
+    assert "| From | To | Status | Notes |" not in readme
+    assert "| Kaynak | Hedef | Durum | Notlar |" not in turkish_readme
+    assert "### Enterprise chat and voice paths" in readme
+    assert "### Core provider paths" in readme
+    assert "**Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix -> Rocket.Chat**: supported" in readme
+    assert "**Matrix/Element -> Discord/Fluxer/Stoat/Spacebar/Daccord/Rocket.Chat/Mumble/Mattermost/Zulip**: supported" in readme
+    assert "### Enterprise chat ve voice yollari" in turkish_readme
+    assert "### Temel saglayici yollari" in turkish_readme
 
 
 def test_project_metadata_uses_modern_license_fields() -> None:
@@ -105,12 +156,16 @@ def test_distribution_verifier_is_shipped() -> None:
     assert "docs/RELEASE.md" in verifier
     assert "REQUIRED_WHEEL_SUFFIXES" in verifier
     assert "guildbridge-web" in verifier
+    assert "guildbridge/providers/spacebar.py" in verifier
+    assert "guildbridge/providers/daccord.py" in verifier
     assert "guildbridge/providers/mumble.py" in verifier
     assert "guildbridge/providers/rocket_chat.py" in verifier
+    assert "guildbridge/providers/mattermost.py" in verifier
+    assert "guildbridge/providers/zulip.py" in verifier
     assert "recursive-include scripts *.sh *.py *.ps1" in manifest
 
 
-def test_ci_builds_and_uploads_distribution_artifacts() -> None:
+def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     github_ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")
     self_hosted = _text(".github/workflows/self-hosted-platforms.yml")
@@ -132,7 +187,8 @@ def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     assert "actions/setup-python@v6" in github_ci
     assert "python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py" in github_ci
     assert "python scripts/check-platform.py --require cli --format json" in github_ci
-    assert "actions/upload-artifact@v7" in github_ci
+    assert "actions/upload-artifact@v7" not in github_ci
+    assert "guildbridge-dist" not in github_ci
     assert "python -m build" in github_ci
     assert "python -m twine check dist/*" in github_ci
     assert "python scripts/verify-dist.py" in github_ci
@@ -143,6 +199,7 @@ def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     assert "python -m pytest -q" in release
     assert "python scripts/check-platform.py --require cli --format json" in release
     assert "actions/upload-artifact@v7" in release
+    assert "name: guildbridge-dist" in release
     assert "python scripts/verify-dist.py" in release
     assert "name: Self-hosted Platform Compatibility" in self_hosted
     assert "windows-10" in self_hosted
@@ -173,4 +230,5 @@ def test_helper_scripts_match_current_cli_contracts() -> None:
     assert "`--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>`" in security
     assert "release-check: check package" in makefile
     assert "python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py" in release_doc
+    assert "Normal CI builds and verifies packages but does not upload downloadable artifacts" in release_doc
     assert "does not publish to PyPI automatically" in release_doc

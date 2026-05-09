@@ -10,12 +10,16 @@ import pytest
 from guildbridge.config import RuntimeConfig
 from guildbridge.models import Category, Channel, CommunityTemplate, PermissionOverwrite, Role
 from guildbridge.providers.base import ImportOptions, Provider
+from guildbridge.providers.daccord import DaccordProvider
 from guildbridge.providers.discord import DiscordProvider
 from guildbridge.providers.fluxer import FluxerProvider
 from guildbridge.providers.matrix import MatrixProvider
+from guildbridge.providers.mattermost import MattermostProvider
 from guildbridge.providers.mumble import MumbleProvider
 from guildbridge.providers.rocket_chat import RocketChatProvider
+from guildbridge.providers.spacebar import SpacebarProvider
 from guildbridge.providers.stoat import StoatProvider
+from guildbridge.providers.zulip import ZulipProvider
 
 
 def contract_template() -> CommunityTemplate:
@@ -69,6 +73,10 @@ class RecordingHttp:
         self.calls.append({"method": "POST", "path": path, "payload": json_body, "headers": headers})
         return self._response(path)
 
+    def post_form(self, path: str, *, form_body: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
+        self.calls.append({"method": "POST", "path": path, "payload": form_body, "headers": headers})
+        return self._response(path)
+
     def patch(self, path: str, *, json_body: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
         self.calls.append({"method": "PATCH", "path": path, "payload": json_body, "headers": headers})
         return self._response(path)
@@ -99,6 +107,9 @@ class RecordingHttp:
 
 class ExplodingHttp(RecordingHttp):
     def post(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("dry-run attempted HTTP POST")
+
+    def post_form(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise AssertionError("dry-run attempted HTTP POST")
 
     def patch(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -147,6 +158,20 @@ PROVIDER_CASES = (
         "stoat-secret-token",
     ),
     ProviderCase(
+        "spacebar",
+        lambda: SpacebarProvider(RuntimeConfig(spacebar_token="spacebar-secret-token")),
+        ImportOptions(target_id="guild1"),
+        ImportOptions(target_id="guild1", apply=True),
+        "spacebar-secret-token",
+    ),
+    ProviderCase(
+        "daccord",
+        lambda: DaccordProvider(RuntimeConfig(daccord_token="daccord-secret-token")),
+        ImportOptions(target_name="Daccord Copy"),
+        ImportOptions(target_name="Daccord Copy", apply=True),
+        "daccord-secret-token",
+    ),
+    ProviderCase(
         "rocket.chat",
         lambda: RocketChatProvider(
             RuntimeConfig(rocket_chat_auth_token="rocket-secret-token", rocket_chat_user_id="rocket-user")
@@ -162,13 +187,27 @@ PROVIDER_CASES = (
         ImportOptions(target_name="Mumble Copy", apply=True),
         "mumble-secret-token",
     ),
+    ProviderCase(
+        "mattermost",
+        lambda: MattermostProvider(RuntimeConfig(mattermost_token="mattermost-secret-token")),
+        ImportOptions(target_name="Mattermost Copy"),
+        ImportOptions(target_name="Mattermost Copy", apply=True),
+        "mattermost-secret-token",
+    ),
+    ProviderCase(
+        "zulip",
+        lambda: ZulipProvider(RuntimeConfig(zulip_email="bot@example.test", zulip_api_key="zulip-secret-token")),
+        ImportOptions(target_name="Zulip Copy"),
+        ImportOptions(target_name="Zulip Copy", apply=True),
+        "zulip-secret-token",
+    ),
 )
 
 
 @pytest.mark.parametrize("case", PROVIDER_CASES, ids=lambda case: case.label)
 def test_provider_dry_run_never_calls_http_and_hides_tokens(case: ProviderCase) -> None:
     provider = case.factory()
-    provider.http = ExplodingHttp()  # type: ignore[assignment]
+    provider.http = ExplodingHttp()  # type: ignore[attr-defined]
 
     result = provider.import_template(contract_template(), case.dry_options)
 
@@ -183,7 +222,7 @@ def test_provider_dry_run_never_calls_http_and_hides_tokens(case: ProviderCase) 
 def test_provider_apply_actions_match_http_writes(case: ProviderCase) -> None:
     provider = case.factory()
     http = RecordingHttp()
-    provider.http = http  # type: ignore[assignment]
+    provider.http = http  # type: ignore[attr-defined]
 
     result = provider.import_template(contract_template(), case.apply_options)
 
@@ -200,7 +239,7 @@ def test_provider_apply_actions_match_http_writes(case: ProviderCase) -> None:
 @pytest.mark.parametrize("case", PROVIDER_CASES, ids=lambda case: case.label)
 def test_provider_apply_records_journal_for_each_write(case: ProviderCase) -> None:
     provider = case.factory()
-    provider.http = RecordingHttp()  # type: ignore[assignment]
+    provider.http = RecordingHttp()  # type: ignore[attr-defined]
     journal = MemoryJournal()
     options = ImportOptions(
         target_id=case.apply_options.target_id,

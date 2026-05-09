@@ -3,20 +3,28 @@ from __future__ import annotations
 from guildbridge.config import RuntimeConfig
 
 from .base import Provider
+from .daccord import DaccordProvider
 from .discord import DiscordProvider
 from .fluxer import FluxerProvider
 from .matrix import MatrixProvider
+from .mattermost import MattermostProvider
 from .mumble import MumbleProvider
 from .rocket_chat import RocketChatProvider
+from .spacebar import SpacebarProvider
 from .stoat import StoatProvider
+from .zulip import ZulipProvider
 
 PROVIDER_CLASSES: tuple[type[Provider], ...] = (
     DiscordProvider,
     FluxerProvider,
     StoatProvider,
+    SpacebarProvider,
+    DaccordProvider,
     MatrixProvider,
     RocketChatProvider,
     MumbleProvider,
+    MattermostProvider,
+    ZulipProvider,
 )
 
 

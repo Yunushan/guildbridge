@@ -44,7 +44,9 @@ NEUTRAL_TO_DISCORD_CHANNEL_TYPES = {
 
 class DiscordProvider(Provider):
     name = "discord"
-    aliases = ("disc",)
+    aliases: tuple[str, ...] = ("disc",)
+    provider_label = "Discord"
+    token_env_hint = "DISCORD_BOT_TOKEN or DISCORD_TOKEN"
 
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)
@@ -61,19 +63,27 @@ class DiscordProvider(Provider):
         if options.template:
             return self._export_from_template(options.template, options)
         if not options.source_id:
-            raise ValueError("Discord export requires --source-id <guild_id> or --template <template_url_or_code>.")
-        if not self.config.discord_token:
-            raise ValueError("Discord live guild export requires DISCORD_BOT_TOKEN or DISCORD_TOKEN.")
+            raise ValueError(f"{self.provider_label} export requires --source-id <guild_id> or --template <template_url_or_code>.")
+        if not self._token_configured():
+            raise ValueError(f"{self.provider_label} live guild export requires {self.token_env_hint}.")
         guild = self.http.get(f"/guilds/{options.source_id}")
         roles = self.http.get(f"/guilds/{options.source_id}/roles")
         channels = self.http.get(f"/guilds/{options.source_id}/channels")
-        return self._build_template(guild, roles, channels, source_note="exported from live Discord guild", options=options)
+        return self._build_template(
+            guild,
+            roles,
+            channels,
+            source_note=f"exported from live {self.provider_label} guild",
+            options=options,
+        )
 
     def import_template(self, template: CommunityTemplate, options: ImportOptions) -> ImportResult:
         if not options.target_id:
-            raise ValueError("Discord import requires --target-id <existing_guild_id>. GuildBridge imports into an existing guild.")
-        if options.apply and not self.config.discord_token:
-            raise ValueError("Discord import requires DISCORD_BOT_TOKEN or DISCORD_TOKEN when --apply is used.")
+            raise ValueError(
+                f"{self.provider_label} import requires --target-id <existing_guild_id>. GuildBridge imports into an existing guild."
+            )
+        if options.apply and not self._token_configured():
+            raise ValueError(f"{self.provider_label} import requires {self.token_env_hint} when --apply is used.")
 
         result = ImportResult(provider=self.name, applied=options.apply)
         role_map: dict[str, str] = {"everyone": options.target_id}
@@ -101,7 +111,7 @@ class DiscordProvider(Provider):
                 partial(self.http.post, f"/guilds/{options.target_id}/roles", json_body=payload, headers=headers),
             )
             if options.apply:
-                role_map[role.id] = require_response_id(created, "Discord role create", "id")
+                role_map[role.id] = require_response_id(created, f"{self.provider_label} role create", "id")
             else:
                 role_map[role.id] = f"dry_role_{role.id}"
 
@@ -123,7 +133,7 @@ class DiscordProvider(Provider):
                 partial(self.http.post, f"/guilds/{options.target_id}/channels", json_body=payload, headers=headers),
             )
             if options.apply:
-                category_map[cat.id] = require_response_id(created, "Discord category create", "id")
+                category_map[cat.id] = require_response_id(created, f"{self.provider_label} category create", "id")
             else:
                 category_map[cat.id] = f"dry_category_{cat.id}"
 
@@ -159,7 +169,7 @@ class DiscordProvider(Provider):
                 partial(self.http.post, f"/guilds/{options.target_id}/channels", json_body=payload, headers=headers),
             )
             if options.apply:
-                result.id_map[channel.id] = require_response_id(created, "Discord channel create", "id")
+                result.id_map[channel.id] = require_response_id(created, f"{self.provider_label} channel create", "id")
             else:
                 result.id_map[channel.id] = f"dry_channel_{channel.id}"
 
@@ -178,6 +188,9 @@ class DiscordProvider(Provider):
         template = self._build_template(guild, roles, channels, source_note="exported from Discord server template", options=options)
         template.warnings.append("Discord server templates may omit some community channel types and runtime-only configuration.")
         return template
+
+    def _token_configured(self) -> bool:
+        return bool(self.config.discord_token)
 
     def _build_template(
         self,
@@ -256,7 +269,11 @@ class DiscordProvider(Provider):
             )
 
         template = CommunityTemplate(
-            name=normalize_name(guild.get("name") or "Discord community", max_len=100, fallback="Discord community"),
+            name=normalize_name(
+                guild.get("name") or f"{self.provider_label} community",
+                max_len=100,
+                fallback=f"{self.provider_label} community",
+            ),
             description=guild.get("description"),
             source=TemplateSource(platform=self.name, id_hash=hash_id(self.name, guild.get("id") or guild.get("name")), note=source_note),
             privacy=TemplatePrivacy(),

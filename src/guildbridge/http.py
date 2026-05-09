@@ -80,23 +80,30 @@ class HttpClient:
         path: str,
         *,
         json_body: dict[str, Any] | None = None,
+        form_body: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         retries: int | None = None,
     ) -> Any:
+        if json_body is not None and form_body is not None:
+            raise ValueError("Use either json_body or form_body, not both.")
         url = path if path.startswith("http://") or path.startswith("https://") else urljoin(self.base_url, path.lstrip("/"))
         method_upper = method.upper()
         max_retries = self.max_retries if retries is None else max(0, retries)
         attempts = max_retries + 1
         last_transport_error: requests.RequestException | None = None
+        request_headers = headers
+        if form_body is not None:
+            request_headers = {"Content-Type": "application/x-www-form-urlencoded", **(headers or {})}
         for attempt in range(attempts):
             try:
                 resp = self.session.request(
                     method_upper,
                     url,
                     json=json_body,
+                    data=form_body,
                     params=params,
-                    headers=self.headers(headers),
+                    headers=self.headers(request_headers),
                     timeout=self.timeout,
                 )
             except requests.RequestException as exc:
@@ -131,8 +138,14 @@ class HttpClient:
     def post(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("POST", path, json_body=json_body, **kwargs)
 
+    def post_form(self, path: str, form_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        return self.request("POST", path, form_body=form_body, **kwargs)
+
     def patch(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("PATCH", path, json_body=json_body, **kwargs)
+
+    def patch_form(self, path: str, form_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        return self.request("PATCH", path, form_body=form_body, **kwargs)
 
     def put(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("PUT", path, json_body=json_body, **kwargs)

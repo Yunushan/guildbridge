@@ -2,7 +2,7 @@
 
 # GuildBridge
 
-**Privacy-first server/community template importer-exporter for Discord, Stoat, Fluxer, Matrix/Element, Rocket.Chat, and Mumble.**
+**Privacy-first server/community template importer-exporter for Discord, Stoat, Fluxer, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost, and Zulip.**
 
 Import, export, redact, validate, and migrate community structure without shipping members, messages, DMs, tokens, or raw user IDs in open-source templates.
 
@@ -10,7 +10,7 @@ Import, export, redact, validate, and migrate community structure without shippi
 
 **language** [English](README.md) · [Türkçe](README.tr.md)
 
-**providers** Discord · Fluxer · Stoat · Matrix/Element · Rocket.Chat · Mumble  
+**providers** Discord · Fluxer · Stoat · Spacebar · Daccord · Matrix/Element · Rocket.Chat · Mumble · Mattermost · Zulip  
 **interfaces** CLI · desktop GUI · web/mobile GUI  
 **actions** export · import · migrate · validate · redact · dry-run · apply
 
@@ -154,11 +154,51 @@ Browser/mobile GUI:
 guildbridge-web
 ```
 
+On Windows release builds, users can run the same interfaces without installing Python:
+
+```text
+guildbridge-gui.exe
+guildbridge-web.exe
+```
+
+### Desktop GUI workflow
+
+1. Configure provider tokens in `.env` before opening the GUI.
+2. Open `guildbridge-gui` or `guildbridge-gui.exe`.
+3. Use the **Platforms** tab first to confirm CLI, desktop GUI, and web GUI readiness.
+4. Use **Export** to create a neutral template from a source provider. Provide either a source ID or a provider template URL/code, then choose an output JSON path.
+5. Use **Import** to import an existing template into a target provider, or **Migrate** to export and import in one flow.
+6. Keep **Apply writes** unchecked for the first run. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
+7. Review the generated plan JSON.
+8. To perform real writes, select the reviewed plan in **Reviewed plan JSON**, check **Apply writes**, and type `APPLY` when the confirmation dialog asks for it.
+9. Use **Journal output JSON** for apply runs so interrupted writes can be audited. Use **Resume journal JSON** only when retrying an interrupted apply with the same command, target, template, and reviewed plan.
+10. Use **Validate / Redact** before sharing templates.
+
+The output panel shows the exact `guildbridge ...` command that the GUI ran, stdout/stderr, exit code, and duration.
+
 The browser GUI starts at `http://127.0.0.1:8765` by default. It uses a responsive layout with touch-sized controls, anchored navigation, result status panels, and scroll-safe platform tables for phone and tablet browsers. It also uses a per-server CSRF token, limits POST body size, adds basic browser security headers, and requires typing `APPLY` before browser-triggered write operations run with `--apply`.
 
 Both GUI modes expose the same apply-safety controls as the CLI for import and migrate: Reviewed plan input, Journal output, Resume journal, Force invalid template after review, and Apply writes. Apply operations need a reviewed plan path and typed `APPLY`; GuildBridge still validates the reviewed plan before provider writes start.
 
 Use `--host 0.0.0.0 --allow-lan --auth-token "choose-a-long-random-token"` only on trusted networks when you want phones or tablets on the same network to connect. LAN mode requires an auth token on every request; if you omit `--auth-token`, GuildBridge generates one and prints it once at startup.
+
+### Browser and mobile workflow
+
+1. Start the local web GUI:
+
+```bash
+guildbridge-web
+```
+
+2. Open `http://127.0.0.1:8765` in a browser.
+3. Use the same **Migrate**, **Export**, **Import**, **Validate**, **Redact**, **Runtime**, and **Platforms** sections as the desktop GUI.
+4. For phone or tablet access on the same trusted network, start the server with LAN mode:
+
+```bash
+guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "choose-a-long-random-token"
+```
+
+5. Open the printed LAN URL from the mobile browser and include the auth token. Keep this token private because the web GUI can run provider write operations after confirmation.
 
 Alternative launch commands:
 
@@ -209,22 +249,32 @@ All providers export into the same neutral schema, so the migration path is:
 source provider -> neutral community.template.json -> target provider
 ```
 
-| From | To | Status | Notes |
-|---|---|---:|---|
-| Discord/Fluxer/Stoat | Rocket.Chat | ✅ supported | Creates Rocket.Chat roles and rooms; room-specific permission semantics are best-effort. |
-| Rocket.Chat | Discord/Fluxer/Stoat/Matrix | ✅ supported | Exports rooms and workspace roles; messages, users, subscriptions, and DMs are excluded. |
-| Discord/Fluxer/Stoat/Matrix/Rocket.Chat | Mumble | ✅ supported with admin bridge | Creates Mumble groups and voice channels through a configured admin API bridge. |
-| Mumble | Discord/Fluxer/Stoat/Matrix/Rocket.Chat | ✅ supported with admin bridge | Exports Mumble groups, channels, and ACL-like permissions; live voice state and registrations are excluded. |
-| Discord | Fluxer | ✅ supported | Good structural fit; channel/role permissions are mapped best-effort. |
-| Discord | Stoat | ✅ supported | Uses configurable Stoat/Revolt-style API endpoints. |
-| Discord | Matrix/Element | ✅ supported | Creates Matrix spaces and rooms; roles do not map 1:1. |
-| Fluxer | Discord | ✅ supported | Requires an existing Discord guild target. |
-| Fluxer | Stoat | ✅ supported | Best-effort role/channel mapping. |
-| Fluxer | Matrix/Element | ✅ supported | Categories become nested spaces. |
-| Stoat | Discord | ✅ supported | Best-effort role/channel mapping. |
-| Stoat | Fluxer | ✅ supported | Best-effort role/channel mapping. |
-| Stoat | Matrix/Element | ✅ supported | Categories become spaces. |
-| Matrix/Element | Discord/Fluxer/Stoat/Rocket.Chat/Mumble | ✅ supported | Exports Matrix space hierarchy as channels; Matrix has no global server roles. |
+### Enterprise chat and voice paths
+
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix -> Rocket.Chat**: supported. Creates Rocket.Chat roles and rooms; room-specific permission semantics are best-effort.
+- **Rocket.Chat -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix**: supported. Exports rooms and workspace roles; messages, users, subscriptions, and DMs are excluded.
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mattermost/Zulip -> Mumble**: supported with an admin bridge. Creates Mumble groups and voice channels through a configured admin API bridge.
+- **Mumble -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mattermost/Zulip**: supported with an admin bridge. Exports Mumble groups, channels, and ACL-like permissions; live voice state and registrations are excluded.
+- **Mattermost -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Zulip**: supported. Exports team channels and portable role hints; posts, users, DMs, and per-user sidebar categories are excluded.
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Zulip -> Mattermost**: supported. Creates teams and text-like channels; arbitrary role creation and permission schemes remain best-effort Mattermost administration work.
+- **Zulip -> Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Mattermost**: supported. Exports Zulip channels and user groups; topics, messages, subscriptions, users, and DMs are excluded.
+- **Discord/Fluxer/Stoat/Spacebar/Daccord/Matrix/Rocket.Chat/Mumble/Mattermost -> Zulip**: supported. Creates channels through subscriptions and maps roles to user groups; category and overwrite semantics are best-effort.
+
+### Core provider paths
+
+- **Discord -> Fluxer**: supported. Good structural fit; channel/role permissions are mapped best-effort.
+- **Discord -> Stoat**: supported. Uses configurable Stoat/Revolt-style API endpoints.
+- **Discord -> Spacebar**: supported. Spacebar is Discord-compatible, so GuildBridge uses Discord-style guild, role, channel, and permission payloads.
+- **Discord -> Daccord**: supported. Creates Daccord spaces/channels/roles and applies role permission overwrites through Daccord's admin API.
+- **Discord -> Matrix/Element**: supported. Creates Matrix spaces and rooms; roles do not map 1:1.
+- **Fluxer -> Discord**: supported. Requires an existing Discord guild target.
+- **Fluxer -> Stoat**: supported. Best-effort role/channel mapping.
+- **Fluxer/Stoat/Spacebar/Daccord cross-migration**: supported. Discord-like structures map well; provider-specific flags remain best-effort.
+- **Fluxer -> Matrix/Element**: supported. Categories become nested spaces.
+- **Stoat -> Discord**: supported. Best-effort role/channel mapping.
+- **Stoat -> Fluxer**: supported. Best-effort role/channel mapping.
+- **Stoat -> Matrix/Element**: supported. Categories become spaces.
+- **Matrix/Element -> Discord/Fluxer/Stoat/Spacebar/Daccord/Rocket.Chat/Mumble/Mattermost/Zulip**: supported. Exports Matrix space hierarchy as channels; Matrix has no global server roles.
 
 ## Configuration
 
@@ -257,6 +307,25 @@ STOAT_API_BASE="https://api.stoat.chat"
 
 Stoat-compatible endpoints and authentication can evolve. Keep the base URL and provider implementation editable for your instance.
 
+### Spacebar
+
+```bash
+SPACEBAR_BOT_TOKEN="..."
+SPACEBAR_API_BASE="https://api.spacebar.chat/api/v9"
+```
+
+Spacebar is Discord-compatible. GuildBridge uses Discord-style guild, role, channel, and permission endpoints against the configured Spacebar instance.
+
+### Daccord
+
+```bash
+DACCORD_API_BASE="https://daccord.example.org/api/v1"
+DACCORD_BOT_TOKEN="..."
+DACCORD_AUTH_SCHEME="Bot"
+```
+
+Daccord supports `Bot` and `Bearer` authorization schemes. Use `DACCORD_AUTH_SCHEME=Bearer` when your instance gives you a user bearer token instead of a bot token.
+
 ### Matrix/Element
 
 ```bash
@@ -285,6 +354,25 @@ MUMBLE_API_TOKEN="..."
 ```
 
 Mumble/Murmur does not provide a universal HTTP management API on the voice port. GuildBridge expects `MUMBLE_API_BASE` to point at an admin API bridge for Murmur/Ice/gRPC management that exposes server, group, channel, and ACL routes.
+
+### Mattermost
+
+```bash
+MATTERMOST_API_BASE="https://mattermost.example.org/api/v4"
+MATTERMOST_TOKEN="..."
+```
+
+Mattermost imports create teams and text-like channels. Mattermost roles and permission schemes are not arbitrary Discord-style roles, so GuildBridge preserves non-portable role and overwrite intent as warnings/metadata.
+
+### Zulip
+
+```bash
+ZULIP_API_BASE="https://zulip.example.org/api/v1"
+ZULIP_EMAIL="bot@example.org"
+ZULIP_API_KEY="..."
+```
+
+Zulip imports create channels via subscriptions and map non-everyone roles to user groups. Zulip topics, message history, subscriptions, users, and private DMs are intentionally not exported.
 
 ## Examples
 
@@ -435,6 +523,18 @@ This keeps the template stable without revealing original raw IDs.
 - Can create a target server if `--target-id` is not provided.
 - Permission mapping is best-effort and intentionally easy to edit in `src/guildbridge/permissions.py`.
 
+### Spacebar
+
+- Uses Spacebar's Discord-compatible HTTP API under `SPACEBAR_API_BASE`.
+- Imports into an existing guild/server using `--target-id`.
+- Uses Discord-style permission bitsets because Spacebar targets Discord API compatibility.
+
+### Daccord
+
+- Uses Daccord `/api/v1` space, role, channel, and permission routes.
+- Can create a target space if `--target-id` is not provided.
+- Supports Daccord role permission names such as `manage_space`, `view_channel`, and `send_messages`.
+
 ### Matrix/Element
 
 - Element runs on Matrix, so the provider uses Matrix Client-Server endpoints.
@@ -456,6 +556,20 @@ This keeps the template stable without revealing original raw IDs.
 - Imports structural channels as Mumble voice channels.
 - Does not export live users, registrations, certificates, voice state, or text/chat history.
 
+### Mattermost
+
+- Uses Mattermost API v4 with bearer tokens.
+- Exports team channels and portable team role hints.
+- Imports teams and public/private text-like channels.
+- Arbitrary Discord-style roles, channel schemes, and per-user sidebar categories are not created automatically.
+
+### Zulip
+
+- Uses Zulip API v1 with Basic authentication from `ZULIP_EMAIL` and `ZULIP_API_KEY`.
+- Exports channels and user groups.
+- Imports channels through `users/me/subscriptions` and roles through user groups.
+- Topics, messages, subscriptions, users, and private DMs are intentionally excluded.
+
 ## Release Hygiene
 
 Release steps are documented in [docs/RELEASE.md](docs/RELEASE.md). The short local check is:
@@ -465,6 +579,20 @@ make release-check
 ```
 
 The GitHub release workflow builds and uploads artifacts for `v*` tags and manual runs; it does not publish to PyPI automatically. Windows release runs also produce a portable ZIP with `guildbridge.exe`, `guildbridge-gui.exe`, `guildbridge-web.exe`, and an MSI installer when WiX is available.
+
+Release artifact creation happens only in the `Release Artifacts` workflow, not on every normal push. Trigger it manually from GitHub Actions or push a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Expected workflow artifacts:
+
+- `guildbridge-dist`: Python wheel and source distribution.
+- `guildbridge-windows`: Windows portable ZIP and MSI installer.
+
+Windows artifact build details are documented in [docs/WINDOWS_RELEASE.md](docs/WINDOWS_RELEASE.md).
 
 ## Development
 
@@ -502,7 +630,7 @@ This repo includes both:
 
 Both pipelines run install, lint, type checks, tests, platform checks, package builds, distribution metadata checks, and wheel install verification.
 
-GitHub Actions also has a `Release Artifacts` workflow for `v*` tags and manual runs. It builds the wheel/sdist, Windows ZIP, and Windows MSI, then uploads them as workflow artifacts; it does not publish to PyPI automatically.
+GitHub Actions also has a `Release Artifacts` workflow for `v*` tags and manual runs. Normal CI builds and verifies wheel/sdist packages but does not upload downloadable artifacts. The release workflow rebuilds the wheel/sdist, Windows ZIP, and Windows MSI, then uploads them as workflow artifacts; it does not publish to PyPI automatically.
 
 ## Project layout
 
@@ -517,7 +645,13 @@ guildbridge/
       discord.py
       fluxer.py
       stoat.py
+      spacebar.py
+      daccord.py
       matrix.py
+      rocket_chat.py
+      mumble.py
+      mattermost.py
+      zulip.py
   schema/community-template.schema.json
   examples/template.example.json
   tests/

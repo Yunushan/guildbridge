@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "guildbridge"
 version = "0.1.0"
-description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, Matrix/Element, Rocket.Chat, and Mumble."
+description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost, and Zulip."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "GuildBridge contributors"}]
-keywords = ["discord", "fluxer", "stoat", "matrix", "element", "rocket.chat", "mumble", "migration", "template", "community", "server"]
+keywords = ["discord", "fluxer", "stoat", "spacebar", "daccord", "matrix", "element", "rocket.chat", "mumble", "mattermost", "zulip", "migration", "template", "community", "server"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

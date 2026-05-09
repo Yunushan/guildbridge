@@ -42,7 +42,9 @@ def running_web_server(*, auth_token: str = "lan-secret", require_auth: bool = T
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        host, port = server.server_address
+        raw_host = server.server_address[0]
+        host = raw_host.decode("ascii") if isinstance(raw_host, bytes) else str(raw_host)
+        port = int(server.server_address[1])
         yield f"http://{host}:{port}"
     finally:
         server.shutdown()

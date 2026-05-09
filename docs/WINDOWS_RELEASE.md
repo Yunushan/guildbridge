@@ -28,7 +28,7 @@ Outputs are written under `dist/`.
 
 ## Release Workflow
 
-The GitHub `Release Artifacts` workflow builds Windows artifacts on a Windows runner. It uploads:
+The GitHub `Release Artifacts` workflow builds Windows artifacts on a Windows runner. Normal push/PR CI does not upload downloadable artifacts. Release runs upload:
 
 - `guildbridge-dist`: Python wheel and source distribution.
 - `guildbridge-windows`: Windows ZIP and MSI artifacts.

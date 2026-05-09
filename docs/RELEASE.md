@@ -1,6 +1,6 @@
 # Release Checklist
 
-GuildBridge release artifacts are built by CI for tags and manual workflow runs. The repository does not publish to PyPI automatically.
+GuildBridge release artifacts are built only by the release workflow for tags and manual workflow runs. Normal CI builds and verifies packages but does not upload downloadable artifacts. The repository does not publish to PyPI automatically.
 
 ## Before Tagging
 

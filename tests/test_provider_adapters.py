@@ -7,16 +7,23 @@ import pytest
 from guildbridge.config import RuntimeConfig
 from guildbridge.models import Channel, CommunityTemplate, Role
 from guildbridge.providers.base import ExportOptions, ImportOptions, require_response_id, safe_int
+from guildbridge.providers.daccord import DaccordProvider
 from guildbridge.providers.discord import DiscordProvider
 from guildbridge.providers.fluxer import FluxerProvider
 from guildbridge.providers.matrix import MatrixProvider
+from guildbridge.providers.mattermost import MattermostProvider
 from guildbridge.providers.mumble import MumbleProvider
 from guildbridge.providers.rocket_chat import RocketChatProvider
+from guildbridge.providers.spacebar import SpacebarProvider
 from guildbridge.providers.stoat import StoatProvider
+from guildbridge.providers.zulip import ZulipProvider
 
 
 class EmptyCreateHttp:
     def post(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {}
+
+    def post_form(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
         return {}
 
 
@@ -128,6 +135,80 @@ def test_mumble_build_template_exports_voice_channels_and_groups() -> None:
     assert template.validate() == []
 
 
+def test_spacebar_uses_discord_like_template_shape() -> None:
+    provider = SpacebarProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "guild1", "name": "Spacebar Guild"},
+        [{"id": "guild1", "name": "@everyone", "permissions": "1024"}],
+        [{"id": "channel1", "name": "general", "type": 0}],
+        source_note="test",
+        options=ExportOptions(),
+    )
+
+    assert template.source.platform == "spacebar"
+    assert template.channels[0].type == "text"
+    assert template.validate() == []
+
+
+def test_daccord_build_template_exports_space_roles_channels_and_overwrites() -> None:
+    provider = DaccordProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "space1", "name": "Daccord Space"},
+        [{"id": "role1", "name": "Mods", "permissions": ["manage_channels", "manage_roles"]}],
+        [
+            {"id": "cat1", "name": "Main", "type": "category"},
+            {
+                "id": "chan1",
+                "name": "General",
+                "type": "text",
+                "parent_id": "cat1",
+                "permission_overwrites": [{"id": "role1", "type": "role", "allow": ["send_messages"], "deny": []}],
+            },
+        ],
+        options=ExportOptions(),
+    )
+
+    assert template.source.platform == "daccord"
+    assert template.categories[0].name == "Main"
+    assert template.channels[0].parent_id == template.categories[0].id
+    assert template.channels[0].permission_overwrites[0].allow == ["send_messages"]
+    assert template.validate() == []
+
+
+def test_mattermost_build_template_exports_team_channels() -> None:
+    provider = MattermostProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "team1", "name": "team", "display_name": "Mattermost Team"},
+        [
+            {"id": "chan1", "name": "town-square", "display_name": "Town Square", "type": "O", "purpose": "General"},
+            {"id": "dm1", "name": "dm", "type": "D"},
+        ],
+        options=ExportOptions(),
+    )
+
+    assert template.source.platform == "mattermost"
+    assert template.channels[0].name == "town-square"
+    assert template.channels[0].topic == "General"
+    assert len(template.channels) == 1
+    assert template.validate() == []
+
+
+def test_zulip_build_template_exports_channels_and_groups() -> None:
+    provider = ZulipProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"name": "Zulip Org"},
+        [{"id": 12, "name": "Developers", "description": "Engineering", "members": [1, 2]}],
+        [{"stream_id": 99, "name": "general", "description": "General chat", "invite_only": False}],
+        options=ExportOptions(source_id="zulip.example.test"),
+    )
+
+    assert template.source.platform == "zulip"
+    assert any(role.name == "Developers" for role in template.roles)
+    assert template.channels[0].name == "general"
+    assert template.channels[0].topic == "General chat"
+    assert template.validate() == []
+
+
 def test_discord_apply_requires_role_create_id() -> None:
     provider = DiscordProvider(RuntimeConfig(discord_token="token"))
     provider.http = EmptyCreateHttp()  # type: ignore[assignment]
@@ -160,6 +241,22 @@ def test_stoat_apply_requires_server_id() -> None:
         provider.import_template(CommunityTemplate(name="Example"), ImportOptions(apply=True))
 
 
+def test_spacebar_apply_requires_role_create_id() -> None:
+    provider = SpacebarProvider(RuntimeConfig(spacebar_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Spacebar role create response did not contain an id"):
+        provider.import_template(_template_with_role(), ImportOptions(target_id="guild1", apply=True))
+
+
+def test_daccord_apply_requires_space_create_id() -> None:
+    provider = DaccordProvider(RuntimeConfig(daccord_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Daccord space create response did not contain an id"):
+        provider.import_template(CommunityTemplate(name="Example"), ImportOptions(apply=True))
+
+
 def test_rocket_chat_apply_requires_role_create_id() -> None:
     provider = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
     provider.http = EmptyCreateHttp()  # type: ignore[assignment]
@@ -174,6 +271,22 @@ def test_mumble_apply_requires_group_create_id() -> None:
 
     with pytest.raises(ValueError, match="Mumble group create response did not contain an id"):
         provider.import_template(_template_with_role(), ImportOptions(target_id="server1", apply=True))
+
+
+def test_mattermost_apply_requires_team_create_id() -> None:
+    provider = MattermostProvider(RuntimeConfig(mattermost_token="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Mattermost team create response did not contain an id"):
+        provider.import_template(CommunityTemplate(name="Example"), ImportOptions(apply=True))
+
+
+def test_zulip_apply_requires_group_create_id() -> None:
+    provider = ZulipProvider(RuntimeConfig(zulip_email="bot@example.test", zulip_api_key="token"))
+    provider.http = EmptyCreateHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Zulip user group create response did not contain an id"):
+        provider.import_template(_template_with_role(), ImportOptions(apply=True))
 
 
 def test_missing_parent_category_is_reported_in_dry_runs() -> None:

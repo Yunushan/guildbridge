@@ -118,6 +118,97 @@ MUMBLE_TO_NEUTRAL: dict[str, str] = {
 }
 NEUTRAL_TO_MUMBLE: dict[str, str] = {v: k for k, v in MUMBLE_TO_NEUTRAL.items()}
 
+DACCORD_TO_NEUTRAL: dict[str, str] = {
+    "create_invites": "create_invite",
+    "kick_members": "kick_members",
+    "ban_members": "ban_members",
+    "administrator": "administrator",
+    "manage_channels": "manage_channels",
+    "manage_space": "manage_server",
+    "view_channel": "view_channel",
+    "send_messages": "send_messages",
+    "manage_messages": "manage_messages",
+    "attach_files": "attach_files",
+    "read_history": "read_history",
+    "mention_everyone": "mention_everyone",
+    "connect": "connect",
+    "speak": "speak",
+    "manage_roles": "manage_roles",
+    "manage_webhooks": "manage_webhooks",
+    "moderate_members": "timeout_members",
+}
+NEUTRAL_TO_DACCORD: dict[str, str] = {
+    "create_invite": "create_invites",
+    "kick_members": "kick_members",
+    "ban_members": "ban_members",
+    "administrator": "administrator",
+    "manage_channels": "manage_channels",
+    "manage_server": "manage_space",
+    "view_channel": "view_channel",
+    "send_messages": "send_messages",
+    "manage_messages": "manage_messages",
+    "attach_files": "attach_files",
+    "read_history": "read_history",
+    "mention_everyone": "mention_everyone",
+    "connect": "connect",
+    "speak": "speak",
+    "manage_roles": "manage_roles",
+    "manage_webhooks": "manage_webhooks",
+    "timeout_members": "moderate_members",
+}
+
+MATTERMOST_TO_NEUTRAL: dict[str, str] = {
+    "manage_system": "administrator",
+    "system_admin": "administrator",
+    "team_admin": "manage_server",
+    "manage_team": "manage_server",
+    "manage_team_roles": "manage_roles",
+    "manage_public_channel_members": "manage_roles",
+    "manage_private_channel_members": "manage_roles",
+    "create_team": "manage_server",
+    "create_public_channel": "manage_channels",
+    "create_private_channel": "manage_channels",
+    "delete_public_channel": "manage_channels",
+    "delete_private_channel": "manage_channels",
+    "read_channel": "view_channel",
+    "create_post": "send_messages",
+    "edit_others_posts": "manage_messages",
+    "delete_others_posts": "manage_messages",
+    "upload_file": "attach_files",
+    "manage_webhooks": "manage_webhooks",
+    "invite_user": "create_invite",
+}
+NEUTRAL_TO_MATTERMOST: dict[str, str] = {
+    "administrator": "manage_system",
+    "manage_server": "manage_team",
+    "manage_channels": "create_public_channel",
+    "manage_roles": "manage_team_roles",
+    "view_channel": "read_channel",
+    "send_messages": "create_post",
+    "manage_messages": "delete_others_posts",
+    "attach_files": "upload_file",
+    "manage_webhooks": "manage_webhooks",
+    "create_invite": "invite_user",
+}
+
+ZULIP_TO_NEUTRAL: dict[str, str] = {
+    "role:owners": "administrator",
+    "role:administrators": "administrator",
+    "role:moderators": "timeout_members",
+    "can_create_streams": "manage_channels",
+    "can_create_groups": "manage_roles",
+    "can_invite_users": "create_invite",
+    "can_send_message_group": "send_messages",
+}
+NEUTRAL_TO_ZULIP: dict[str, str] = {
+    "administrator": "role:administrators",
+    "timeout_members": "role:moderators",
+    "manage_channels": "can_create_streams",
+    "manage_roles": "can_create_groups",
+    "create_invite": "can_invite_users",
+    "send_messages": "can_send_message_group",
+}
+
 
 def bitset_to_names(value: int | str | None, mapping: dict[int, str]) -> list[str]:
     try:
@@ -176,6 +267,30 @@ def mumble_to_neutral(names: Iterable[str] | str | None) -> list[str]:
 
 def neutral_to_mumble(names: Iterable[str]) -> list[str]:
     return neutral_to_string_names(names, NEUTRAL_TO_MUMBLE)
+
+
+def daccord_to_neutral(names: Iterable[str] | str | None) -> list[str]:
+    return string_names_to_neutral(names, DACCORD_TO_NEUTRAL)
+
+
+def neutral_to_daccord(names: Iterable[str]) -> list[str]:
+    return neutral_to_string_names(names, NEUTRAL_TO_DACCORD)
+
+
+def mattermost_to_neutral(names: Iterable[str] | str | None) -> list[str]:
+    return string_names_to_neutral(names, MATTERMOST_TO_NEUTRAL)
+
+
+def neutral_to_mattermost(names: Iterable[str]) -> list[str]:
+    return neutral_to_string_names(names, NEUTRAL_TO_MATTERMOST)
+
+
+def zulip_to_neutral(names: Iterable[str] | str | None) -> list[str]:
+    return string_names_to_neutral(names, ZULIP_TO_NEUTRAL)
+
+
+def neutral_to_zulip(names: Iterable[str]) -> list[str]:
+    return neutral_to_string_names(names, NEUTRAL_TO_ZULIP)
 
 
 def string_names_to_neutral(names: Iterable[str] | str | None, mapping: dict[str, str]) -> list[str]:

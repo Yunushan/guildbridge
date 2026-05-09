@@ -81,7 +81,15 @@ def test_windows_release_docs_explain_zip_msi_and_signing() -> None:
     assert "GuildBridge-<version>-windows-x64.msi" in docs
     assert "Code Signing" in docs
     assert "SmartScreen" in docs
+    assert "Normal push/PR CI does not upload downloadable artifacts" in docs
     assert "portable ZIP" in readme
     assert "MSI installer" in readme
+    assert "Release artifact creation happens only in the `Release Artifacts` workflow" in readme
+    assert "Normal CI builds and verifies wheel/sdist packages but does not upload downloadable artifacts" in readme
+    assert "git tag v0.1.0" in readme
+    assert "`guildbridge-windows`: Windows portable ZIP and MSI installer." in readme
     assert "portable ZIP" in turkish
     assert "MSI installer" in turkish
+    assert "her normal push'ta calismaz" in turkish
+    assert "git tag v0.1.0" in turkish
+    assert "`guildbridge-windows`: Windows portable ZIP ve MSI installer." in turkish

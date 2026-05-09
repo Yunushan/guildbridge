@@ -12,6 +12,8 @@ GuildBridge treats templates as public artifacts by default.
 - presences
 - Rocket.Chat subscriptions and direct messages
 - Mumble live users, registrations, certificates, and voice state
+- Mattermost users, posts, direct messages, and per-user sidebar categories
+- Zulip users, messages, topics, subscriptions, and private DMs
 - raw provider IDs
 - bot tokens, session tokens, cookies, and access tokens
 
