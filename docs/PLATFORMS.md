@@ -15,10 +15,10 @@ GuildBridge separates platform support into explicit tiers:
 
 | Platform | Family | CLI tier | Desktop GUI tier | Web/mobile GUI tier | CI coverage | System packages |
 |---|---|---|---|---|---|---|
-| Windows | Windows | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `windows-2025-vs2026` | Python 3.10+, Git |
-| Windows Server | Windows | install documented | Desktop Experience only | local/LAN browser supported | no project CI | Python 3.10+, Git |
+| Windows | Windows | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `windows-2025-vs2026`; self-hosted `windows-10`, `windows-11` | Python 3.10+, Git |
+| Windows Server | Windows | install documented plus CI compatibility | Desktop Experience only | local/LAN browser supported | GitHub Actions `windows-2022`; self-hosted `windows-server-2019`, `windows-server-2026` | Python 3.10+, Git |
 | Debian | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitLab `python:3.12` Debian image | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
-| Ubuntu | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitHub Actions `ubuntu-24.04` | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
+| Ubuntu | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitHub Actions `ubuntu-24.04`; self-hosted `ubuntu-26.04` | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | Linux Mint | Debian | install-script supported | `python3-tk` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | RHEL | RHEL | install-script supported | `python3-tkinter` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-tkinter git ca-certificates` |
 | AlmaLinux | RHEL | install-script supported | `python3-tkinter` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-tkinter git ca-certificates` |
@@ -33,9 +33,25 @@ GuildBridge separates platform support into explicit tiers:
 | FreeBSD | BSD | install-script supported | Tk desktop supported | local/LAN browser supported | no project CI | `python py312-pip py312-tkinter git ca_root_nss` |
 | NetBSD | BSD | install-script supported | Tk desktop supported | local/LAN browser supported | no project CI | `python312 py312-pip py312-tkinter git mozilla-rootcerts` |
 | OpenBSD | BSD | install-script supported | Tk desktop supported | local/LAN browser supported | no project CI | `python%3.12 py3-pip python-tkinter git` |
-| macOS | Darwin | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `macos-15` | Python 3.10+ from python.org, Homebrew, or MacPorts |
+| macOS | Darwin | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `macos-15`, `macos-26` | Python 3.10+ from python.org, Homebrew, or MacPorts |
 | Android | Mobile | experimental on-device Python | not supported | browser client supported | no project CI | Termux or another Python-capable Android environment |
 | Apple iOS | Mobile | experimental on-device Python | not supported | browser client supported | no project CI | Pyto, a-Shell, Pythonista-style environment, or remote GuildBridge web server |
+
+## CI Coverage
+
+GitHub Actions required CI tests Python `3.10`, `3.11`, `3.12`, `3.13`, and `3.14` on `ubuntu-24.04`, `windows-2025-vs2026`, and `macos-15`.
+
+The same CI workflow also runs hosted compatibility checks on `windows-2022` and `macos-26` with Python `3.14`.
+
+GitHub does not currently provide normal hosted x64 runner labels for `ubuntu-26.04`, Windows 10, Windows 11, Windows Server 2019, or Windows Server 2026. Exact checks for those targets are available through the manual `.github/workflows/self-hosted-platforms.yml` workflow. Configure self-hosted runners with these labels before running it:
+
+```text
+windows-10
+windows-11
+windows-server-2019
+windows-server-2026
+ubuntu-26.04
+```
 
 ## Install System Dependencies
 

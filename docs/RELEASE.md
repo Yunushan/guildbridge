@@ -25,7 +25,7 @@ python scripts/verify-dist.py
 
 3. Inspect `dist/` and confirm it contains exactly one wheel and one source archive.
 4. Confirm `.env`, journals, generated plans, and local migration artifacts are not staged.
-5. Review `README.md`, `README.tr.md`, `docs/PRIVACY.md`, `docs/PLATFORMS.md`, and `SECURITY.md` for behavior changes.
+5. Review `README.md`, `README.tr.md`, `docs/PRIVACY.md`, `docs/PLATFORMS.md`, `docs/WINDOWS_RELEASE.md`, and `SECURITY.md` for behavior changes.
 
 ## Tag Build
 
@@ -36,7 +36,19 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The `Release Artifacts` workflow builds, verifies, and uploads wheel/sdist artifacts. Download and inspect those artifacts before publishing anywhere external.
+The `Release Artifacts` workflow builds, verifies, and uploads wheel/sdist artifacts plus Windows ZIP/MSI artifacts. Download and inspect those artifacts before publishing anywhere external.
+
+## Windows Artifacts
+
+Windows ZIP and MSI artifacts are built on a Windows runner with PyInstaller and WiX. To reproduce locally:
+
+```powershell
+python -m pip install -e ".[dev,windows-build]"
+dotnet tool install --global wix
+.\scripts\build-windows-dist.ps1
+```
+
+Use `-SkipMsi` to build only the portable ZIP when WiX is unavailable. See [docs/WINDOWS_RELEASE.md](WINDOWS_RELEASE.md).
 
 ## Rollback Notes
 

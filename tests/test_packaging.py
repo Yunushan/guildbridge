@@ -56,6 +56,8 @@ def test_project_metadata_uses_modern_license_fields() -> None:
     assert 'requires = ["setuptools>=77", "wheel"]' in pyproject
     assert 'license = "MIT"' in pyproject
     assert 'license-files = ["LICENSE"]' in pyproject
+    assert '"Programming Language :: Python :: 3.13"' in pyproject
+    assert '"Programming Language :: Python :: 3.14"' in pyproject
     assert "License :: OSI Approved" not in pyproject
 
 
@@ -111,6 +113,7 @@ def test_distribution_verifier_is_shipped() -> None:
 def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     github_ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")
+    self_hosted = _text(".github/workflows/self-hosted-platforms.yml")
     gitlab = _text(".gitlab-ci.yml")
 
     assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" in github_ci
@@ -118,6 +121,12 @@ def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     assert "ubuntu-24.04" in github_ci
     assert "windows-2025-vs2026" in github_ci
     assert "macos-15" in github_ci
+    assert '"3.13"' in github_ci
+    assert '"3.14"' in github_ci
+    assert "hosted-compatibility" in github_ci
+    assert "windows-2022" in github_ci
+    assert "macos-26" in github_ci
+    assert "needs: [test, hosted-compatibility]" in github_ci
     assert "windows-latest" not in github_ci
     assert "actions/checkout@v6" in github_ci
     assert "actions/setup-python@v6" in github_ci
@@ -130,10 +139,19 @@ def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     assert "name: Release Artifacts" in release
     assert 'PIP_NO_CACHE_DIR: "1"' in release
     assert "ubuntu-24.04" in release
+    assert 'python-version: "3.14"' in release
     assert "python -m pytest -q" in release
     assert "python scripts/check-platform.py --require cli --format json" in release
     assert "actions/upload-artifact@v7" in release
     assert "python scripts/verify-dist.py" in release
+    assert "name: Self-hosted Platform Compatibility" in self_hosted
+    assert "windows-10" in self_hosted
+    assert "windows-11" in self_hosted
+    assert "windows-server-2019" in self_hosted
+    assert "windows-server-2026" in self_hosted
+    assert "ubuntu-26.04" in self_hosted
+    assert "- \"3.13\"" in self_hosted
+    assert "- \"3.14\"" in self_hosted
     assert "- package" in gitlab
     assert "python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py" in gitlab
     assert "python scripts/check-platform.py --require cli --format json" in gitlab

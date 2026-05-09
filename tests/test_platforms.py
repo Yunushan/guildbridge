@@ -78,7 +78,7 @@ def test_platform_support_metadata_is_complete() -> None:
 
 def test_ci_coverage_claims_are_explicit() -> None:
     ci_tested = {platform.name for platform in SUPPORTED_PLATFORMS if platform.ci_coverage != "not covered by project CI"}
-    assert ci_tested == {"Windows", "Debian", "Ubuntu", "macOS"}
+    assert ci_tested == {"Windows", "Windows Server", "Debian", "Ubuntu", "macOS"}
 
 
 def test_mobile_support_is_browser_client_first() -> None:

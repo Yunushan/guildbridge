@@ -174,6 +174,8 @@ Masaustu GUI, Tkinter kurulu ve masaustu oturumu olan platformlarda calisir. And
 GuildBridge destegi kademelidir; boylece platform iddialari durust kalir:
 
 - CI ile test edilen CLI/runtime: Windows, Ubuntu, macOS ve GitLab Python imaji uzerinden Debian.
+- GitHub Actions, zorunlu hosted matrix uzerinde Python 3.10, 3.11, 3.12, 3.13 ve 3.14 test eder.
+- Hosted compatibility job'lari Windows Server 2022 ve macOS 26 kapsar. Windows 10/11, Windows Server 2019/2026 ve Ubuntu 26.04 icin kesin kontroller manuel self-hosted workflow ile calisir; GitHub bu hedefler icin normal hosted label saglamaz.
 - Kurulum betigi destekli: Windows Server, Linux Mint, RHEL, AlmaLinux, Rocky Linux, Oracle Linux, Fedora, CentOS, CentOS Stream, Arch Linux, Manjaro Linux, Gentoo, FreeBSD, NetBSD ve OpenBSD.
 - Tarayici istemcisi destekli: Android ve Apple iOS, mobil tarayicidan `guildbridge-web` kullanabilir. Cihaz uzerinde CLI destegi deneyseldir ve Python runtime'a baglidir.
 
@@ -462,7 +464,7 @@ Yayin adimlari [docs/RELEASE.md](docs/RELEASE.md) dosyasinda belgelenmistir. Kis
 make release-check
 ```
 
-GitHub release workflow'u `v*` tag'leri ve manuel calistirmalar icin artifact olusturup yukler; PyPI'ye otomatik yayin yapmaz.
+GitHub release workflow'u `v*` tag'leri ve manuel calistirmalar icin artifact olusturup yukler; PyPI'ye otomatik yayin yapmaz. Windows release calistirmalari ayrica `guildbridge.exe`, `guildbridge-gui.exe`, `guildbridge-web.exe` iceren portable ZIP ve WiX varsa MSI installer uretir.
 
 ## Gelistirme
 
@@ -500,7 +502,7 @@ Bu repo ikisini de icerir:
 
 Iki pipeline da kurulum, lint, type check, testler, platform kontrolleri, package build, dagitim metadata kontrolleri ve wheel kurulum dogrulamasini calistirir.
 
-GitHub Actions ayrica `v*` tag'leri ve manuel calistirmalar icin `Release Artifacts` workflow'una sahiptir. Wheel/sdist olusturur ve workflow artifact'i olarak yukler; PyPI'ye otomatik yayin yapmaz.
+GitHub Actions ayrica `v*` tag'leri ve manuel calistirmalar icin `Release Artifacts` workflow'una sahiptir. Wheel/sdist, Windows ZIP ve Windows MSI olusturur, sonra workflow artifact'i olarak yukler; PyPI'ye otomatik yayin yapmaz.
 
 ## Proje yapisi
 

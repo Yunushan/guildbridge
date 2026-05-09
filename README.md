@@ -174,6 +174,8 @@ The desktop GUI runs on platforms with Tkinter installed and a desktop session. 
 GuildBridge support is tiered so platform claims stay honest:
 
 - CI-tested CLI/runtime: Windows, Ubuntu, macOS, and Debian through the GitLab Python image.
+- GitHub Actions tests Python 3.10, 3.11, 3.12, 3.13, and 3.14 on the required hosted matrix.
+- Hosted compatibility jobs cover Windows Server 2022 and macOS 26. Exact Windows 10/11, Windows Server 2019/2026, and Ubuntu 26.04 checks use the manual self-hosted workflow because GitHub does not provide normal hosted labels for those targets.
 - Install-script supported: Windows Server, Linux Mint, RHEL, AlmaLinux, Rocky Linux, Oracle Linux, Fedora, CentOS, CentOS Stream, Arch Linux, Manjaro Linux, Gentoo, FreeBSD, NetBSD, and OpenBSD.
 - Browser-client supported: Android and Apple iOS can use `guildbridge-web` from a mobile browser. On-device CLI support is experimental and depends on the Python runtime.
 
@@ -462,7 +464,7 @@ Release steps are documented in [docs/RELEASE.md](docs/RELEASE.md). The short lo
 make release-check
 ```
 
-The GitHub release workflow builds and uploads artifacts for `v*` tags and manual runs; it does not publish to PyPI automatically.
+The GitHub release workflow builds and uploads artifacts for `v*` tags and manual runs; it does not publish to PyPI automatically. Windows release runs also produce a portable ZIP with `guildbridge.exe`, `guildbridge-gui.exe`, `guildbridge-web.exe`, and an MSI installer when WiX is available.
 
 ## Development
 
@@ -500,7 +502,7 @@ This repo includes both:
 
 Both pipelines run install, lint, type checks, tests, platform checks, package builds, distribution metadata checks, and wheel install verification.
 
-GitHub Actions also has a `Release Artifacts` workflow for `v*` tags and manual runs. It builds the wheel/sdist and uploads them as workflow artifacts; it does not publish to PyPI automatically.
+GitHub Actions also has a `Release Artifacts` workflow for `v*` tags and manual runs. It builds the wheel/sdist, Windows ZIP, and Windows MSI, then uploads them as workflow artifacts; it does not publish to PyPI automatically.
 
 ## Project layout
 

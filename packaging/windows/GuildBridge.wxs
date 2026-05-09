@@ -1,0 +1,71 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="GuildBridge"
+    Manufacturer="GuildBridge contributors"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="8D88BE6B-1F95-48D0-BAB9-21BB4A941AB1"
+    Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of GuildBridge is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="GuildBridge" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="GuildBridge" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="GuildBridge" Level="1">
+      <ComponentGroupRef Id="GuildBridgeFiles" />
+      <ComponentRef Id="GuildBridgeShortcuts" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="GuildBridgeFiles" Directory="INSTALLFOLDER">
+      <Component Id="GuildBridgeCli" Guid="8786D156-D51D-4020-B694-C44C4E5FB190">
+        <File Id="GuildBridgeCliExe" Source="$(var.SourceDir)\guildbridge.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="GuildBridgeGui" Guid="0116F715-5527-47C6-A93C-FA3C516A9F68">
+        <File Id="GuildBridgeGuiExe" Source="$(var.SourceDir)\guildbridge-gui.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="GuildBridgeWeb" Guid="99E7B053-6768-4700-B75A-851E42FD1770">
+        <File Id="GuildBridgeWebExe" Source="$(var.SourceDir)\guildbridge-web.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="GuildBridgeReadme" Guid="1763889E-87B6-404B-B95C-7EA013EE761C">
+        <File Id="GuildBridgeReadmeFile" Source="$(var.SourceDir)\README.md" KeyPath="yes" />
+      </Component>
+      <Component Id="GuildBridgeTurkishReadme" Guid="F59E9499-75C7-48CE-926A-3716D0F0D51F">
+        <File Id="GuildBridgeTurkishReadmeFile" Source="$(var.SourceDir)\README.tr.md" KeyPath="yes" />
+      </Component>
+      <Component Id="GuildBridgeLicense" Guid="9DD60435-FCD0-4503-AD2D-42802D88892E">
+        <File Id="GuildBridgeLicenseFile" Source="$(var.SourceDir)\LICENSE" KeyPath="yes" />
+      </Component>
+      <Component Id="GuildBridgeEnvExample" Guid="F59E2896-08D5-4E60-BB1E-2824F0756D20">
+        <File Id="GuildBridgeEnvExampleFile" Source="$(var.SourceDir)\.env.example" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="GuildBridgeShortcuts" Directory="ApplicationProgramsFolder" Guid="E5A60927-A40F-4B79-815E-233165B12923">
+      <Shortcut
+        Id="GuildBridgeGuiShortcut"
+        Name="GuildBridge GUI"
+        Target="[INSTALLFOLDER]guildbridge-gui.exe"
+        WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut
+        Id="GuildBridgeWebShortcut"
+        Name="GuildBridge Web GUI"
+        Target="[INSTALLFOLDER]guildbridge-web.exe"
+        WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut
+        Id="GuildBridgeCliShortcut"
+        Name="GuildBridge CLI"
+        Target="[INSTALLFOLDER]guildbridge.exe"
+        WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\GuildBridge" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

@@ -54,7 +54,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="CI tested on GitHub Actions",
         desktop_gui_support="supported when Tkinter and a desktop session are available",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="GitHub Actions: windows-2025-vs2026",
+        ci_coverage="GitHub Actions: windows-2025-vs2026; compatibility: windows-2022; self-hosted: Windows 10/11/Server 2019/2026",
         notes="Use PowerShell, Command Prompt, Windows Terminal, or the GUI launcher.",
     ),
     SupportedPlatform(
@@ -67,7 +67,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="install documented; not CI tested",
         desktop_gui_support="requires Desktop Experience and Tkinter",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="not covered by project CI",
+        ci_coverage="manual self-hosted: Windows Server 2019/2026; hosted compatibility: windows-2022",
         notes="Server Core is CLI-only; the GUI requires Desktop Experience and Tk support.",
     ),
     SupportedPlatform(
@@ -93,7 +93,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="CI tested on GitHub Actions",
         desktop_gui_support="supported when python3-tk and a desktop session are available",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="GitHub Actions: ubuntu-24.04",
+        ci_coverage="GitHub Actions: ubuntu-24.04; manual self-hosted: ubuntu-26.04",
         notes="Supported on Ubuntu LTS and current releases with Python 3.10+.",
     ),
     SupportedPlatform(
@@ -288,7 +288,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="CI tested on GitHub Actions",
         desktop_gui_support="supported when Tkinter and a desktop session are available",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="GitHub Actions: macos-15",
+        ci_coverage="GitHub Actions: macos-15; compatibility: macos-26",
         notes="Supports CLI, Tk desktop GUI, and local web GUI.",
     ),
     SupportedPlatform(

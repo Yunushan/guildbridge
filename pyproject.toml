@@ -25,6 +25,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Communications :: Chat",
   "Topic :: Utilities",
 ]
@@ -42,6 +44,9 @@ dev = [
   "mypy>=1.10.0",
   "twine>=5.1.0",
   "types-requests>=2.31.0",
+]
+windows-build = [
+  "pyinstaller>=6.16.0",
 ]
 
 [project.scripts]
