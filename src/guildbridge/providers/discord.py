@@ -231,6 +231,7 @@ class DiscordProvider(Provider):
         out_categories: list[Category] = []
         out_channels: list[Channel] = []
         raw_channels = list(channels or [])
+        dropped_missing_role_overwrites: set[str] = set()
 
         for ch in raw_channels:
             ch_type = DISCORD_CHANNEL_TYPES.get(safe_int(ch.get("type"), -1), "unknown")
@@ -243,7 +244,12 @@ class DiscordProvider(Provider):
                         id=lid,
                         name=normalize_name(ch.get("name") or "category", max_len=100, fallback="category"),
                         position=ch.get("position"),
-                        permission_overwrites=self._overwrites_from_discord(ch.get("permission_overwrites", []), role_id_map, options),
+                        permission_overwrites=self._overwrites_from_discord(
+                            ch.get("permission_overwrites", []),
+                            role_id_map,
+                            options,
+                            dropped_missing_role_overwrites,
+                        ),
                     )
                 )
 
@@ -264,7 +270,12 @@ class DiscordProvider(Provider):
                     nsfw=bool(ch.get("nsfw", False)),
                     bitrate=ch.get("bitrate"),
                     user_limit=ch.get("user_limit"),
-                    permission_overwrites=self._overwrites_from_discord(ch.get("permission_overwrites", []), role_id_map, options),
+                    permission_overwrites=self._overwrites_from_discord(
+                        ch.get("permission_overwrites", []),
+                        role_id_map,
+                        options,
+                        dropped_missing_role_overwrites,
+                    ),
                 )
             )
 
@@ -286,6 +297,11 @@ class DiscordProvider(Provider):
             template.warnings.append("User/member-specific permission overwrites cannot be represented safely and were dropped.")
         else:
             template.warnings.append("User/member-specific permission overwrites were dropped for privacy.")
+        if dropped_missing_role_overwrites:
+            template.warnings.append(
+                f"Dropped {len(dropped_missing_role_overwrites)} role permission overwrite target(s) "
+                "that were not present in the Discord template roles."
+            )
         return template
 
     def _overwrites_from_discord(
@@ -293,6 +309,7 @@ class DiscordProvider(Provider):
         overwrites: Iterable[dict[str, Any]],
         role_id_map: dict[str, str],
         options: ExportOptions,
+        dropped_missing_role_overwrites: set[str] | None = None,
     ) -> list[PermissionOverwrite]:
         output: list[PermissionOverwrite] = []
         for ow in overwrites or []:
@@ -304,10 +321,15 @@ class DiscordProvider(Provider):
             raw_id = str(raw_value)
             if ow_type == 1 or str(raw_type).lower() in {"member", "user"}:
                 continue
+            target_id = role_id_map.get(raw_id)
+            if target_id is None:
+                if dropped_missing_role_overwrites is not None:
+                    dropped_missing_role_overwrites.add(raw_id)
+                continue
             output.append(
                 PermissionOverwrite(
-                    target_type="everyone" if role_id_map.get(raw_id) == "everyone" else "role",
-                    target_id=role_id_map.get(raw_id, local_id("role", self.name, raw_id)),
+                    target_type="everyone" if target_id == "everyone" else "role",
+                    target_id=target_id,
                     allow=discord_to_neutral(ow.get("allow")),
                     deny=discord_to_neutral(ow.get("deny")),
                 )

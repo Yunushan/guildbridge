@@ -71,6 +71,31 @@ def test_discord_export_drops_user_overwrites_even_when_requested() -> None:
     assert any("cannot be represented safely" in warning for warning in template.warnings)
 
 
+def test_discord_export_drops_role_overwrites_missing_from_template_roles() -> None:
+    provider = DiscordProvider(RuntimeConfig())
+    template = provider._build_template(  # noqa: SLF001
+        {"id": "guild1", "name": "Guild"},
+        [{"id": "guild1", "name": "@everyone", "permissions": "0"}],
+        [
+            {
+                "id": "channel1",
+                "name": "General",
+                "type": 0,
+                "permission_overwrites": [
+                    {"id": "missing-role", "type": 0, "allow": "2048", "deny": "0"},
+                    {"id": "guild1", "type": 0, "allow": "1024", "deny": "0"},
+                ],
+            }
+        ],
+        source_note="test",
+        options=ExportOptions(),
+    )
+
+    assert [ow.target_id for ow in template.channels[0].permission_overwrites] == ["everyone"]
+    assert template.validate() == []
+    assert any("not present in the Discord template roles" in warning for warning in template.warnings)
+
+
 def test_fluxer_export_drops_user_overwrites_even_when_requested() -> None:
     provider = FluxerProvider(RuntimeConfig())
     template = provider._build_template(  # noqa: SLF001
