@@ -15,10 +15,10 @@ GuildBridge separates platform support into explicit tiers:
 
 | Platform | Family | CLI tier | Desktop GUI tier | Web/mobile GUI tier | CI coverage | System packages |
 |---|---|---|---|---|---|---|
-| Windows | Windows | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `windows-latest` | Python 3.10+, Git |
+| Windows | Windows | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `windows-2025-vs2026` | Python 3.10+, Git |
 | Windows Server | Windows | install documented | Desktop Experience only | local/LAN browser supported | no project CI | Python 3.10+, Git |
 | Debian | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitLab `python:3.12` Debian image | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
-| Ubuntu | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitHub Actions `ubuntu-latest` | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
+| Ubuntu | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitHub Actions `ubuntu-24.04` | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | Linux Mint | Debian | install-script supported | `python3-tk` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | RHEL | RHEL | install-script supported | `python3-tkinter` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-tkinter git ca-certificates` |
 | AlmaLinux | RHEL | install-script supported | `python3-tkinter` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-tkinter git ca-certificates` |
@@ -33,7 +33,7 @@ GuildBridge separates platform support into explicit tiers:
 | FreeBSD | BSD | install-script supported | Tk desktop supported | local/LAN browser supported | no project CI | `python py312-pip py312-tkinter git ca_root_nss` |
 | NetBSD | BSD | install-script supported | Tk desktop supported | local/LAN browser supported | no project CI | `python312 py312-pip py312-tkinter git mozilla-rootcerts` |
 | OpenBSD | BSD | install-script supported | Tk desktop supported | local/LAN browser supported | no project CI | `python%3.12 py3-pip python-tkinter git` |
-| macOS | Darwin | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `macos-latest` | Python 3.10+ from python.org, Homebrew, or MacPorts |
+| macOS | Darwin | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `macos-15` | Python 3.10+ from python.org, Homebrew, or MacPorts |
 | Android | Mobile | experimental on-device Python | not supported | browser client supported | no project CI | Termux or another Python-capable Android environment |
 | Apple iOS | Mobile | experimental on-device Python | not supported | browser client supported | no project CI | Pyto, a-Shell, Pythonista-style environment, or remote GuildBridge web server |
 

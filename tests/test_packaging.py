@@ -114,6 +114,11 @@ def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     gitlab = _text(".gitlab-ci.yml")
 
     assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" in github_ci
+    assert 'PIP_NO_CACHE_DIR: "1"' in github_ci
+    assert "ubuntu-24.04" in github_ci
+    assert "windows-2025-vs2026" in github_ci
+    assert "macos-15" in github_ci
+    assert "windows-latest" not in github_ci
     assert "actions/checkout@v6" in github_ci
     assert "actions/setup-python@v6" in github_ci
     assert "python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py" in github_ci
@@ -123,6 +128,8 @@ def test_ci_builds_and_uploads_distribution_artifacts() -> None:
     assert "python -m twine check dist/*" in github_ci
     assert "python scripts/verify-dist.py" in github_ci
     assert "name: Release Artifacts" in release
+    assert 'PIP_NO_CACHE_DIR: "1"' in release
+    assert "ubuntu-24.04" in release
     assert "python -m pytest -q" in release
     assert "python scripts/check-platform.py --require cli --format json" in release
     assert "actions/upload-artifact@v7" in release

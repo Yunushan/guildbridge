@@ -100,7 +100,7 @@ def _check_fixture(**overrides: object) -> dict[str, object]:
         "dotenv_available": True,
         "tkinter_available": True,
         "git_available": True,
-        "ci_coverage": "GitHub Actions: ubuntu-latest",
+        "ci_coverage": "GitHub Actions: ubuntu-24.04",
         "cli_support": "CI tested on GitHub Actions",
         "desktop_gui_support": "supported when Tkinter and a desktop session are available",
     }

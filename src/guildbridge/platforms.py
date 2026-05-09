@@ -54,7 +54,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="CI tested on GitHub Actions",
         desktop_gui_support="supported when Tkinter and a desktop session are available",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="GitHub Actions: windows-latest",
+        ci_coverage="GitHub Actions: windows-2025-vs2026",
         notes="Use PowerShell, Command Prompt, Windows Terminal, or the GUI launcher.",
     ),
     SupportedPlatform(
@@ -93,7 +93,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="CI tested on GitHub Actions",
         desktop_gui_support="supported when python3-tk and a desktop session are available",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="GitHub Actions: ubuntu-latest",
+        ci_coverage="GitHub Actions: ubuntu-24.04",
         notes="Supported on Ubuntu LTS and current releases with Python 3.10+.",
     ),
     SupportedPlatform(
@@ -288,7 +288,7 @@ SUPPORTED_PLATFORMS: tuple[SupportedPlatform, ...] = (
         cli_support="CI tested on GitHub Actions",
         desktop_gui_support="supported when Tkinter and a desktop session are available",
         web_gui_support="supported locally or on a trusted LAN with --allow-lan",
-        ci_coverage="GitHub Actions: macos-latest",
+        ci_coverage="GitHub Actions: macos-15",
         notes="Supports CLI, Tk desktop GUI, and local web GUI.",
     ),
     SupportedPlatform(
