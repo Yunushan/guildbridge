@@ -26,8 +26,9 @@ class CommandResult:
 
 
 def _add_value(args: list[str], flag: str, value: str | None) -> None:
-    if value:
-        args.extend([flag, value])
+    cleaned = (value or "").strip()
+    if cleaned:
+        args.extend([flag, cleaned])
 
 
 def _add_flag(args: list[str], flag: str, enabled: bool) -> None:
@@ -81,7 +82,7 @@ def build_import_args(
 ) -> list[str]:
     args = ["import"]
     _add_providers(args, "--to", provider_to)
-    args.extend(["--file", file])
+    args.extend(["--file", file.strip()])
     _add_value(args, "--target-id", target_id)
     _add_value(args, "--target-name", target_name)
     _add_value(args, "--plan-out", plan_out)
@@ -163,11 +164,11 @@ def _same_plan_path(plan_in: str, plan_out: str) -> bool:
 
 
 def build_validate_args(file: str) -> list[str]:
-    return ["validate", file]
+    return ["validate", file.strip()]
 
 
 def build_redact_args(file: str, *, out: str = "redacted.template.json") -> list[str]:
-    return ["redact", file, "--out", out]
+    return ["redact", file.strip(), "--out", out.strip()]
 
 
 def command_preview(args: Sequence[str]) -> str:

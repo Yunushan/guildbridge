@@ -95,6 +95,24 @@ def test_build_migrate_args_accepts_comma_separated_targets() -> None:
     assert args[:7] == ["migrate", "--from", "discord", "--to", "matrix", "--to", "rocket.chat"]
 
 
+def test_gui_command_builders_trim_pasted_whitespace() -> None:
+    args = build_migrate_args(
+        "discord",
+        "stoat",
+        source_id=" 123\n",
+        template=" https://discord.new/example\n",
+        target_id=" target\n",
+        plan_out=" C:/tmp/guildbridge.plan.json\n",
+    )
+
+    assert args[args.index("--source-id") + 1] == "123"
+    assert args[args.index("--template") + 1] == "https://discord.new/example"
+    assert args[args.index("--target-id") + 1] == "target"
+    assert args[args.index("--plan-out") + 1] == "C:/tmp/guildbridge.plan.json"
+    assert build_validate_args(" community.template.json\n") == ["validate", "community.template.json"]
+    assert build_redact_args(" template.json\n", out=" redacted.json\n") == ["redact", "template.json", "--out", "redacted.json"]
+
+
 def test_apply_confirmation_error_requires_reviewed_plan_and_token() -> None:
     assert apply_confirmation_error(apply=False, plan_in="", confirmation=None) is None
     assert apply_confirmation_error(apply=True, plan_in="", confirmation="APPLY") == (
