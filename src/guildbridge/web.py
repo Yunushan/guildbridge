@@ -28,6 +28,7 @@ CSRF_FIELD = "csrf_token"
 AUTH_FIELD = "auth_token"
 AUTH_HEADER = "X-GuildBridge-Auth"
 DEFAULT_MAX_BODY_BYTES = 64 * 1024
+THEMES = ("light", "dark")
 
 
 def _first(form: Mapping[str, list[str]], key: str, default: str = "") -> str:
@@ -46,6 +47,11 @@ def _values(form: Mapping[str, list[str]], key: str, default: str = "") -> list[
 
 def _checked(form: Mapping[str, list[str]], key: str) -> bool:
     return key in form
+
+
+def _theme(value: str) -> str:
+    normalized = value.strip().lower()
+    return normalized if normalized in THEMES else "light"
 
 
 def _is_loopback_address(value: str) -> bool:
@@ -69,6 +75,10 @@ def _auth_input(auth_token: str) -> str:
     if not auth_token:
         return ""
     return f'<input type="hidden" name="{AUTH_FIELD}" value="{html.escape(auth_token)}">'
+
+
+def _theme_input(theme: str) -> str:
+    return f'<input type="hidden" name="theme" value="{html.escape(_theme(theme))}">'
 
 
 def validate_lan_auth_token(provided: str, expected: str) -> None:
@@ -166,6 +176,25 @@ def _select_field(label: str, name: str, options: str) -> str:
     return f'<label class="field"><span>{html.escape(label)}</span><select name="{html.escape(name)}">{options}</select></label>'
 
 
+def _theme_options(selected: str) -> str:
+    selected = _theme(selected)
+    return "\n".join(
+        f'<option value="{name}"{" selected" if name == selected else ""}>{html.escape(name.title())}</option>'
+        for name in THEMES
+    )
+
+
+def _theme_form(theme: str, auth_token: str) -> str:
+    return (
+        '<form method="get" class="theme-form" aria-label="Theme">'
+        f'{_auth_input(auth_token)}'
+        '<label class="field field--inline"><span>Theme</span>'
+        f'<select name="theme">{_theme_options(theme)}</select></label>'
+        '<button type="submit" class="button-secondary">Apply</button>'
+        "</form>"
+    )
+
+
 def _multi_select_field(label: str, name: str, options: str) -> str:
     size = min(max(len(provider_names()), 4), 8)
     return (
@@ -225,7 +254,8 @@ def _render_result(result: CommandResult | None) -> str:
     """
 
 
-def render_page(result: CommandResult | None = None, *, csrf_token: str = "", auth_token: str = "") -> str:
+def render_page(result: CommandResult | None = None, *, csrf_token: str = "", auth_token: str = "", theme: str = "light") -> str:
+    theme = _theme(theme)
     checks = runtime_check()
     check_items = "".join(f"<li>{html.escape(str(key))}: {html.escape(str(value))}</li>" for key, value in checks.items())
     platforms = "".join(
@@ -243,19 +273,22 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
     providers_fluxer = _provider_options("fluxer")
     csrf = _csrf_input(csrf_token)
     auth = _auth_input(auth_token)
+    theme_field = _theme_input(theme)
     apply_confirmation = _apply_confirmation_label()
+    theme_form = _theme_form(theme, auth_token)
     runtime_badges = "".join(
         f'<span class="badge">{html.escape(label)}: {html.escape(str(checks.get(key, "unknown")))}</span>'
         for label, key in (("CLI", "cli_ready"), ("Desktop", "desktop_gui_ready"), ("Web", "web_gui_ready"))
     )
     return f"""<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{html.escape(theme)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GuildBridge</title>
   <style>
     :root {{
+      color-scheme: light;
       --bg: #f5f7fa;
       --surface: #ffffff;
       --surface-soft: #f9fafb;
@@ -263,12 +296,46 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       --border-strong: #aeb8c7;
       --text: #17202a;
       --muted: #586577;
+      --header-bg: #101820;
+      --header-text: #ffffff;
+      --header-muted: #d6dee8;
+      --nav-bg: rgba(255, 255, 255, 0.97);
+      --hover-bg: #eaf1fb;
+      --input-bg: #ffffff;
       --brand: #1f5fbf;
       --brand-strong: #174a96;
       --success: #087443;
       --danger: #b42318;
+      --danger-soft: #fff7f5;
+      --danger-border: #f3b4ad;
       --warning: #a15c07;
       --code-bg: #111827;
+      --code-text: #dce8f5;
+    }}
+    html[data-theme="dark"] {{
+      color-scheme: dark;
+      --bg: #10151c;
+      --surface: #161d26;
+      --surface-soft: #202833;
+      --border: #354253;
+      --border-strong: #56657a;
+      --text: #e7edf5;
+      --muted: #a9b6c7;
+      --header-bg: #090d12;
+      --header-text: #f4f7fb;
+      --header-muted: #b5c2d2;
+      --nav-bg: rgba(16, 21, 28, 0.97);
+      --hover-bg: #223249;
+      --input-bg: #0e141b;
+      --brand: #6aa4ff;
+      --brand-strong: #8bb9ff;
+      --success: #2fb176;
+      --danger: #ff8f85;
+      --danger-soft: #2d1718;
+      --danger-border: #7e3838;
+      --warning: #e0a64b;
+      --code-bg: #070b10;
+      --code-text: #e5edf7;
     }}
     * {{ box-sizing: border-box; }}
     html {{ scroll-behavior: smooth; }}
@@ -292,8 +359,8 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
     }}
     .skip-link:focus {{ top: 12px; }}
     header {{
-      background: #101820;
-      color: #ffffff;
+      background: var(--header-bg);
+      color: var(--header-text);
       border-bottom: 1px solid #253242;
     }}
     .header-inner {{
@@ -308,7 +375,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
     h1, h2, p {{ margin-top: 0; }}
     h1 {{ margin-bottom: 4px; font-size: 28px; line-height: 1.15; }}
     h2 {{ margin-bottom: 0; font-size: 20px; line-height: 1.2; }}
-    header p {{ margin-bottom: 0; color: #d6dee8; }}
+    header p {{ margin-bottom: 0; color: var(--header-muted); }}
     .badge-row {{ display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }}
     .badge {{
       display: inline-flex;
@@ -322,11 +389,21 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       white-space: nowrap;
       font-size: 13px;
     }}
+    .theme-form {{
+      display: flex;
+      align-items: end;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }}
+    .field--inline {{
+      min-width: 150px;
+    }}
     .tool-nav {{
       position: sticky;
       top: 0;
       z-index: 10;
-      background: rgba(255, 255, 255, 0.97);
+      background: var(--nav-bg);
       border-bottom: 1px solid var(--border);
     }}
     .tool-nav__inner {{
@@ -350,7 +427,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       text-decoration: none;
       font-weight: 650;
     }}
-    .tool-nav a:focus-visible, .tool-nav a:hover {{ background: #eaf1fb; outline: none; }}
+    .tool-nav a:focus-visible, .tool-nav a:hover {{ background: var(--hover-bg); outline: none; }}
     main {{ max-width: 1180px; margin: 0 auto; padding: 18px; }}
     .panel {{
       background: var(--surface);
@@ -390,7 +467,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       border: 1px solid var(--border-strong);
       border-radius: 6px;
       padding: 9px 10px;
-      background: #ffffff;
+      background: var(--input-bg);
       color: var(--text);
     }}
     select[multiple] {{ min-height: 168px; padding: 6px; }}
@@ -411,7 +488,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       font-weight: 650;
     }}
     .check input {{ width: 18px; min-height: 18px; }}
-    .check--danger {{ border-color: #f3b4ad; background: #fff7f5; color: var(--danger); }}
+    .check--danger {{ border-color: var(--danger-border); background: var(--danger-soft); color: var(--danger); }}
     .form-actions {{
       grid-column: 1 / -1;
       display: flex;
@@ -428,13 +505,19 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       font-weight: 750;
       cursor: pointer;
     }}
+    .button-secondary {{
+      background: var(--surface-soft);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
+    }}
+    .button-secondary:hover {{ background: var(--hover-bg); }}
     button:hover {{ background: var(--brand-strong); }}
     .tool-stack {{ display: grid; gap: 14px; }}
     pre {{
       max-height: 420px;
       overflow: auto;
       background: var(--code-bg);
-      color: #dce8f5;
+      color: var(--code-text);
       padding: 12px;
       border-radius: 6px;
     }}
@@ -479,6 +562,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
     tbody tr:last-child td {{ border-bottom: 0; }}
     @media (max-width: 720px) {{
       .header-inner {{ display: grid; padding: 18px 14px; }}
+      .theme-form {{ justify-content: flex-start; }}
       .badge-row {{ justify-content: flex-start; }}
       main {{ padding: 14px 12px; }}
       .tool-nav__inner {{ padding-inline: 12px; }}
@@ -502,7 +586,10 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
         <h1>GuildBridge</h1>
         <p>Community migration workspace</p>
       </div>
-      <div class="badge-row" aria-label="Runtime readiness">{runtime_badges}</div>
+      <div>
+        <div class="badge-row" aria-label="Runtime readiness">{runtime_badges}</div>
+        {theme_form}
+      </div>
     </div>
   </header>
   <nav class="tool-nav" aria-label="GuildBridge tools">
@@ -523,6 +610,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       <form method="post" action="/run" class="form-grid" aria-label="Migrate community">
         {csrf}
         {auth}
+        {theme_field}
         <input type="hidden" name="action" value="migrate">
         {_select_field("From", "provider_from", providers_default)}
         {_multi_select_field("To", "provider_to", providers_fluxer)}
@@ -550,6 +638,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       <form method="post" action="/run" class="form-grid" aria-label="Export community">
         {csrf}
         {auth}
+        {theme_field}
         <input type="hidden" name="action" value="export">
         {_select_field("From", "provider_from", providers_default)}
         {_text_field("Source ID", "source_id")}
@@ -565,6 +654,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       <form method="post" action="/run" class="form-grid" aria-label="Import community">
         {csrf}
         {auth}
+        {theme_field}
         <input type="hidden" name="action" value="import">
         {_multi_select_field("To", "provider_to", providers_default)}
         {_text_field("Template file", "file")}
@@ -589,6 +679,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
         <form method="post" action="/run" class="form-grid" aria-label="Validate template">
           {csrf}
           {auth}
+          {theme_field}
           <input type="hidden" name="action" value="validate">
           {_text_field("Template file", "file")}
           <div class="form-actions"><button type="submit">Validate</button></div>
@@ -596,6 +687,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
         <form method="post" action="/run" class="form-grid" aria-label="Redact template">
           {csrf}
           {auth}
+          {theme_field}
           <input type="hidden" name="action" value="redact">
           {_text_field("Template file", "file")}
           {_text_field("Output", "out", value="redacted.template.json")}
@@ -610,6 +702,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       <form method="post" action="/run">
         {csrf}
         {auth}
+        {theme_field}
         <input type="hidden" name="action" value="platforms">
         <button type="submit">Run Platform Check</button>
       </form>
@@ -642,7 +735,9 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         if self.require_auth and not self._query_auth_ok(parsed.query):
             self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing auth token")
             return
-        self._send_html(render_page(csrf_token=self.csrf_token, auth_token=self.auth_token if self.require_auth else ""))
+        query_form = parse_qs(parsed.query, keep_blank_values=True)
+        theme = _theme(_first(query_form, "theme", "light"))
+        self._send_html(render_page(csrf_token=self.csrf_token, auth_token=self.auth_token if self.require_auth else "", theme=theme))
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -676,7 +771,14 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
             result = run_cli_args(args)
         except Exception as exc:
             result = CommandResult((), (), 1, "", format_error_report(exc), 0.0)
-        self._send_html(render_page(result, csrf_token=self.csrf_token, auth_token=self.auth_token if self.require_auth else ""))
+        self._send_html(
+            render_page(
+                result,
+                csrf_token=self.csrf_token,
+                auth_token=self.auth_token if self.require_auth else "",
+                theme=_first(form, "theme", "light"),
+            )
+        )
 
     def log_message(self, format: str, *args: object) -> None:
         return

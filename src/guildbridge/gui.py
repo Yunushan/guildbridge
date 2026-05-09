@@ -39,6 +39,42 @@ class Field:
     browse: str | None = None
 
 
+GUI_THEMES: dict[str, dict[str, str]] = {
+    "Light": {
+        "bg": "#f4f6f8",
+        "surface": "#ffffff",
+        "surface_soft": "#eef2f6",
+        "text": "#17202a",
+        "muted": "#586577",
+        "border": "#c7d0dd",
+        "field": "#ffffff",
+        "field_focus": "#dce9fb",
+        "select_bg": "#1f5fbf",
+        "select_fg": "#ffffff",
+        "button": "#1f5fbf",
+        "button_active": "#174a96",
+        "output_bg": "#ffffff",
+        "output_fg": "#17202a",
+    },
+    "Dark": {
+        "bg": "#11161d",
+        "surface": "#171d25",
+        "surface_soft": "#202833",
+        "text": "#e8eef5",
+        "muted": "#aab5c3",
+        "border": "#394454",
+        "field": "#0f141b",
+        "field_focus": "#1e334f",
+        "select_bg": "#78a8ff",
+        "select_fg": "#08111e",
+        "button": "#2f6fc6",
+        "button_active": "#3f82dd",
+        "output_bg": "#0b1016",
+        "output_fg": "#e8eef5",
+    },
+}
+
+
 class GuildBridgeGUI(ttk.Frame):
     def __init__(self, master: Tk) -> None:
         super().__init__(master, padding=12)
@@ -51,17 +87,31 @@ class GuildBridgeGUI(ttk.Frame):
 
         self.providers = tuple(sorted(provider_names()))
         self.result_queue: queue.Queue[CommandResult] = queue.Queue()
+        self.style = ttk.Style(master)
+        self.theme = StringVar(value="Light")
         self.output = scrolledtext.ScrolledText(self, height=14, wrap="word")
+        self.themed_listboxes: list[Listbox] = []
+        self.themed_trees: list[ttk.Treeview] = []
 
         self._build()
+        self._apply_theme()
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
-        self.rowconfigure(1, weight=0)
+        self.rowconfigure(0, weight=0)
+        self.rowconfigure(1, weight=1)
+        self.rowconfigure(2, weight=0)
+
+        header = ttk.Frame(self)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Theme").grid(row=0, column=1, sticky="e", padx=(0, 8))
+        theme_combo = ttk.Combobox(header, textvariable=self.theme, values=tuple(GUI_THEMES), state="readonly", width=10)
+        theme_combo.grid(row=0, column=2, sticky="e")
+        theme_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_theme())
 
         notebook = ttk.Notebook(self)
-        notebook.grid(row=0, column=0, sticky="nsew")
+        notebook.grid(row=1, column=0, sticky="nsew")
         notebook.add(self._export_tab(notebook), text="Export")
         notebook.add(self._import_tab(notebook), text="Import")
         notebook.add(self._migrate_tab(notebook), text="Migrate")
@@ -69,12 +119,128 @@ class GuildBridgeGUI(ttk.Frame):
         notebook.add(self._platforms_tab(notebook), text="Platforms")
 
         output_frame = ttk.LabelFrame(self, text="Output")
-        output_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        output_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         output_frame.columnconfigure(0, weight=1)
         self.output.grid(in_=output_frame, row=0, column=0, sticky="ew", padx=8, pady=8)
         ttk.Button(output_frame, text="Clear", command=lambda: self.output.delete("1.0", "end")).grid(
             row=0, column=1, sticky="ns", padx=(0, 8), pady=8
         )
+
+    def _apply_theme(self) -> None:
+        palette = GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])
+        try:
+            self.style.theme_use("clam")
+        except Exception:
+            pass
+
+        self.master["background"] = palette["bg"]
+        self.configure(style="TFrame")
+        self.style.configure(".", background=palette["bg"], foreground=palette["text"])
+        self.style.configure("TFrame", background=palette["bg"])
+        self.style.configure("TLabelframe", background=palette["bg"], bordercolor=palette["border"])
+        self.style.configure("TLabelframe.Label", background=palette["bg"], foreground=palette["text"])
+        self.style.configure("TLabel", background=palette["bg"], foreground=palette["text"])
+        self.style.configure("TCheckbutton", background=palette["bg"], foreground=palette["text"])
+        self.style.map(
+            "TCheckbutton",
+            background=[("active", palette["surface_soft"])],
+            foreground=[("disabled", palette["muted"])],
+        )
+        self.style.configure(
+            "TButton",
+            background=palette["button"],
+            foreground="#ffffff",
+            bordercolor=palette["button"],
+            focusthickness=1,
+            focuscolor=palette["field_focus"],
+            padding=(8, 4),
+        )
+        self.style.map(
+            "TButton",
+            background=[("active", palette["button_active"]), ("disabled", palette["surface_soft"])],
+            foreground=[("disabled", palette["muted"])],
+        )
+        self.style.configure(
+            "TEntry",
+            fieldbackground=palette["field"],
+            foreground=palette["text"],
+            bordercolor=palette["border"],
+            insertcolor=palette["text"],
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=palette["field"],
+            background=palette["field"],
+            foreground=palette["text"],
+            bordercolor=palette["border"],
+            arrowcolor=palette["text"],
+            selectbackground=palette["select_bg"],
+            selectforeground=palette["select_fg"],
+        )
+        self.style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", palette["field"])],
+            foreground=[("readonly", palette["text"])],
+            selectbackground=[("readonly", palette["select_bg"])],
+            selectforeground=[("readonly", palette["select_fg"])],
+        )
+        self.style.configure("TNotebook", background=palette["bg"], bordercolor=palette["border"])
+        self.style.configure(
+            "TNotebook.Tab",
+            background=palette["surface_soft"],
+            foreground=palette["text"],
+            padding=(8, 4),
+        )
+        self.style.map(
+            "TNotebook.Tab",
+            background=[("selected", palette["surface"]), ("active", palette["field_focus"])],
+            foreground=[("selected", palette["text"])],
+        )
+        self.style.configure(
+            "Treeview",
+            background=palette["field"],
+            fieldbackground=palette["field"],
+            foreground=palette["text"],
+            bordercolor=palette["border"],
+            rowheight=24,
+        )
+        self.style.configure(
+            "Treeview.Heading",
+            background=palette["surface_soft"],
+            foreground=palette["text"],
+            bordercolor=palette["border"],
+        )
+        self.style.map(
+            "Treeview",
+            background=[("selected", palette["select_bg"])],
+            foreground=[("selected", palette["select_fg"])],
+        )
+
+        self.output.configure(
+            background=palette["output_bg"],
+            foreground=palette["output_fg"],
+            insertbackground=palette["output_fg"],
+            selectbackground=palette["select_bg"],
+            selectforeground=palette["select_fg"],
+            highlightbackground=palette["border"],
+            highlightcolor=palette["select_bg"],
+        )
+        for listbox in self.themed_listboxes:
+            listbox.configure(
+                background=palette["field"],
+                foreground=palette["text"],
+                selectbackground=palette["select_bg"],
+                selectforeground=palette["select_fg"],
+                highlightbackground=palette["border"],
+                highlightcolor=palette["select_bg"],
+                relief="solid",
+                borderwidth=1,
+            )
+        for tree in self.themed_trees:
+            for row_index, item in enumerate(tree.get_children("")):
+                tree.item(item, tags=("odd" if row_index % 2 else "even",))
+            tree.tag_configure("even", background=palette["field"], foreground=palette["text"])
+            tree.tag_configure("odd", background=palette["surface"], foreground=palette["text"])
 
     def _new_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(parent, padding=12)
@@ -101,6 +267,7 @@ class GuildBridgeGUI(ttk.Frame):
         if self.providers and not selected:
             listbox.selection_set(0)
         listbox.grid(row=row, column=1, sticky="ew", pady=4)
+        self.themed_listboxes.append(listbox)
         return listbox
 
     @staticmethod
@@ -353,6 +520,7 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
             )
         tree.grid(row=1, column=0, sticky="nsew")
+        self.themed_trees.append(tree)
         frame.rowconfigure(1, weight=1)
         return frame
 

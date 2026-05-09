@@ -183,15 +183,16 @@ guildbridge-web.exe
 3. Once **Platforms** sekmesini kullanarak CLI, masaustu GUI ve web GUI hazirligini kontrol edin.
 4. Kaynak saglayicidan tarafsiz template olusturmak icin **Export** kullanin. Source ID veya provider template URL/code girin, sonra output JSON yolu secin.
 5. Mevcut template'i bir veya daha fazla hedef saglayiciya aktarmak icin **Import**, tek export ile bir veya daha fazla hedefe import icin **Migrate** kullanin.
-6. Ilk calistirmada **Apply writes** isaretli olmasin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
-7. Olusturulan plan JSON dosyasini inceleyin.
-8. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin, **Apply writes** isaretleyin ve onay penceresi istediginde `APPLY` yazin.
-9. Apply calistirmalarinda **Journal output JSON** kullanin ki yarida kalan yazmalar denetlenebilsin. **Resume journal JSON** yalnizca ayni komut, hedef, template ve incelenmis planla yarida kalmis apply'i tekrar denerken kullanin.
-10. Template paylasmadan once **Validate / Redact** kullanin.
+6. Acik ve koyu mod arasinda gecmek icin **Theme** secicisini kullanin.
+7. Ilk calistirmada **Apply writes** isaretli olmasin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
+8. Olusturulan plan JSON dosyasini inceleyin.
+9. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin, **Apply writes** isaretleyin ve onay penceresi istediginde `APPLY` yazin.
+10. Apply calistirmalarinda **Journal output JSON** kullanin ki yarida kalan yazmalar denetlenebilsin. **Resume journal JSON** yalnizca ayni komut, hedef, template ve incelenmis planla yarida kalmis apply'i tekrar denerken kullanin.
+11. Template paylasmadan once **Validate / Redact** kullanin.
 
 Output paneli GUI'nin calistirdigi tam `guildbridge ...` komutunu, stdout/stderr ciktisini, exit code'u ve sureyi gosterir.
 
-Tarayici GUI varsayilan olarak `http://127.0.0.1:8765` adresinde baslar. Telefon ve tablet tarayicilari icin dokunmaya uygun kontroller, sabit gezinme, sonuc durum panelleri ve kaydirma guvenli platform tablolari olan responsive bir duzen kullanir. Ayrica her sunucu icin CSRF token'i kullanir, POST govde boyutunu sinirlar, temel tarayici guvenlik basliklari ekler ve tarayicidan tetiklenen yazma islemlerinin `--apply` ile calismasi icin `APPLY` yazilmasini zorunlu tutar.
+Tarayici GUI varsayilan olarak `http://127.0.0.1:8765` adresinde baslar. Telefon ve tablet tarayicilari icin dokunmaya uygun kontroller, sabit gezinme, acik/koyu tema secimi, sonuc durum panelleri ve kaydirma guvenli platform tablolari olan responsive bir duzen kullanir. Ayrica her sunucu icin CSRF token'i kullanir, POST govde boyutunu sinirlar, temel tarayici guvenlik basliklari ekler ve tarayicidan tetiklenen yazma islemlerinin `--apply` ile calismasi icin `APPLY` yazilmasini zorunlu tutar.
 
 Her iki GUI modu da import ve migrate icin CLI ile ayni apply guvenligi kontrollerini sunar: incelenmis plan girdisi, journal ciktisi, resume journal, inceleme sonrasi gecersiz sablonu zorlama ve yazmalari uygulama. Apply islemleri incelenmis plan yolu ve yazilmis `APPLY` ister; GuildBridge saglayici yazmalari baslamadan once incelenmis plani yine dogrular.
 

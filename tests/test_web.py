@@ -89,7 +89,7 @@ def test_build_web_platform_args() -> None:
 
 
 def test_render_page_includes_mobile_platforms() -> None:
-    page = render_page(csrf_token="test-token", auth_token="lan-token")
+    page = render_page(csrf_token="test-token", auth_token="lan-token", theme="dark")
     assert "Android" in page
     assert "Apple iOS" in page
     assert "Run Migrate" in page
@@ -103,6 +103,17 @@ def test_render_page_includes_mobile_platforms() -> None:
     assert f'name="{AUTH_FIELD}" value="lan-token"' in page
     assert f"Type {APPLY_CONFIRMATION}" in page
     assert 'select name="provider_to" multiple' in page
+    assert '<html lang="en" data-theme="dark">' in page
+    assert 'name="theme" value="dark"' in page
+    assert 'class="theme-form" aria-label="Theme"' in page
+    assert '<option value="dark" selected>Dark</option>' in page
+
+
+def test_render_page_defaults_unknown_theme_to_light() -> None:
+    page = render_page(theme="unknown")
+
+    assert '<html lang="en" data-theme="light">' in page
+    assert '<option value="light" selected>Light</option>' in page
 
 
 def test_render_page_has_mobile_layout_contracts() -> None:
@@ -118,6 +129,8 @@ def test_render_page_has_mobile_layout_contracts() -> None:
     assert 'autocapitalize="off"' in page
     assert 'spellcheck="false"' in page
     assert 'aria-label="Runtime readiness"' in page
+    assert 'html[data-theme="dark"]' in page
+    assert "--input-bg" in page
 
 
 def test_render_page_marks_result_state() -> None:
