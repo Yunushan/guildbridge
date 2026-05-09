@@ -232,12 +232,26 @@ def png_bytes(size: int) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + b"".join(chunks)
 
 
+def bmp_icon_bytes(size: int) -> bytes:
+    raw = render(size)
+    header = struct.pack("<IIIHHIIIIII", 40, size, size * 2, 1, 32, 0, size * size * 4, 0, 0, 0, 0)
+    pixels = bytearray()
+    stride = size * 4
+    for y in range(size - 1, -1, -1):
+        row = raw[y * stride : (y + 1) * stride]
+        for x in range(size):
+            red, green, blue, alpha = row[x * 4 : x * 4 + 4]
+            pixels.extend((blue, green, red, alpha))
+    mask_stride = ((size + 31) // 32) * 4
+    return header + bytes(pixels) + bytes(mask_stride * size)
+
+
 def chunk(kind: bytes, data: bytes) -> bytes:
     return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
 
 def ico_bytes(sizes: tuple[int, ...]) -> bytes:
-    images = [png_bytes(size) for size in sizes]
+    images = [bmp_icon_bytes(size) for size in sizes]
     header = struct.pack("<HHH", 0, 1, len(images))
     offset = 6 + 16 * len(images)
     entries = bytearray()

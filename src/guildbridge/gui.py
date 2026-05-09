@@ -114,12 +114,16 @@ class GuildBridgeGUI(ttk.Frame):
             with resources.as_file(png_resource) as png_path:
                 self.icon_image = PhotoImage(file=str(png_path))
             self.root.iconphoto(True, self.icon_image)
-            if sys.platform == "win32":
-                ico_resource = resources.files("guildbridge").joinpath("assets/guildbridge-icon.ico")
-                with resources.as_file(ico_resource) as ico_path:
-                    self.root.iconbitmap(default=str(ico_path))
         except Exception:
             self.icon_image = None
+        if sys.platform == "win32":
+            try:
+                ico_resource = resources.files("guildbridge").joinpath("assets/guildbridge-icon.ico")
+                with resources.as_file(ico_resource) as ico_path:
+                    self.root.iconbitmap(str(ico_path))
+                    self.root.iconbitmap(default=str(ico_path))
+            except Exception:
+                pass
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -160,6 +164,7 @@ class GuildBridgeGUI(ttk.Frame):
             pass
 
         self.master["background"] = palette["bg"]
+        self._apply_windows_titlebar(palette)
         self.configure(style="TFrame")
         self.style.configure(".", background=palette["bg"], foreground=palette["text"])
         self.style.configure("TFrame", background=palette["bg"])
@@ -269,6 +274,36 @@ class GuildBridgeGUI(ttk.Frame):
                 tree.item(item, tags=("odd" if row_index % 2 else "even",))
             tree.tag_configure("even", background=palette["field"], foreground=palette["text"])
             tree.tag_configure("odd", background=palette["surface"], foreground=palette["text"])
+
+    def _apply_windows_titlebar(self, palette: dict[str, str]) -> None:
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            self.root.update_idletasks()
+            dwmapi = ctypes.windll.dwmapi
+            hwnd = ctypes.c_void_p(self.root.winfo_id())
+            dark = ctypes.c_int(1 if self.theme.get() == "Dark" else 0)
+            for attribute in (20, 19):
+                dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(dark), ctypes.sizeof(dark))
+            for attribute, color in (
+                (34, palette["border"]),
+                (35, palette["bg"]),
+                (36, palette["text"]),
+            ):
+                colorref = ctypes.c_int(self._windows_colorref(color))
+                dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(colorref), ctypes.sizeof(colorref))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _windows_colorref(hex_color: str) -> int:
+        value = hex_color.lstrip("#")
+        red = int(value[0:2], 16)
+        green = int(value[2:4], 16)
+        blue = int(value[4:6], 16)
+        return red | (green << 8) | (blue << 16)
 
     def _new_tab(self, parent: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
         container = ttk.Frame(parent)
