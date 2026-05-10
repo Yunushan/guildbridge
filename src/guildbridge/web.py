@@ -12,6 +12,9 @@ from urllib.parse import parse_qs, urlparse
 from guildbridge.diagnostics import format_error_report
 from guildbridge.gui_commands import (
     CommandResult,
+    build_content_export_args,
+    build_content_import_args,
+    build_content_migrate_args,
     build_export_args,
     build_import_args,
     build_migrate_args,
@@ -135,6 +138,75 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
             redact=_checked(form, "redact"),
             apply=_checked(form, "apply"),
             force_invalid_template=_checked(form, "force_invalid_template"),
+        )
+    if action == "content_export":
+        return build_content_export_args(
+            discord_chat_export=_first(form, "discord_chat_export"),
+            out=_first(form, "out", "community.content.json"),
+        )
+    if action == "content_import":
+        return build_content_import_args(
+            _values(form, "provider_to", "stoat"),
+            file=_first(form, "file"),
+            target_id=_first(form, "target_id"),
+            target_name=_first(form, "target_name"),
+            channel_map=_first(form, "channel_map"),
+            plan_out=_first(form, "plan_out", "-"),
+            plan_in=_first(form, "plan_in"),
+            apply=_checked(form, "apply"),
+            force_invalid_archive=_checked(form, "force_invalid_archive"),
+            message_limit=_first(form, "message_limit"),
+            no_authors=_checked(form, "no_authors"),
+            no_attachments=_checked(form, "no_attachments"),
+            no_reactions=_checked(form, "no_reactions"),
+            no_embeds=_checked(form, "no_embeds"),
+            no_stickers=_checked(form, "no_stickers"),
+            no_polls=_checked(form, "no_polls"),
+            no_threads=_checked(form, "no_threads"),
+            no_custom_emoji=_checked(form, "no_custom_emoji"),
+            native_content=_checked(form, "native_content"),
+            content_journal_out=_first(form, "content_journal_out"),
+            resume_content_journal=_first(form, "resume_content_journal"),
+            content_dead_letter_out=_first(form, "content_dead_letter_out"),
+            content_report_out=_first(form, "content_report_out"),
+            content_lock_file=_first(form, "content_lock_file"),
+            content_incremental_state=_first(form, "content_incremental_state"),
+            content_incremental=_checked(form, "content_incremental"),
+            content_continue_on_error=_checked(form, "content_continue_on_error"),
+            content_max_failures=_first(form, "content_max_failures"),
+            content_parallel_sends=_first(form, "content_parallel_sends"),
+        )
+    if action == "content_migrate":
+        return build_content_migrate_args(
+            _values(form, "provider_to", "stoat"),
+            discord_chat_export=_first(form, "discord_chat_export"),
+            target_id=_first(form, "target_id"),
+            target_name=_first(form, "target_name"),
+            channel_map=_first(form, "channel_map"),
+            plan_out=_first(form, "plan_out", "-"),
+            plan_in=_first(form, "plan_in"),
+            apply=_checked(form, "apply"),
+            force_invalid_archive=_checked(form, "force_invalid_archive"),
+            message_limit=_first(form, "message_limit"),
+            no_authors=_checked(form, "no_authors"),
+            no_attachments=_checked(form, "no_attachments"),
+            no_reactions=_checked(form, "no_reactions"),
+            no_embeds=_checked(form, "no_embeds"),
+            no_stickers=_checked(form, "no_stickers"),
+            no_polls=_checked(form, "no_polls"),
+            no_threads=_checked(form, "no_threads"),
+            no_custom_emoji=_checked(form, "no_custom_emoji"),
+            native_content=_checked(form, "native_content"),
+            content_journal_out=_first(form, "content_journal_out"),
+            resume_content_journal=_first(form, "resume_content_journal"),
+            content_dead_letter_out=_first(form, "content_dead_letter_out"),
+            content_report_out=_first(form, "content_report_out"),
+            content_lock_file=_first(form, "content_lock_file"),
+            content_incremental_state=_first(form, "content_incremental_state"),
+            content_incremental=_checked(form, "content_incremental"),
+            content_continue_on_error=_checked(form, "content_continue_on_error"),
+            content_max_failures=_first(form, "content_max_failures"),
+            content_parallel_sends=_first(form, "content_parallel_sends"),
         )
     if action == "validate":
         return build_validate_args(_first(form, "file"))
@@ -597,6 +669,7 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
       <a href="#migrate">Migrate</a>
       <a href="#export">Export</a>
       <a href="#import">Import</a>
+      <a href="#content-migration">Content</a>
       <a href="#tools">Validate</a>
       <a href="#runtime">Runtime</a>
       <a href="#platforms">Platforms</a>
@@ -671,6 +744,95 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
         {apply_confirmation}
         <div class="form-actions"><button type="submit">Run Import</button></div>
       </form>
+    </section>
+
+    <section id="content-migration" class="panel">
+      <div class="panel__header"><h2>Content</h2></div>
+      <div class="tool-stack">
+        <form method="post" action="/run" class="form-grid" aria-label="Export content archive">
+          {csrf}
+          {auth}
+          {theme_field}
+          <input type="hidden" name="action" value="content_export">
+          {_text_field("DiscordChatExporter file/folder", "discord_chat_export")}
+          {_text_field("Archive output", "out", value="community.content.json")}
+          <div class="form-actions"><button type="submit">Export Content Archive</button></div>
+        </form>
+        <form method="post" action="/run" class="form-grid" aria-label="Migrate content">
+          {csrf}
+          {auth}
+          {theme_field}
+          <input type="hidden" name="action" value="content_migrate">
+          {_text_field("DiscordChatExporter file/folder", "discord_chat_export")}
+          {_multi_select_field("To", "provider_to", providers_fluxer)}
+          {_text_field("Target ID", "target_id")}
+          {_text_field("Target name", "target_name")}
+          {_text_field("Channel map JSON", "channel_map")}
+          {_text_field("Plan/result output", "plan_out", value="-")}
+          {_text_field("Reviewed plan input", "plan_in")}
+          {_text_field("Content journal output", "content_journal_out")}
+          {_text_field("Resume content journal", "resume_content_journal")}
+          {_text_field("Dead-letter output", "content_dead_letter_out")}
+          {_text_field("Report output", "content_report_out")}
+          {_text_field("Content lock file", "content_lock_file")}
+          {_text_field("Incremental state", "content_incremental_state")}
+          {_text_field("Message limit", "message_limit")}
+          {_text_field("Max failures", "content_max_failures", value="1")}
+          {_text_field("Parallel sends", "content_parallel_sends", value="1")}
+          {_checkbox_field("Omit author names", "no_authors")}
+          {_checkbox_field("Omit attachment references", "no_attachments")}
+          {_checkbox_field("Omit reactions", "no_reactions")}
+          {_checkbox_field("Omit embeds", "no_embeds")}
+          {_checkbox_field("Omit stickers", "no_stickers")}
+          {_checkbox_field("Omit polls", "no_polls")}
+          {_checkbox_field("Omit thread/forum references", "no_threads")}
+          {_checkbox_field("Omit custom emoji summary", "no_custom_emoji")}
+          {_checkbox_field("Use provider-native content features", "native_content")}
+          {_checkbox_field("Use incremental state", "content_incremental")}
+          {_checkbox_field("Continue after failed messages", "content_continue_on_error")}
+          {_checkbox_field("Force invalid archive after review", "force_invalid_archive", danger=True)}
+          {_checkbox_field("Apply writes", "apply", danger=True)}
+          {apply_confirmation}
+          <div class="form-actions"><button type="submit">Run Content Migrate</button></div>
+        </form>
+        <form method="post" action="/run" class="form-grid" aria-label="Import content archive">
+          {csrf}
+          {auth}
+          {theme_field}
+          <input type="hidden" name="action" value="content_import">
+          {_text_field("Content archive file", "file")}
+          {_multi_select_field("To", "provider_to", providers_default)}
+          {_text_field("Target ID", "target_id")}
+          {_text_field("Target name", "target_name")}
+          {_text_field("Channel map JSON", "channel_map")}
+          {_text_field("Plan/result output", "plan_out", value="-")}
+          {_text_field("Reviewed plan input", "plan_in")}
+          {_text_field("Content journal output", "content_journal_out")}
+          {_text_field("Resume content journal", "resume_content_journal")}
+          {_text_field("Dead-letter output", "content_dead_letter_out")}
+          {_text_field("Report output", "content_report_out")}
+          {_text_field("Content lock file", "content_lock_file")}
+          {_text_field("Incremental state", "content_incremental_state")}
+          {_text_field("Message limit", "message_limit")}
+          {_text_field("Max failures", "content_max_failures", value="1")}
+          {_text_field("Parallel sends", "content_parallel_sends", value="1")}
+          {_checkbox_field("Omit author names", "no_authors")}
+          {_checkbox_field("Omit attachment references", "no_attachments")}
+          {_checkbox_field("Omit reactions", "no_reactions")}
+          {_checkbox_field("Omit embeds", "no_embeds")}
+          {_checkbox_field("Omit stickers", "no_stickers")}
+          {_checkbox_field("Omit polls", "no_polls")}
+          {_checkbox_field("Omit thread/forum references", "no_threads")}
+          {_checkbox_field("Omit custom emoji summary", "no_custom_emoji")}
+          {_checkbox_field("Use provider-native content features", "native_content")}
+          {_checkbox_field("Use incremental state", "content_incremental")}
+          {_checkbox_field("Continue after failed messages", "content_continue_on_error")}
+          {_checkbox_field("Force invalid archive after review", "force_invalid_archive", danger=True)}
+          {_checkbox_field("Apply writes", "apply", danger=True)}
+          {apply_confirmation}
+          <div class="form-actions"><button type="submit">Run Content Import</button></div>
+        </form>
+      </div>
     </section>
 
     <section id="tools" class="panel">

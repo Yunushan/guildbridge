@@ -26,6 +26,9 @@ from typing import Any, cast
 from guildbridge.gui_commands import (
     CommandResult,
     apply_confirmation_error,
+    build_content_export_args,
+    build_content_import_args,
+    build_content_migrate_args,
     build_export_args,
     build_import_args,
     build_migrate_args,
@@ -157,6 +160,7 @@ class GuildBridgeGUI(ttk.Frame):
         notebook.add(self._export_tab(notebook), text="Export")
         notebook.add(self._import_tab(notebook), text="Import")
         notebook.add(self._migrate_tab(notebook), text="Migrate")
+        notebook.add(self._content_tab(notebook), text="Content")
         notebook.add(self._tools_tab(notebook), text="Validate / Redact")
         notebook.add(self._platforms_tab(notebook), text="Platforms")
 
@@ -423,6 +427,8 @@ class GuildBridgeGUI(ttk.Frame):
     def _browse(self, field: Field) -> None:
         if field.browse == "save":
             selected = filedialog.asksaveasfilename(initialfile=Path(field.variable.get()).name)
+        elif field.browse == "folder":
+            selected = filedialog.askdirectory()
         else:
             selected = filedialog.askopenfilename()
         if selected:
@@ -435,6 +441,7 @@ class GuildBridgeGUI(ttk.Frame):
         template = StringVar()
         out = StringVar(value="community.template.json")
         include_overwrites = BooleanVar(value=False)
+        include_content = BooleanVar(value=False)
 
         self._provider_combo(frame, "From", 0, provider)
         row = self._fields(
@@ -449,6 +456,9 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Include user overwrites", variable=include_overwrites).grid(
             row=row, column=1, sticky="w", pady=4
         )
+        ttk.Checkbutton(frame, text="Include content migration (experimental)", variable=include_content).grid(
+            row=row + 1, column=1, sticky="w"
+        )
         ttk.Button(
             frame,
             text="Run Export",
@@ -459,9 +469,10 @@ class GuildBridgeGUI(ttk.Frame):
                     template=template.get(),
                     out=out.get(),
                     include_user_overwrites=include_overwrites.get(),
+                    include_content=include_content.get(),
                 )
             ),
-        ).grid(row=row + 1, column=1, sticky="e", pady=(12, 0))
+        ).grid(row=row + 2, column=1, sticky="e", pady=(12, 0))
         return tab
 
     def _import_tab(self, parent: ttk.Notebook) -> ttk.Frame:
@@ -475,6 +486,7 @@ class GuildBridgeGUI(ttk.Frame):
         resume_journal = StringVar()
         audit = StringVar()
         redact = BooleanVar(value=False)
+        include_content = BooleanVar(value=False)
         force_invalid_template = BooleanVar(value=False)
 
         provider_to = self._provider_listbox(frame, "To", 0, ("discord",))
@@ -493,11 +505,14 @@ class GuildBridgeGUI(ttk.Frame):
             ),
         )
         ttk.Checkbutton(frame, text="Redact before import", variable=redact).grid(row=row, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
+        ttk.Checkbutton(frame, text="Include content migration (experimental)", variable=include_content).grid(
             row=row + 1, column=1, sticky="w"
         )
+        ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
+            row=row + 2, column=1, sticky="w"
+        )
         actions = ttk.Frame(frame)
-        actions.grid(row=row + 2, column=1, sticky="e", pady=(12, 0))
+        actions.grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
             actions,
             text="Dry-run Check",
@@ -513,6 +528,7 @@ class GuildBridgeGUI(ttk.Frame):
                     resume_journal=resume_journal.get(),
                     audit_log_reason=audit.get(),
                     redact=redact.get(),
+                    include_content=include_content.get(),
                     apply=False,
                     force_invalid_template=force_invalid_template.get(),
                 ),
@@ -534,6 +550,7 @@ class GuildBridgeGUI(ttk.Frame):
                     resume_journal=resume_journal.get(),
                     audit_log_reason=audit.get(),
                     redact=redact.get(),
+                    include_content=include_content.get(),
                     apply=True,
                     force_invalid_template=force_invalid_template.get(),
                 ),
@@ -565,6 +582,7 @@ class GuildBridgeGUI(ttk.Frame):
         resume_journal = StringVar()
         audit = StringVar()
         include_overwrites = BooleanVar(value=False)
+        include_content = BooleanVar(value=False)
         redact = BooleanVar(value=True)
         force_invalid_template = BooleanVar(value=False)
 
@@ -587,12 +605,15 @@ class GuildBridgeGUI(ttk.Frame):
             ),
         )
         ttk.Checkbutton(frame, text="Include user overwrites", variable=include_overwrites).grid(row=row, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Redact before import", variable=redact).grid(row=row + 1, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Include content migration (experimental)", variable=include_content).grid(
+            row=row + 1, column=1, sticky="w"
+        )
+        ttk.Checkbutton(frame, text="Redact before import", variable=redact).grid(row=row + 2, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
-            row=row + 2, column=1, sticky="w"
+            row=row + 3, column=1, sticky="w"
         )
         actions = ttk.Frame(frame)
-        actions.grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
+        actions.grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
             actions,
             text="Dry-run Check",
@@ -611,6 +632,7 @@ class GuildBridgeGUI(ttk.Frame):
                     resume_journal=resume_journal.get(),
                     audit_log_reason=audit.get(),
                     include_user_overwrites=include_overwrites.get(),
+                    include_content=include_content.get(),
                     redact=redact.get(),
                     apply=False,
                     force_invalid_template=force_invalid_template.get(),
@@ -636,6 +658,7 @@ class GuildBridgeGUI(ttk.Frame):
                     resume_journal=resume_journal.get(),
                     audit_log_reason=audit.get(),
                     include_user_overwrites=include_overwrites.get(),
+                    include_content=include_content.get(),
                     redact=redact.get(),
                     apply=True,
                     force_invalid_template=force_invalid_template.get(),
@@ -652,6 +675,186 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
             ),
         ).grid(row=0, column=1, sticky="e")
+        return tab
+
+    def _content_tab(self, parent: ttk.Notebook) -> ttk.Frame:
+        tab, frame = self._new_tab(parent)
+        discord_export = StringVar()
+        archive_file = StringVar()
+        archive_out = StringVar(value="community.content.json")
+        target_id = StringVar()
+        target_name = StringVar()
+        channel_map = StringVar()
+        plan_out = StringVar(value="-")
+        plan_in = StringVar()
+        content_journal_out = StringVar()
+        resume_content_journal = StringVar()
+        content_dead_letter_out = StringVar()
+        content_report_out = StringVar()
+        content_lock_file = StringVar()
+        content_incremental_state = StringVar()
+        message_limit = StringVar()
+        content_max_failures = StringVar(value="1")
+        content_parallel_sends = StringVar(value="1")
+        no_authors = BooleanVar(value=False)
+        no_attachments = BooleanVar(value=False)
+        no_reactions = BooleanVar(value=False)
+        no_embeds = BooleanVar(value=False)
+        no_stickers = BooleanVar(value=False)
+        no_polls = BooleanVar(value=False)
+        no_threads = BooleanVar(value=False)
+        no_custom_emoji = BooleanVar(value=False)
+        native_content = BooleanVar(value=False)
+        force_invalid_archive = BooleanVar(value=False)
+        content_incremental = BooleanVar(value=False)
+        content_continue_on_error = BooleanVar(value=False)
+
+        provider_to = self._provider_listbox(frame, "To", 0, ("stoat",))
+        row = self._fields(
+            frame,
+            1,
+            (
+                Field("DiscordChatExporter file/folder", discord_export, "folder"),
+                Field("Content archive JSON", archive_file, "open"),
+                Field("Archive output JSON", archive_out, "save"),
+                Field("Target ID", target_id),
+                Field("Target name", target_name),
+                Field("Channel map JSON", channel_map, "open"),
+                Field("Plan/result JSON", plan_out, "save"),
+                Field("Reviewed plan JSON", plan_in, "open"),
+                Field("Content journal JSON", content_journal_out, "save"),
+                Field("Resume content journal", resume_content_journal, "open"),
+                Field("Dead-letter JSON", content_dead_letter_out, "save"),
+                Field("Report JSON", content_report_out, "save"),
+                Field("Content lock file", content_lock_file, "save"),
+                Field("Incremental state JSON", content_incremental_state, "save"),
+                Field("Message limit", message_limit),
+                Field("Max failures", content_max_failures),
+                Field("Parallel sends", content_parallel_sends),
+            ),
+        )
+        ttk.Checkbutton(frame, text="Omit author names", variable=no_authors).grid(row=row, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit attachment references", variable=no_attachments).grid(row=row + 1, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit reactions", variable=no_reactions).grid(row=row + 2, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit embeds", variable=no_embeds).grid(row=row + 3, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit stickers", variable=no_stickers).grid(row=row + 4, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit polls", variable=no_polls).grid(row=row + 5, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit thread/forum references", variable=no_threads).grid(row=row + 6, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Omit custom emoji summary", variable=no_custom_emoji).grid(row=row + 7, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Use provider-native content features", variable=native_content).grid(row=row + 8, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Incremental resume state", variable=content_incremental).grid(row=row + 9, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Continue after failed messages", variable=content_continue_on_error).grid(row=row + 10, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Force invalid archive after review", variable=force_invalid_archive).grid(
+            row=row + 11, column=1, sticky="w"
+        )
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=row + 12, column=1, sticky="e", pady=(12, 0))
+
+        def content_options(*, apply: bool, reviewed: bool) -> dict[str, Any]:
+            return {
+                "target_id": target_id.get(),
+                "target_name": target_name.get(),
+                "channel_map": channel_map.get(),
+                "plan_out": plan_out.get(),
+                "plan_in": plan_in.get() if reviewed else "",
+                "apply": apply,
+                "force_invalid_archive": force_invalid_archive.get(),
+                "message_limit": message_limit.get(),
+                "no_authors": no_authors.get(),
+                "no_attachments": no_attachments.get(),
+                "no_reactions": no_reactions.get(),
+                "no_embeds": no_embeds.get(),
+                "no_stickers": no_stickers.get(),
+                "no_polls": no_polls.get(),
+                "no_threads": no_threads.get(),
+                "no_custom_emoji": no_custom_emoji.get(),
+                "native_content": native_content.get(),
+                "content_journal_out": content_journal_out.get(),
+                "resume_content_journal": resume_content_journal.get(),
+                "content_dead_letter_out": content_dead_letter_out.get(),
+                "content_report_out": content_report_out.get(),
+                "content_lock_file": content_lock_file.get(),
+                "content_incremental_state": content_incremental_state.get(),
+                "content_incremental": content_incremental.get(),
+                "content_continue_on_error": content_continue_on_error.get(),
+                "content_max_failures": content_max_failures.get(),
+                "content_parallel_sends": content_parallel_sends.get(),
+            }
+
+        ttk.Button(
+            actions,
+            text="Export Archive",
+            command=lambda: self._run(
+                build_content_export_args(discord_chat_export=discord_export.get(), out=archive_out.get())
+            ),
+        ).grid(row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 8))
+        ttk.Button(
+            actions,
+            text="Dry-run Import",
+            command=lambda: self._run_dry_run(
+                build_content_import_args(
+                    self._selected_providers(provider_to),
+                    file=archive_file.get(),
+                    **content_options(apply=False, reviewed=False),
+                ),
+                plan_out=plan_out.get(),
+            ),
+        ).grid(row=0, column=1, sticky="e", padx=(0, 8), pady=(0, 8))
+        ttk.Button(
+            actions,
+            text="Dry-run Migrate",
+            command=lambda: self._run_dry_run(
+                build_content_migrate_args(
+                    self._selected_providers(provider_to),
+                    discord_chat_export=discord_export.get(),
+                    **content_options(apply=False, reviewed=False),
+                ),
+                plan_out=plan_out.get(),
+            ),
+        ).grid(row=0, column=2, sticky="e", pady=(0, 8))
+        ttk.Button(
+            actions,
+            text="Actual Import",
+            command=lambda: self._run(
+                build_content_import_args(
+                    self._selected_providers(provider_to),
+                    file=archive_file.get(),
+                    **content_options(apply=True, reviewed=True),
+                ),
+                apply_requested=True,
+                reviewed_plan=plan_in.get(),
+                plan_out=plan_out.get(),
+                apply_prompt=ApplyPrompt(
+                    operation="Content import",
+                    source_provider=None,
+                    target_providers=tuple(self._selected_providers(provider_to)),
+                    target_id=target_id.get(),
+                    target_name=target_name.get(),
+                ),
+            ),
+        ).grid(row=1, column=1, sticky="e", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Actual Migrate",
+            command=lambda: self._run(
+                build_content_migrate_args(
+                    self._selected_providers(provider_to),
+                    discord_chat_export=discord_export.get(),
+                    **content_options(apply=True, reviewed=True),
+                ),
+                apply_requested=True,
+                reviewed_plan=plan_in.get(),
+                plan_out=plan_out.get(),
+                apply_prompt=ApplyPrompt(
+                    operation="Content migrate",
+                    source_provider="discord",
+                    target_providers=tuple(self._selected_providers(provider_to)),
+                    target_id=target_id.get(),
+                    target_name=target_name.get(),
+                ),
+            ),
+        ).grid(row=1, column=2, sticky="e")
         return tab
 
     def _tools_tab(self, parent: ttk.Notebook) -> ttk.Frame:

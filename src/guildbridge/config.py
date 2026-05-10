@@ -19,7 +19,9 @@ class RuntimeConfig:
     fluxer_token: str | None = None
 
     stoat_api_base: str = "https://api.stoat.chat"
+    stoat_autumn_base: str = "https://autumn.stoat.chat"
     stoat_token: str | None = None
+    stoat_session_token: str | None = None
 
     spacebar_api_base: str = "https://api.spacebar.chat/api/v9"
     spacebar_token: str | None = None
@@ -62,7 +64,10 @@ class RuntimeConfig:
             fluxer_api_base=env("FLUXER_API_BASE", default="https://api.fluxer.app/v1") or "https://api.fluxer.app/v1",
             fluxer_token=env("FLUXER_BOT_TOKEN", "FLUXER_TOKEN"),
             stoat_api_base=env("STOAT_API_BASE", "REVOLT_API_BASE", default="https://api.stoat.chat") or "https://api.stoat.chat",
+            stoat_autumn_base=env("STOAT_AUTUMN_BASE", "REVOLT_AUTUMN_BASE", default="https://autumn.stoat.chat")
+            or "https://autumn.stoat.chat",
             stoat_token=env("STOAT_BOT_TOKEN", "STOAT_TOKEN", "REVOLT_TOKEN"),
+            stoat_session_token=env("STOAT_SESSION_TOKEN", "REVOLT_SESSION_TOKEN"),
             spacebar_api_base=env("SPACEBAR_API_BASE", "FOSSCORD_API_BASE", default="https://api.spacebar.chat/api/v9")
             or "https://api.spacebar.chat/api/v9",
             spacebar_token=env("SPACEBAR_BOT_TOKEN", "SPACEBAR_TOKEN", "FOSSCORD_BOT_TOKEN", "FOSSCORD_TOKEN"),

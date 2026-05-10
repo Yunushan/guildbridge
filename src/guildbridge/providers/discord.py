@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import base64
+import json
+import mimetypes
 import re
 from collections.abc import Iterable
 from functools import partial
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from guildbridge.config import RuntimeConfig
-from guildbridge.http import HttpClient
+from guildbridge.content import (
+    ContentArchive,
+    ContentCapability,
+    ContentImportOptions,
+    apply_content_actions,
+    content_text_from_action,
+    dry_run_content_import,
+)
+from guildbridge.http import HttpClient, sanitize_text
 from guildbridge.models import (
     Action,
     Category,
@@ -21,7 +34,15 @@ from guildbridge.models import (
 from guildbridge.permissions import discord_to_neutral, neutral_to_discord
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id, safe_int
+from .base import (
+    ExportOptions,
+    ImportOptions,
+    Provider,
+    plan_or_apply_action,
+    require_response_id,
+    response_id,
+    safe_int,
+)
 
 DISCORD_CHANNEL_TYPES = {
     0: "text",
@@ -40,6 +61,8 @@ NEUTRAL_TO_DISCORD_CHANNEL_TYPES = {
     "stage": 13,
     "forum": 15,
 }
+DISCORD_SUPPRESS_NOTIFICATIONS = 1 << 12
+DISCORD_EMOJI_SIZE_LIMIT = 256 * 1024
 
 
 class DiscordProvider(Provider):
@@ -58,6 +81,10 @@ class DiscordProvider(Provider):
             max_retries=config.max_retries,
             user_agent=config.user_agent,
         )
+        self._content_options = ContentImportOptions()
+        self._content_message_ids: dict[str, str] = {}
+        self._content_native_warnings: list[str] = []
+        self._content_emoji_ids: dict[str, str] = {}
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if options.template:
@@ -191,6 +218,242 @@ class DiscordProvider(Provider):
 
     def _token_configured(self) -> bool:
         return bool(self.config.discord_token)
+
+    def content_capabilities(self) -> ContentCapability:
+        capability = ContentCapability.text_content_provider(self.name, import_supported=True, reliability_supported=True)
+        capability.notes.append(
+            f"Live content import sends formatted archived messages to mapped {self.provider_label} channel IDs."
+        )
+        capability.notes.append(
+            "Text fallback preserves attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, threads, and timestamps as formatted text."
+        )
+        capability.notes.append(
+            "Opt-in native content import can upload local attachments, send embeds/replies, apply pins/reactions, and create custom emoji when the target API and bot permissions support those operations."
+        )
+        for feature in ("attachments", "embeds", "replies", "reactions", "pins", "custom_emoji"):
+            capability.import_[feature] = "supported"
+        return capability
+
+    def import_content(self, archive: ContentArchive, options: ContentImportOptions) -> ImportResult:
+        if options.apply and not self._token_configured():
+            raise ValueError(f"{self.provider_label} content import requires {self.token_env_hint} when --apply is used.")
+        if options.apply and not options.channel_map:
+            raise ValueError(
+                f"{self.provider_label} content import requires --channel-map for live writes so archive channel IDs map to existing channel IDs."
+            )
+        plan = dry_run_content_import(self.name, archive, options, path_template="/channels/{channel_id}/messages")
+        if not options.apply:
+            return plan
+        self._prepare_native_content_state(archive, options)
+        result = apply_content_actions(self.name, plan.actions, options, self._send_content_action)
+        result.warnings[:0] = plan.warnings
+        result.warnings.extend(self._content_native_warnings)
+        return result
+
+    def _send_content_action(self, action: Action) -> dict[str, Any] | str | None:
+        if not self._content_options.uses_native_content:
+            return self.http.post(action.path, json_body={"content": content_text_from_action(action)})
+        payload = self._native_message_payload(action)
+        files = self._native_file_paths(action.payload or {})
+        if files:
+            payload["attachments"] = [{"id": index, "filename": path.name} for index, path in enumerate(files)]
+            response = self.http.post_files(
+                action.path,
+                file_paths=files,
+                field_prefix="files",
+                form_body={"payload_json": json.dumps(payload, ensure_ascii=False)},
+                indexed_fields=True,
+            )
+        else:
+            response = self.http.post(action.path, json_body=payload)
+        self._record_native_message_response(action, response)
+        message_id = response_id(response if isinstance(response, dict) else {}, "id", "message.id")
+        action_payload = action.payload or {}
+        if message_id and int(action_payload.get("part_index") or 1) == 1:
+            self._apply_native_followups(action, message_id)
+        return response
+
+    def _prepare_native_content_state(self, archive: ContentArchive, options: ContentImportOptions) -> None:
+        self._content_options = options
+        self._content_message_ids = {}
+        self._content_native_warnings = []
+        self._content_emoji_ids = {}
+        if options.native_custom_emoji:
+            self._create_native_custom_emoji(archive, options)
+
+    def _native_message_payload(self, action: Action) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "content": content_text_from_action(action),
+            "allowed_mentions": {"parse": []},
+            "flags": DISCORD_SUPPRESS_NOTIFICATIONS,
+            "nonce": hash_id("discord_content_nonce", json.dumps(action.payload or {}, sort_keys=True), 25),
+            "enforce_nonce": True,
+        }
+        action_payload = action.payload or {}
+        if int(action_payload.get("part_index") or 1) != 1:
+            return payload
+        if self._content_options.native_embeds:
+            embeds = self._native_embeds(action_payload)
+            if embeds:
+                payload["embeds"] = embeds
+        if self._content_options.native_replies:
+            reply_id = self._mapped_reply_id(action_payload)
+            if reply_id:
+                payload["message_reference"] = {"message_id": reply_id, "fail_if_not_exists": False}
+        return payload
+
+    def _native_embeds(self, action_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_embeds = action_payload.get("embeds")
+        if not isinstance(raw_embeds, list):
+            return []
+        embeds: list[dict[str, Any]] = []
+        for raw in raw_embeds[:10]:
+            if not isinstance(raw, dict):
+                continue
+            embed = without_none(
+                {
+                    "title": raw.get("title"),
+                    "description": raw.get("description"),
+                    "url": raw.get("url"),
+                    "thumbnail": {"url": raw.get("thumbnail_url")} if raw.get("thumbnail_url") else None,
+                    "image": {"url": raw.get("image_url")} if raw.get("image_url") else None,
+                }
+            )
+            if embed:
+                embeds.append(embed)
+        return embeds
+
+    def _native_file_paths(self, action_payload: dict[str, Any]) -> list[Path]:
+        if not self._content_options.native_attachments:
+            return []
+        files: list[Path] = []
+        attachments = action_payload.get("attachments")
+        if isinstance(attachments, list):
+            for item in attachments[:10]:
+                path = self._local_content_path(item, label="attachment")
+                if path:
+                    files.append(path)
+        return files
+
+    def _local_content_path(self, item: object, *, label: str) -> Path | None:
+        if not isinstance(item, dict):
+            return None
+        raw_path = item.get("local_path")
+        metadata = item.get("metadata")
+        if not raw_path and isinstance(metadata, dict):
+            raw_path = metadata.get("local_path") or metadata.get("source_path")
+        if not raw_path:
+            self._content_native_warnings.append(f"Native {label} upload skipped; no local file path was available.")
+            return None
+        path = Path(str(raw_path)).expanduser()
+        if not path.exists() or not path.is_file():
+            self._content_native_warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
+            return None
+        return path
+
+    def _mapped_reply_id(self, action_payload: dict[str, Any]) -> str | None:
+        reply_to = action_payload.get("reply_to_id")
+        if not reply_to:
+            return None
+        mapped = self._content_message_ids.get(f"{reply_to}:1") or self._content_message_ids.get(str(reply_to))
+        if not mapped:
+            self._content_native_warnings.append(f"Native reply skipped for {reply_to!r}; referenced message was not mapped yet.")
+            return None
+        return mapped
+
+    def _record_native_message_response(self, action: Action, response: object) -> None:
+        if not isinstance(response, dict):
+            return
+        message_id = response_id(response, "id", "message.id")
+        if not message_id:
+            return
+        action_payload = action.payload or {}
+        source_message_id = str(action_payload.get("source_message_id") or "")
+        if not source_message_id:
+            return
+        part_index = int(action_payload.get("part_index") or 1)
+        self._content_message_ids[source_message_id] = message_id
+        self._content_message_ids[f"{source_message_id}:{part_index}"] = message_id
+
+    def _apply_native_followups(self, action: Action, message_id: str) -> None:
+        payload = action.payload or {}
+        channel_id = str(payload.get("channel_id") or "").strip()
+        if not channel_id:
+            return
+        if self._content_options.native_pins and payload.get("pinned"):
+            self._safe_native_followup("pin", lambda: self.http.put(f"/channels/{channel_id}/messages/pins/{message_id}"))
+        if self._content_options.native_reactions:
+            self._apply_native_reactions(channel_id, message_id, payload)
+
+    def _apply_native_reactions(self, channel_id: str, message_id: str, payload: dict[str, Any]) -> None:
+        reactions = payload.get("reactions")
+        if not isinstance(reactions, list):
+            return
+        for reaction in reactions:
+            if not isinstance(reaction, dict):
+                continue
+            emoji = self._native_reaction_emoji(reaction)
+            if not emoji:
+                continue
+            count = int(reaction.get("count") or 1)
+            if count > 1:
+                self._content_native_warnings.append(
+                    f"Native reaction {emoji!r} applied once to {message_id}; original archive count was {count}."
+                )
+            encoded_emoji = quote(emoji, safe="")
+            self._safe_native_followup(
+                "reaction",
+                lambda encoded=encoded_emoji: self.http.put(
+                    f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded}/@me"
+                ),
+            )
+
+    def _native_reaction_emoji(self, reaction: dict[str, Any]) -> str | None:
+        metadata = reaction.get("metadata") if isinstance(reaction.get("metadata"), dict) else {}
+        emoji_hash = metadata.get("emoji_hash") if isinstance(metadata, dict) else None
+        if emoji_hash and str(emoji_hash) in self._content_emoji_ids:
+            return self._content_emoji_ids[str(emoji_hash)]
+        emoji = reaction.get("emoji")
+        return str(emoji) if emoji else None
+
+    def _create_native_custom_emoji(self, archive: ContentArchive, options: ContentImportOptions) -> None:
+        if not options.target_id:
+            self._content_native_warnings.append("Native custom emoji skipped because --target-id was not provided.")
+            return
+        for emoji in archive.emoji:
+            if not emoji.id_hash:
+                continue
+            path = self._local_content_path(
+                {
+                    "local_path": emoji.local_path,
+                    "metadata": emoji.metadata,
+                },
+                label="custom emoji",
+            )
+            if not path:
+                continue
+            if path.stat().st_size > DISCORD_EMOJI_SIZE_LIMIT:
+                self._content_native_warnings.append(
+                    f"Native custom emoji upload skipped for {emoji.name!r}; file exceeds {DISCORD_EMOJI_SIZE_LIMIT} bytes."
+                )
+                continue
+            mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            payload = {"name": normalize_channel_name(emoji.name or "emoji", max_len=32), "image": f"data:{mime_type};base64,{encoded}"}
+            try:
+                created = self.http.post(f"/guilds/{options.target_id}/emojis", json_body=payload)
+            except Exception as exc:  # noqa: BLE001
+                self._content_native_warnings.append(f"Native custom emoji follow-up failed: {sanitize_text(str(exc))}")
+                continue
+            created_id = response_id(created if isinstance(created, dict) else {}, "id", "emoji.id")
+            if created_id:
+                self._content_emoji_ids[emoji.id_hash] = f"{payload['name']}:{created_id}"
+
+    def _safe_native_followup(self, label: str, operation: Any) -> None:
+        try:
+            operation()
+        except Exception as exc:  # noqa: BLE001
+            self._content_native_warnings.append(f"Native {label} follow-up failed: {sanitize_text(str(exc))}")
 
     def _build_template(
         self,

@@ -23,6 +23,125 @@ def test_providers_command(capsys) -> None:  # type: ignore[no-untyped-def]
     assert "zulip" in out
 
 
+def test_content_features_command_json(capsys) -> None:  # type: ignore[no-untyped-def]
+    assert main(["content-features", "--format", "json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+
+    assert data["schema"] == "guildbridge.content-capabilities.v1"
+    assert data["default_enabled"] is False
+    assert "messages" in data["features"]
+    assert {provider["provider"] for provider in data["providers"]} >= {"discord", "stoat", "zulip"}
+
+
+def test_content_export_and_import_dry_run(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    export_path = tmp_path / "general.json"
+    archive_path = tmp_path / "content.json"
+    plan_path = tmp_path / "content.plan.json"
+    export_path.write_text(
+        json.dumps(
+            {
+                "guild": {"id": "example-guild-id", "name": "Example Server"},
+                "channel": {"id": "example-channel-id", "name": "general"},
+                "messages": [
+                    {
+                        "id": "example-message-id",
+                        "timestamp": "2026-01-01T00:00:00+00:00",
+                        "author": {"id": "example-user-id", "name": "Alice"},
+                        "content": "Hello from Discord",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["content-export", "--discord-chat-export", str(export_path), "--out", str(archive_path)]) == 0
+    archive = json.loads(archive_path.read_text(encoding="utf-8"))
+    assert archive["schema"] == "guildbridge.content.v1"
+
+    assert (
+        main(
+            [
+                "content-import",
+                "--file",
+                str(archive_path),
+                "--to",
+                "stoat",
+                "--target-id",
+                "target-server",
+                "--plan-out",
+                str(plan_path),
+            ]
+        )
+        == 0
+    )
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    assert plan["provider"] == "stoat"
+    assert plan["applied"] is False
+    assert plan["plan"]["context"]["command"] == "content-import"
+    assert plan["actions"][0]["payload"]["content"].endswith("Hello from Discord")
+    assert "Planned 1 content action" in capsys.readouterr().err
+
+
+def test_content_migrate_dry_run_supports_multiple_targets(tmp_path: Path) -> None:
+    export_path = tmp_path / "general.json"
+    plan_path = tmp_path / "batch.plan.json"
+    export_path.write_text(
+        json.dumps(
+            {
+                "guild": {"id": "example-guild-id", "name": "Example Server"},
+                "channel": {"id": "example-channel-id", "name": "general"},
+                "messages": [{"id": "example-message-id", "content": "Hello"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "content-migrate",
+            "--from",
+            "discord",
+            "--discord-chat-export",
+            str(export_path),
+            "--to",
+            "stoat,fluxer",
+            "--plan-out",
+            str(plan_path),
+        ]
+    )
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    assert rc == 0
+    assert plan["schema"] == "guildbridge.batch-result.v1"
+    assert plan["command"] == "content-migrate"
+    assert plan["target_providers"] == ["stoat", "fluxer"]
+    assert plan["action_count"] == 2
+
+
+def test_include_content_is_explicitly_gated(capsys) -> None:  # type: ignore[no-untyped-def]
+    rc = main(
+        [
+            "migrate",
+            "--from",
+            "discord",
+            "--to",
+            "stoat",
+            "--template",
+            "https://discord.new/example",
+            "--include-content",
+            "--content-feature",
+            "messages",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Optional content migration is not implemented" in err
+    assert "guildbridge content-features --format json" in err
+
+
 def test_validate_example() -> None:
     root = Path(__file__).resolve().parents[1]
     assert main(["validate", str(root / "examples" / "template.example.json")]) == 0

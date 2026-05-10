@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
 
-from guildbridge.http import HttpClient, HttpError, HttpTransportError, retry_delay_seconds, sanitize_text
+from guildbridge.http import (
+    HttpClient,
+    HttpError,
+    HttpTransportError,
+    retry_delay_seconds,
+    sanitize_response_text,
+    sanitize_text,
+)
 
 
 class FakeResponse:
@@ -89,6 +97,12 @@ def test_http_error_sanitizes_response_text() -> None:
     assert "[redacted]" in str(exc_info.value)
 
 
+def test_http_error_compacts_html_response_text() -> None:
+    body = "<!DOCTYPE html><html><head><title>401 Unauthorized</title></head><body><h1>401 Unauthorized</h1></body></html>"
+
+    assert sanitize_response_text(body) == "401 Unauthorized 401 Unauthorized"
+
+
 def test_http_post_form_sends_urlencoded_body() -> None:
     session = FakeSession([FakeResponse(200, body={"ok": True})])
     client = HttpClient("https://api.example", max_retries=0)
@@ -98,6 +112,37 @@ def test_http_post_form_sends_urlencoded_body() -> None:
     assert session.calls[0]["data"] == {"name": "general"}
     assert session.calls[0]["json"] is None
     assert session.calls[0]["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+
+
+def test_http_post_file_sends_multipart_without_json_content_type(tmp_path: Path) -> None:
+    upload = tmp_path / "upload.txt"
+    upload.write_text("hello", encoding="utf-8")
+    session = FakeSession([FakeResponse(200, body={"id": "file-1"})])
+    client = HttpClient("https://api.example", max_retries=0)
+    client.session = session  # type: ignore[assignment]
+
+    assert client.post_file("/attachments", file_path=upload, headers={"X-Session-Token": "token"}) == {"id": "file-1"}
+    assert session.calls[0]["data"] == {}
+    assert "files" in session.calls[0]
+    assert session.calls[0]["json"] is None
+    assert "Content-Type" not in session.calls[0]["headers"]
+    assert session.calls[0]["headers"]["X-Session-Token"] == "token"
+
+
+def test_http_post_files_sends_indexed_multipart_fields(tmp_path: Path) -> None:
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("one", encoding="utf-8")
+    second.write_text("two", encoding="utf-8")
+    session = FakeSession([FakeResponse(200, body={"ok": True})])
+    client = HttpClient("https://api.example", max_retries=0)
+    client.session = session  # type: ignore[assignment]
+
+    assert client.post_files("/messages", file_paths=[first, second], form_body={"payload_json": "{}"}) == {"ok": True}
+    assert session.calls[0]["data"] == {"payload_json": "{}"}
+    assert sorted(session.calls[0]["files"]) == ["files[0]", "files[1]"]
+    assert session.calls[0]["json"] is None
+    assert "Content-Type" not in session.calls[0]["headers"]
 
 
 def test_retry_delay_uses_retry_after_header() -> None:

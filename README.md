@@ -35,13 +35,52 @@ It focuses on **portable structure**, not surveillance or data cloning:
 - role/everyone permission overwrites where possible
 - dry-run plans before any write operation
 
-It intentionally does **not** export:
+Normal structure templates intentionally do **not** export:
 
 - messages or message history
 - members, member lists, DMs, friend lists, presences, emails, IPs, or personal profiles
 - bot tokens, access tokens, session tokens, or cookies
 - raw provider IDs in generated templates; source IDs are hashed/localized
 - user/member-specific permission overwrites; unsafe user targets are dropped even when diagnostics are requested
+
+### Optional content migration
+
+GuildBridge now has an explicit optional content-migration path for features such as messages, authors, timestamps, attachments, emoji, stickers, pins, replies, reactions, embeds, polls, threads, forum posts, server banners, role colors, channel permissions, NSFW flags, offline exports, pre-creation review, pause/resume, incremental migration, dead-letter retry, message splitting, reports, locks, and circuit breakers. Parallel sends are tracked as a planned option; live writes currently stay ordered.
+
+This content path is **off by default** and is separate from privacy-safe structure templates. Normal `export`, `import`, and `migrate` commands stay structure-only. Content is handled through a separate neutral archive:
+
+```bash
+guildbridge content-features
+guildbridge content-features --format json
+guildbridge content-export --discord-chat-export ./DiscordChatExporter --out community.content.json
+guildbridge content-import --file community.content.json --to stoat,fluxer --plan-out content.plan.json
+```
+
+The first supported source is offline DiscordChatExporter JSON. GuildBridge converts it into `guildbridge.content.v1`, hashes raw source IDs, and preserves message text, authors, timestamps, attachment URLs/local paths, embeds, replies, pins, reactions, custom emoji markers, stickers, polls, thread/forum metadata, and server banner/icon URLs in the private archive. It can dry-run a content import plan for every target provider from the CLI, desktop GUI Content tab, or web GUI Content panel. Live formatted-message writes are supported for Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost, and Zulip when you provide a reviewed plan, a target channel map, and provider tokens. Mumble remains structure/voice-channel only because it has no native text-history import surface.
+
+Apply-side content imports can write journals, reports, lock files, incremental state, and dead-letter files:
+
+```bash
+guildbridge content-import \
+  --file community.content.json \
+  --to stoat \
+  --channel-map channel-map.json \
+  --plan-out content.plan.json
+
+guildbridge content-import \
+  --file community.content.json \
+  --to stoat \
+  --channel-map channel-map.json \
+  --plan-in content.plan.json \
+  --apply --confirm-apply APPLY \
+  --content-journal-out .guildbridge/content/journals/stoat.json \
+  --content-report-out .guildbridge/content/reports/stoat.json \
+  --content-dead-letter-out .guildbridge/content/dead-letter/stoat.json \
+  --content-incremental-state .guildbridge/content/state/stoat.json \
+  --content-incremental
+```
+
+Attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, authors, timestamps, and thread/forum references are preserved as formatted text by default. Provider-native content behavior is opt-in with `--native-content` or narrower flags such as `--native-attachments`, `--native-embeds`, `--native-replies`, `--native-reactions`, `--native-pins`, `--native-custom-emoji`, `--native-masquerade`, and `--native-stickers`. Stoat/Revolt uses Ferry-style Autumn uploads plus native embeds, replies, reactions, pins, custom emoji, and masquerade. Discord, Spacebar, Daccord, and Fluxer use Discord-compatible native message routes where supported. Matrix can upload local media and apply replies/reactions/pins. Mattermost and Rocket.Chat can upload local files and apply native replies/reactions/pins. Zulip can upload local files as message links and apply reactions. Native uploads require local media files in the content archive; remote CDN URLs are not downloaded automatically. Use `--no-attachments`, `--no-embeds`, `--no-reactions`, `--no-stickers`, `--no-polls`, `--no-threads`, or `--no-custom-emoji` to omit optional fidelity items from formatted messages. GuildBridge refuses unsafe structure-template content flags.
 
 ## Best project name
 
@@ -320,10 +359,13 @@ Set `FLUXER_API_BASE` to your self-hosted instance if needed.
 
 ```bash
 STOAT_BOT_TOKEN="..."
+# Use STOAT_SESSION_TOKEN instead when Stoat role-management routes require user/session auth.
+# Keep session tokens private and use a dedicated migration/admin account when possible.
+# STOAT_SESSION_TOKEN="..."
 STOAT_API_BASE="https://api.stoat.chat"
 ```
 
-Stoat-compatible endpoints and authentication can evolve. Keep the base URL and provider implementation editable for your instance.
+Stoat-compatible endpoints and authentication can evolve. GuildBridge sends `STOAT_BOT_TOKEN` as `X-Bot-Token` and `STOAT_SESSION_TOKEN` as `X-Session-Token`; use the session-token path only when the target route requires user authentication.
 
 ### Spacebar
 

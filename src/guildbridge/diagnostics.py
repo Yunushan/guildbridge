@@ -46,6 +46,7 @@ def recovery_hints(exc: BaseException) -> list[str]:
     hints.extend(_apply_hints(lowered))
     hints.extend(_plan_hints(lowered))
     hints.extend(_journal_hints(lowered))
+    hints.extend(_content_hints(lowered))
     hints.extend(_template_hints(lowered))
     hints.extend(_provider_hints(text, lowered))
     hints.extend(_configuration_hints(lowered))
@@ -54,6 +55,12 @@ def recovery_hints(exc: BaseException) -> list[str]:
 
 def _http_error_hints(exc: HttpError) -> list[str]:
     if exc.status_code in {401, 403}:
+        if "stoat" in exc.url.lower() or "revolt" in exc.url.lower():
+            return [
+                "For Stoat/Revolt role or server management routes, set STOAT_SESSION_TOKEN or REVOLT_SESSION_TOKEN in .env when bot auth is rejected.",
+                "If the response is 403, confirm the account owns or can manage the target server, roles, and channels.",
+                "Do not paste session tokens into templates, plans, journals, screenshots, or issue reports.",
+            ]
         return [
             "Check the provider token environment variable and confirm the token has the required scopes or bot permissions.",
             "For Discord targets, confirm the bot is installed in the target guild before applying writes.",
@@ -113,6 +120,15 @@ def _journal_hints(lowered: str) -> list[str]:
     return [
         "Inspect the apply journal before retrying so you know which actions started, succeeded, or failed.",
         "Resume with the same command, target, template, and reviewed plan hash that created the failed journal.",
+    ]
+
+
+def _content_hints(lowered: str) -> list[str]:
+    if "optional content migration is not implemented" not in lowered:
+        return []
+    return [
+        "Run `guildbridge content-features --format json` to inspect the optional content feature gate.",
+        "Use the normal import/export/migrate flow without --include-content for privacy-safe structure migration.",
     ]
 
 

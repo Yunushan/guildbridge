@@ -34,6 +34,14 @@ def test_http_error_report_has_status_specific_recovery() -> None:
     assert "required scopes or bot permissions" in report
 
 
+def test_stoat_http_error_report_mentions_session_token() -> None:
+    report = format_error_report(HttpError("POST", "https://api.stoat.chat/servers/target/roles", 401, "unauthorized", 1))
+
+    assert "STOAT_SESSION_TOKEN" in report
+    assert "bot auth is rejected" in report
+    assert "Do not paste session tokens" in report
+
+
 def test_transport_error_report_mentions_network_and_timeout() -> None:
     report = format_error_report(HttpTransportError("GET", "https://provider.example", "timed out", 3))
 

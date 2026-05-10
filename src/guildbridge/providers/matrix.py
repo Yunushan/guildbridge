@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import mimetypes
 from collections.abc import Iterable
 from functools import partial
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 
 from guildbridge.config import RuntimeConfig
-from guildbridge.http import HttpClient, HttpError
+from guildbridge.content import (
+    ContentArchive,
+    ContentCapability,
+    ContentImportOptions,
+    ContentMessage,
+    apply_content_actions,
+    content_text_from_action,
+    dry_run_content_import,
+)
+from guildbridge.http import HttpClient, HttpError, sanitize_text
 from guildbridge.models import (
     Action,
     Category,
@@ -19,7 +30,14 @@ from guildbridge.models import (
 )
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id
+from .base import (
+    ExportOptions,
+    ImportOptions,
+    Provider,
+    plan_or_apply_action,
+    require_response_id,
+    response_id,
+)
 
 
 class MatrixProvider(Provider):
@@ -37,6 +55,9 @@ class MatrixProvider(Provider):
             max_retries=config.max_retries,
             user_agent=config.user_agent,
         )
+        self._content_options = ContentImportOptions()
+        self._content_message_ids: dict[str, str] = {}
+        self._content_native_warnings: list[str] = []
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if not options.source_id:
@@ -52,6 +73,183 @@ class MatrixProvider(Provider):
         except HttpError as exc:
             state = self.http.get(f"/_matrix/client/v3/rooms/{self._q(options.source_id)}/state")
             return self._build_from_state(options.source_id, state, warning=f"Hierarchy API was unavailable ({exc.status_code}); exported a single room instead.")
+
+    def content_capabilities(self) -> ContentCapability:
+        capability = ContentCapability.text_content_provider(self.name, import_supported=True, reliability_supported=True)
+        capability.notes.append("Live content import sends formatted archived messages to mapped Matrix room IDs.")
+        capability.notes.append(
+            "Text fallback preserves attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, threads, and timestamps as formatted text."
+        )
+        capability.notes.append(
+            "Opt-in native content import can upload local files to Matrix media, send replies/reactions, and set room pinned-event state when permissions allow it."
+        )
+        for feature in ("attachments", "replies", "reactions", "pins"):
+            capability.import_[feature] = "supported"
+        return capability
+
+    def import_content(self, archive: ContentArchive, options: ContentImportOptions) -> ImportResult:
+        if options.apply and not self.config.matrix_access_token:
+            raise ValueError("Matrix/Element content import requires MATRIX_ACCESS_TOKEN or ELEMENT_ACCESS_TOKEN when --apply is used.")
+        if options.apply and not options.channel_map:
+            raise ValueError(
+                "Matrix/Element content import requires --channel-map for live writes so archive channel IDs map to existing room IDs."
+            )
+        plan = dry_run_content_import(self.name, archive, options, method="PUT", path_builder=self._content_message_path)
+        if not options.apply:
+            return plan
+        self._prepare_native_content_state(options)
+        result = apply_content_actions(self.name, plan.actions, options, self._send_content_action)
+        result.warnings[:0] = plan.warnings
+        result.warnings.extend(self._content_native_warnings)
+        return result
+
+    def _content_message_path(self, target_channel_id: str, message: ContentMessage, part_index: int) -> str:
+        txn_id = hash_id("matrix_content_txn", f"{message.id}:{part_index}", 24)
+        return f"/_matrix/client/v3/rooms/{self._q(target_channel_id)}/send/m.room.message/{txn_id}"
+
+    def _send_content_action(self, action: Action) -> dict[str, Any] | str | None:
+        if not self._content_options.uses_native_content:
+            return self.http.put(action.path, json_body={"msgtype": "m.text", "body": content_text_from_action(action)})
+        payload = action.payload or {}
+        message_payload: dict[str, Any] = {
+            "msgtype": "m.text",
+            "body": content_text_from_action(action),
+        }
+        if self._content_options.native_replies:
+            reply_id = self._mapped_reply_id(payload)
+            if reply_id:
+                message_payload["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_id}}
+        response = self.http.put(action.path, json_body=message_payload)
+        self._record_native_message_response(action, response)
+        event_id = response_id(response if isinstance(response, dict) else {}, "event_id", "id")
+        if event_id and int(payload.get("part_index") or 1) == 1:
+            self._apply_native_followups(payload, event_id)
+        return response
+
+    def _prepare_native_content_state(self, options: ContentImportOptions) -> None:
+        self._content_options = options
+        self._content_message_ids = {}
+        self._content_native_warnings = []
+
+    def _mapped_reply_id(self, payload: dict[str, Any]) -> str | None:
+        reply_to = payload.get("reply_to_id")
+        if not reply_to:
+            return None
+        mapped = self._content_message_ids.get(f"{reply_to}:1") or self._content_message_ids.get(str(reply_to))
+        if not mapped:
+            self._content_native_warnings.append(f"Native reply skipped for {reply_to!r}; referenced event was not mapped yet.")
+            return None
+        return mapped
+
+    def _record_native_message_response(self, action: Action, response: object) -> None:
+        if not isinstance(response, dict):
+            return
+        event_id = response_id(response, "event_id", "id")
+        if not event_id:
+            return
+        payload = action.payload or {}
+        source_message_id = str(payload.get("source_message_id") or "")
+        if not source_message_id:
+            return
+        part_index = int(payload.get("part_index") or 1)
+        self._content_message_ids[source_message_id] = event_id
+        self._content_message_ids[f"{source_message_id}:{part_index}"] = event_id
+
+    def _apply_native_followups(self, payload: dict[str, Any], event_id: str) -> None:
+        room_id = str(payload.get("channel_id") or "")
+        if not room_id:
+            return
+        if self._content_options.native_attachments:
+            self._send_native_files(room_id, payload)
+        if self._content_options.native_reactions:
+            self._apply_native_reactions(room_id, event_id, payload)
+        if self._content_options.native_pins and payload.get("pinned"):
+            self._safe_native_followup(
+                "pin",
+                lambda: self.http.put(
+                    f"/_matrix/client/v3/rooms/{self._q(room_id)}/state/m.room.pinned_events/",
+                    json_body={"pinned": [event_id]},
+                ),
+            )
+
+    def _send_native_files(self, room_id: str, payload: dict[str, Any]) -> None:
+        attachments = payload.get("attachments")
+        if not isinstance(attachments, list):
+            return
+        for item in attachments[:10]:
+            path = self._local_content_path(item, label="attachment")
+            if not path:
+                continue
+            try:
+                content_uri = self._upload_matrix_media(path)
+            except Exception as exc:  # noqa: BLE001
+                self._content_native_warnings.append(f"Native Matrix media upload failed for {path.name}: {sanitize_text(str(exc))}")
+                continue
+            body = str(item.get("filename") if isinstance(item, dict) and item.get("filename") else path.name)
+            mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            msgtype = "m.image" if mime_type.startswith("image/") else "m.file"
+            txn_id = hash_id("matrix_content_file_txn", f"{room_id}:{content_uri}", 24)
+            self._safe_native_followup(
+                "file message",
+                lambda uri=content_uri, label=body, kind=msgtype, tx=txn_id: self.http.put(
+                    f"/_matrix/client/v3/rooms/{self._q(room_id)}/send/m.room.message/{tx}",
+                    json_body={"msgtype": kind, "body": label, "url": uri},
+                ),
+            )
+
+    def _upload_matrix_media(self, path: Path) -> str:
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        uploaded = self.http.post_raw(
+            "/_matrix/media/v3/upload",
+            path.read_bytes(),
+            params={"filename": path.name},
+            headers={"Content-Type": mime_type},
+        )
+        return require_response_id(uploaded, "Matrix media upload", "content_uri", "uri", "url")
+
+    def _local_content_path(self, item: object, *, label: str) -> Path | None:
+        if not isinstance(item, dict):
+            return None
+        raw_path = item.get("local_path")
+        metadata = item.get("metadata")
+        if not raw_path and isinstance(metadata, dict):
+            raw_path = metadata.get("local_path") or metadata.get("source_path")
+        if not raw_path:
+            self._content_native_warnings.append(f"Native {label} upload skipped; no local file path was available.")
+            return None
+        path = Path(str(raw_path)).expanduser()
+        if not path.exists() or not path.is_file():
+            self._content_native_warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
+            return None
+        return path
+
+    def _apply_native_reactions(self, room_id: str, event_id: str, payload: dict[str, Any]) -> None:
+        reactions = payload.get("reactions")
+        if not isinstance(reactions, list):
+            return
+        for reaction in reactions:
+            if not isinstance(reaction, dict) or not reaction.get("emoji"):
+                continue
+            emoji = str(reaction["emoji"])
+            count = int(reaction.get("count") or 1)
+            if count > 1:
+                self._content_native_warnings.append(
+                    f"Native reaction {emoji!r} applied once to {event_id}; original archive count was {count}."
+                )
+            txn_id = hash_id("matrix_reaction_txn", f"{room_id}:{event_id}:{emoji}", 24)
+            self._safe_native_followup(
+                "reaction",
+                lambda tx=txn_id, key=emoji: self.http.put(
+                    f"/_matrix/client/v3/rooms/{self._q(room_id)}/send/m.reaction/{tx}",
+                    json_body={"m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": key}},
+                ),
+            )
+
+    def _safe_native_followup(self, label: str, operation: Any) -> None:
+        try:
+            operation()
+        except Exception as exc:  # noqa: BLE001
+            self._content_native_warnings.append(f"Native {label} follow-up failed: {sanitize_text(str(exc))}")
 
     def import_template(self, template: CommunityTemplate, options: ImportOptions) -> ImportResult:
         if options.apply and not self.config.matrix_access_token:

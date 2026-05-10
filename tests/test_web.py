@@ -88,6 +88,53 @@ def test_build_web_platform_args() -> None:
     assert build_web_args({"action": ["platforms"]}) == ["platforms", "--check"]
 
 
+def test_build_web_content_args() -> None:
+    export_args = build_web_args(
+        {
+            "action": ["content_export"],
+            "discord_chat_export": ["dce"],
+            "out": ["content.json"],
+        }
+    )
+    assert export_args == ["content-export", "--discord-chat-export", "dce", "--out", "content.json"]
+
+    migrate_args = build_web_args(
+        {
+            "action": ["content_migrate"],
+            "discord_chat_export": ["dce"],
+            "provider_to": ["stoat", "fluxer"],
+            "target_id": ["server"],
+            "channel_map": ["channel-map.json"],
+            "plan_out": ["content.plan.json"],
+            "no_embeds": ["on"],
+        }
+    )
+    assert migrate_args[:7] == [
+        "content-migrate",
+        "--from",
+        "discord",
+        "--discord-chat-export",
+        "dce",
+        "--to",
+        "stoat",
+    ]
+    assert "--to" in migrate_args
+    assert migrate_args[migrate_args.index("--channel-map") + 1] == "channel-map.json"
+    assert "--no-embeds" in migrate_args
+
+    import_args = build_web_args(
+        {
+            "action": ["content_import"],
+            "file": ["content.json"],
+            "provider_to": ["stoat"],
+            "apply": ["on"],
+            "confirm_apply": [APPLY_CONFIRMATION],
+        }
+    )
+    assert import_args[:5] == ["content-import", "--file", "content.json", "--to", "stoat"]
+    assert "--apply" in import_args
+
+
 def test_render_page_includes_mobile_platforms() -> None:
     page = render_page(csrf_token="test-token", auth_token="lan-token", theme="dark")
     assert "Android" in page
@@ -99,6 +146,9 @@ def test_render_page_includes_mobile_platforms() -> None:
     assert "Journal output" in page
     assert "Resume journal" in page
     assert "Force invalid template after review" in page
+    assert "Content" in page
+    assert "DiscordChatExporter file/folder" in page
+    assert "Run Content Migrate" in page
     assert f'name="{CSRF_FIELD}" value="test-token"' in page
     assert f'name="{AUTH_FIELD}" value="lan-token"' in page
     assert f"Type {APPLY_CONFIRMATION}" in page

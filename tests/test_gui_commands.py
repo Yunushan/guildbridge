@@ -8,6 +8,9 @@ import pytest
 
 from guildbridge.gui_commands import (
     apply_confirmation_error,
+    build_content_export_args,
+    build_content_import_args,
+    build_content_migrate_args,
     build_export_args,
     build_import_args,
     build_migrate_args,
@@ -27,6 +30,7 @@ def test_build_export_args() -> None:
         template="https://discord.new/example",
         out="community.json",
         include_user_overwrites=True,
+        include_content=True,
     )
     assert args == [
         "export",
@@ -37,6 +41,7 @@ def test_build_export_args() -> None:
         "--out",
         "community.json",
         "--include-user-overwrites",
+        "--include-content",
     ]
 
 
@@ -52,9 +57,11 @@ def test_build_import_args_apply_redact() -> None:
         redact=True,
         apply=True,
         force_invalid_template=True,
+        include_content=True,
     )
     assert "--redact" in args
     assert "--apply" in args
+    assert "--include-content" in args
     assert "--force-invalid-template" in args
     assert args[args.index("--plan-in") + 1] == "reviewed.plan.json"
     assert args[args.index("--journal-out") + 1] == "journal.json"
@@ -80,9 +87,11 @@ def test_build_migrate_args_preview() -> None:
         journal_out="journal.json",
         resume_journal="failed-journal.json",
         force_invalid_template=True,
+        include_content=True,
     )
     assert args[:5] == ["migrate", "--from", "discord", "--to", "matrix"]
     assert "--redact" in args
+    assert "--include-content" in args
     assert "--force-invalid-template" in args
     assert args[args.index("--plan-in") + 1] == "reviewed.plan.json"
     assert args[args.index("--journal-out") + 1] == "journal.json"
@@ -94,6 +103,43 @@ def test_build_migrate_args_accepts_comma_separated_targets() -> None:
     args = build_migrate_args("discord", "matrix,rocket.chat", source_id="123")
 
     assert args[:7] == ["migrate", "--from", "discord", "--to", "matrix", "--to", "rocket.chat"]
+
+
+def test_build_content_command_args() -> None:
+    assert build_content_export_args(discord_chat_export="dce", out="content.json") == [
+        "content-export",
+        "--discord-chat-export",
+        "dce",
+        "--out",
+        "content.json",
+    ]
+
+    import_args = build_content_import_args(
+        ["stoat", "fluxer"],
+        file="content.json",
+        channel_map="channel-map.json",
+        plan_out="content.plan.json",
+        no_attachments=True,
+        native_content=True,
+    )
+    assert import_args[:7] == ["content-import", "--file", "content.json", "--to", "stoat", "--to", "fluxer"]
+    assert import_args[import_args.index("--channel-map") + 1] == "channel-map.json"
+    assert "--no-attachments" in import_args
+    assert "--native-content" in import_args
+
+    migrate_args = build_content_migrate_args(
+        "stoat",
+        discord_chat_export="dce",
+        plan_in="reviewed.plan.json",
+        apply=True,
+        force_invalid_archive=True,
+        message_limit="10",
+    )
+    assert migrate_args[:5] == ["content-migrate", "--from", "discord", "--discord-chat-export", "dce"]
+    assert "--apply" in migrate_args
+    assert "--force-invalid-archive" in migrate_args
+    assert migrate_args[migrate_args.index("--message-limit") + 1] == "10"
+    assert migrate_args[migrate_args.index("--confirm-apply") + 1] == "APPLY"
 
 
 def test_gui_command_builders_trim_pasted_whitespace() -> None:

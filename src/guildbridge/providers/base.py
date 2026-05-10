@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from guildbridge.config import RuntimeConfig
+from guildbridge.content import (
+    ContentArchive,
+    ContentCapability,
+    ContentImportOptions,
+    dry_run_content_import,
+)
 from guildbridge.models import Action, CommunityTemplate, ImportResult
 
 
@@ -50,6 +56,14 @@ class Provider(ABC):
     @abstractmethod
     def import_template(self, template: CommunityTemplate, options: ImportOptions) -> ImportResult:
         raise NotImplementedError
+
+    def content_capabilities(self) -> ContentCapability:
+        return ContentCapability.planned_for_provider(self.name)
+
+    def import_content(self, archive: ContentArchive, options: ContentImportOptions) -> ImportResult:
+        if options.apply:
+            raise ValueError(f"{self.name} content import is not implemented for live writes yet.")
+        return dry_run_content_import(self.name, archive, options)
 
     @staticmethod
     def supported_warning() -> str:

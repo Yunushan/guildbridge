@@ -4,10 +4,19 @@ import base64
 import json
 from collections.abc import Iterable
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from guildbridge.config import RuntimeConfig
-from guildbridge.http import HttpClient
+from guildbridge.content import (
+    ContentArchive,
+    ContentCapability,
+    ContentImportOptions,
+    apply_content_actions,
+    content_text_from_action,
+    dry_run_content_import,
+)
+from guildbridge.http import HttpClient, sanitize_text
 from guildbridge.models import (
     Action,
     Channel,
@@ -20,7 +29,14 @@ from guildbridge.models import (
 from guildbridge.permissions import zulip_to_neutral
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id
+from .base import (
+    ExportOptions,
+    ImportOptions,
+    Provider,
+    plan_or_apply_action,
+    require_response_id,
+    response_id,
+)
 
 
 class ZulipProvider(Provider):
@@ -35,6 +51,8 @@ class ZulipProvider(Provider):
             max_retries=config.max_retries,
             user_agent=config.user_agent,
         )
+        self._content_options = ContentImportOptions()
+        self._content_native_warnings: list[str] = []
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if not self.config.zulip_email or not self.config.zulip_api_key:
@@ -42,6 +60,137 @@ class ZulipProvider(Provider):
         streams = self._unwrap_list(self.http.get("/streams", headers=self._headers()), "streams")
         groups = self._unwrap_list(self.http.get("/user_groups", headers=self._headers()), "user_groups")
         return self._build_template({"name": options.source_id or "Zulip organization"}, groups, streams, options=options)
+
+    def content_capabilities(self) -> ContentCapability:
+        capability = ContentCapability.text_content_provider(self.name, import_supported=True, reliability_supported=True)
+        capability.notes.append("Live content import sends formatted archived messages to mapped Zulip stream names.")
+        capability.notes.append(
+            "Text fallback preserves attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, threads, and timestamps as formatted text."
+        )
+        capability.notes.append(
+            "Opt-in native content import can upload local files as Zulip file links and apply reactions when permissions allow it. Discord-style pins and exact message replies do not have a direct Zulip equivalent."
+        )
+        for feature in ("attachments", "reactions"):
+            capability.import_[feature] = "supported"
+        return capability
+
+    def import_content(self, archive: ContentArchive, options: ContentImportOptions) -> ImportResult:
+        if options.apply and (not self.config.zulip_email or not self.config.zulip_api_key):
+            raise ValueError("Zulip content import requires ZULIP_EMAIL and ZULIP_API_KEY when --apply is used.")
+        if options.apply and not options.channel_map:
+            raise ValueError(
+                "Zulip content import requires --channel-map for live writes so archive channel IDs map to existing stream names."
+            )
+        plan = dry_run_content_import(self.name, archive, options, path_template="/messages")
+        if not options.apply:
+            return plan
+        self._prepare_native_content_state(options)
+        result = apply_content_actions(self.name, plan.actions, options, self._send_content_action)
+        result.warnings[:0] = plan.warnings
+        result.warnings.extend(self._content_native_warnings)
+        return result
+
+    def _send_content_action(self, action: Action) -> dict[str, Any] | str | None:
+        payload = action.payload or {}
+        if not self._content_options.uses_native_content:
+            return self.http.post_form(
+                action.path,
+                form_body={
+                    "type": "stream",
+                    "to": str(payload.get("channel_id") or ""),
+                    "topic": "Imported",
+                    "content": content_text_from_action(action),
+                },
+                headers=self._headers(),
+            )
+        content = content_text_from_action(action)
+        if self._content_options.native_attachments:
+            content = self._content_with_file_links(payload, content)
+        if self._content_options.native_replies and payload.get("reply_to_id"):
+            self._content_native_warnings.append("Native replies skipped for Zulip; use topics/thread context in the imported message text.")
+        if self._content_options.native_pins and payload.get("pinned"):
+            self._content_native_warnings.append("Native pins skipped for Zulip; pinned-message semantics do not map to a portable Zulip API call.")
+        response = self.http.post_form(
+            action.path,
+            form_body={
+                "type": "stream",
+                "to": str(payload.get("channel_id") or ""),
+                "topic": "Imported",
+                "content": content,
+            },
+            headers=self._headers(),
+        )
+        message_id = response_id(response if isinstance(response, dict) else {}, "id", "message_id")
+        if message_id and self._content_options.native_reactions and int(payload.get("part_index") or 1) == 1:
+            self._apply_native_reactions(message_id, payload)
+        return response
+
+    def _prepare_native_content_state(self, options: ContentImportOptions) -> None:
+        self._content_options = options
+        self._content_native_warnings = []
+
+    def _content_with_file_links(self, payload: dict[str, Any], content: str) -> str:
+        links: list[str] = []
+        attachments = payload.get("attachments")
+        if isinstance(attachments, list):
+            for item in attachments[:10]:
+                path = self._local_content_path(item, label="attachment")
+                if not path:
+                    continue
+                try:
+                    uploaded = self.http.post_file(
+                        "/user_uploads",
+                        file_path=path,
+                        field_name="filename",
+                        headers=self._headers(),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self._content_native_warnings.append(f"Native file upload failed for {path.name}: {sanitize_text(str(exc))}")
+                    continue
+                uri = response_id(uploaded if isinstance(uploaded, dict) else {}, "uri", "url")
+                if uri:
+                    links.append(f"[{path.name}]({uri})")
+        if not links:
+            return content
+        return content + "\n\nUploaded files:\n" + "\n".join(f"- {link}" for link in links)
+
+    def _local_content_path(self, item: object, *, label: str) -> Path | None:
+        if not isinstance(item, dict):
+            return None
+        raw_path = item.get("local_path")
+        metadata = item.get("metadata")
+        if not raw_path and isinstance(metadata, dict):
+            raw_path = metadata.get("local_path") or metadata.get("source_path")
+        if not raw_path:
+            self._content_native_warnings.append(f"Native {label} upload skipped; no local file path was available.")
+            return None
+        path = Path(str(raw_path)).expanduser()
+        if not path.exists() or not path.is_file():
+            self._content_native_warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
+            return None
+        return path
+
+    def _apply_native_reactions(self, message_id: str, payload: dict[str, Any]) -> None:
+        reactions = payload.get("reactions")
+        if not isinstance(reactions, list):
+            return
+        for reaction in reactions:
+            if not isinstance(reaction, dict) or not reaction.get("emoji"):
+                continue
+            emoji = str(reaction["emoji"])
+            count = int(reaction.get("count") or 1)
+            if count > 1:
+                self._content_native_warnings.append(
+                    f"Native reaction {emoji!r} applied once to {message_id}; original archive count was {count}."
+                )
+            try:
+                self.http.post_form(
+                    f"/messages/{message_id}/reactions",
+                    form_body={"emoji_name": emoji},
+                    headers=self._headers(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._content_native_warnings.append(f"Native reaction follow-up failed: {sanitize_text(str(exc))}")
 
     def import_template(self, template: CommunityTemplate, options: ImportOptions) -> ImportResult:
         if options.apply and (not self.config.zulip_email or not self.config.zulip_api_key):

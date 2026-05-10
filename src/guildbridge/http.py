@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import html
 import json
 import random
 import re
 import time
+from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
@@ -17,6 +21,8 @@ TOKEN_PATTERNS = (
     re.compile(r"(Authorization:\s*(?:Bot|Bearer)?\s*)[^\s,;]+", re.IGNORECASE),
     re.compile(r"((?:token|access_token|bot_token|session|secret)[\"'=:\s]+)[^\"'\s,;}]+", re.IGNORECASE),
 )
+HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
 @dataclass
@@ -81,12 +87,16 @@ class HttpClient:
         *,
         json_body: dict[str, Any] | None = None,
         form_body: dict[str, Any] | None = None,
+        data_body: bytes | str | None = None,
+        files: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         retries: int | None = None,
     ) -> Any:
-        if json_body is not None and form_body is not None:
-            raise ValueError("Use either json_body or form_body, not both.")
+        if json_body is not None and (form_body is not None or data_body is not None or files is not None):
+            raise ValueError("Use either json_body or form_body/data_body/files, not multiple body types.")
+        if data_body is not None and (form_body is not None or files is not None):
+            raise ValueError("Use either data_body or form_body/files, not both.")
         url = path if path.startswith("http://") or path.startswith("https://") else urljoin(self.base_url, path.lstrip("/"))
         method_upper = method.upper()
         max_retries = self.max_retries if retries is None else max(0, retries)
@@ -95,15 +105,22 @@ class HttpClient:
         request_headers = headers
         if form_body is not None:
             request_headers = {"Content-Type": "application/x-www-form-urlencoded", **(headers or {})}
+        if files is not None:
+            request_headers = dict(headers or {})
         for attempt in range(attempts):
+            merged_headers = self.headers(request_headers)
+            if files is not None:
+                # requests must generate the multipart boundary itself.
+                merged_headers.pop("Content-Type", None)
             try:
                 resp = self.session.request(
                     method_upper,
                     url,
                     json=json_body,
-                    data=form_body,
+                    data=data_body if data_body is not None else form_body,
+                    files=files,
                     params=params,
-                    headers=self.headers(request_headers),
+                    headers=merged_headers,
                     timeout=self.timeout,
                 )
             except requests.RequestException as exc:
@@ -123,7 +140,7 @@ class HttpClient:
                     return resp.json()
                 except json.JSONDecodeError:
                     return resp.text
-            raise HttpError(method_upper, url, resp.status_code, sanitize_text(resp.text), attempt + 1)
+            raise HttpError(method_upper, url, resp.status_code, sanitize_response_text(resp.text), attempt + 1)
         if last_transport_error is not None:
             raise HttpTransportError(method_upper, url, sanitize_text(str(last_transport_error)), attempts) from last_transport_error
         raise AssertionError("unreachable")
@@ -140,6 +157,58 @@ class HttpClient:
 
     def post_form(self, path: str, form_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("POST", path, form_body=form_body, **kwargs)
+
+    def post_raw(self, path: str, data_body: bytes | str, **kwargs: Any) -> Any:
+        return self.request("POST", path, data_body=data_body, **kwargs)
+
+    def post_file(
+        self,
+        path: str,
+        *,
+        file_path: str | Path,
+        field_name: str = "file",
+        form_body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        resolved = Path(file_path)
+        with resolved.open("rb") as handle:
+            return self.request(
+                "POST",
+                path,
+                form_body=form_body or {},
+                files={field_name: (resolved.name, handle)},
+                headers=headers,
+                **kwargs,
+            )
+
+    def post_files(
+        self,
+        path: str,
+        *,
+        file_paths: Sequence[str | Path],
+        field_prefix: str = "files",
+        form_body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        indexed_fields: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        with ExitStack() as stack:
+            files: dict[str, Any] = {}
+            for index, raw_path in enumerate(file_paths):
+                resolved = Path(raw_path)
+                field_name = f"{field_prefix}[{index}]" if indexed_fields else field_prefix
+                if not indexed_fields and field_name in files:
+                    field_name = f"{field_prefix}{index}"
+                files[field_name] = (resolved.name, stack.enter_context(resolved.open("rb")))
+            return self.request(
+                "POST",
+                path,
+                form_body=form_body or {},
+                files=files,
+                headers=headers,
+                **kwargs,
+            )
 
     def patch(self, path: str, json_body: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         return self.request("PATCH", path, json_body=json_body, **kwargs)
@@ -159,6 +228,14 @@ def sanitize_text(text: str) -> str:
     for pattern in TOKEN_PATTERNS:
         sanitized = pattern.sub(r"\1[redacted]", sanitized)
     return sanitized
+
+
+def sanitize_response_text(text: str) -> str:
+    sanitized = sanitize_text(text)
+    if "<html" not in sanitized.lower() and "<!doctype" not in sanitized.lower():
+        return sanitized
+    plain = html.unescape(HTML_TAG_PATTERN.sub(" ", sanitized))
+    return WHITESPACE_PATTERN.sub(" ", plain).strip()
 
 
 def retry_delay_seconds(attempt: int, response: requests.Response | None = None) -> float:

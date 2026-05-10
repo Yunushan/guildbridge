@@ -35,13 +35,52 @@ Odak noktasi **tasinabilir yapi**dir; gozetim veya veri klonlama degildir:
 - mumkun oldugu kadar rol/everyone izin overwrite kayitlari
 - herhangi bir yazma isleminden once dry-run planlari
 
-Bilerek **disa aktarilmayan** veriler:
+Normal yapi sablonlarinda bilerek **disa aktarilmayan** veriler:
 
 - mesajlar veya mesaj gecmisi
 - uyeler, uye listeleri, DM'ler, arkadas listeleri, presence bilgisi, e-postalar, IP'ler veya kisisel profiller
 - bot token'lari, access token'lari, oturum token'lari veya cookie'ler
 - uretilen sablonlarda ham saglayici ID'leri; kaynak ID'ler hash'lenir/yerellestirilir
 - kullanici/uyeye ozel izin overwrite kayitlari; diagnostics istense bile guvensiz kullanici hedefleri dusurulur
+
+### Opsiyonel icerik migrasyonu
+
+GuildBridge artik mesajlar, yazarlar, zaman damgalari, ekler, emoji, sticker, pin, yanit, reaction, embed, anket, thread, forum postlari, sunucu banner'i, rol renkleri, kanal izinleri, NSFW isaretleri, offline export, pre-creation review, pause/resume, incremental migration, dead-letter retry, message splitting, raporlar, kilitler ve circuit breaker gibi ozellikler icin acik bir opsiyonel icerik migrasyonu yoluna sahiptir. Parallel sends planlanan bir opsiyon olarak takip edilir; canli yazmalar su an sirali kalir.
+
+Bu icerik yolu varsayilan olarak **kapalidir** ve gizlilik guvenli yapi sablonlarindan ayridir. Normal `export`, `import` ve `migrate` komutlari yalnizca yapi tasir. Icerik ayri bir tarafsiz arsiv ile islenir:
+
+```bash
+guildbridge content-features
+guildbridge content-features --format json
+guildbridge content-export --discord-chat-export ./DiscordChatExporter --out community.content.json
+guildbridge content-import --file community.content.json --to stoat,fluxer --plan-out content.plan.json
+```
+
+Ilk desteklenen kaynak offline DiscordChatExporter JSON'dir. GuildBridge bunu `guildbridge.content.v1` formatina cevirir, ham kaynak ID'lerini hash'ler ve mesaj metni, yazarlar, zaman damgalari, ek URL/local path bilgileri, embed'ler, yanitlar, pin'ler, reaction'lar, custom emoji isaretleri, sticker'lar, anketler, thread/forum metadata'si ve sunucu banner/icon URL'lerini private arsivde korur. CLI, masaustu GUI Content sekmesi veya web GUI Content paneli uzerinden her hedef saglayici icin content import dry-run plani uretebilir. Canli formatli mesaj yazma Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost ve Zulip icin desteklenir; bunun icin incelenmis plan, hedef kanal eslemesi ve provider token'i gerekir. Mumble metin gecmisi import yuzeyi olmadigi icin yapi/ses kanali tarafinda kalir.
+
+Apply tarafindaki content import islemleri journal, rapor, lock dosyasi, incremental state ve dead-letter dosyasi yazabilir:
+
+```bash
+guildbridge content-import \
+  --file community.content.json \
+  --to stoat \
+  --channel-map channel-map.json \
+  --plan-out content.plan.json
+
+guildbridge content-import \
+  --file community.content.json \
+  --to stoat \
+  --channel-map channel-map.json \
+  --plan-in content.plan.json \
+  --apply --confirm-apply APPLY \
+  --content-journal-out .guildbridge/content/journals/stoat.json \
+  --content-report-out .guildbridge/content/reports/stoat.json \
+  --content-dead-letter-out .guildbridge/content/dead-letter/stoat.json \
+  --content-incremental-state .guildbridge/content/state/stoat.json \
+  --content-incremental
+```
+
+Ekler, embed'ler, yanitlar, reaction'lar, pin'ler, sticker'lar, anketler, custom emoji, yazarlar, zaman damgalari ve thread/forum referanslari varsayilan olarak formatli metin halinde korunur. Provider-native content davranisi `--native-content` ile topluca veya `--native-attachments`, `--native-embeds`, `--native-replies`, `--native-reactions`, `--native-pins`, `--native-custom-emoji`, `--native-masquerade` ve `--native-stickers` ile tek tek acilabilir. Stoat/Revolt Ferry tarzinda Autumn upload, native embed, yanit, reaction, pin, custom emoji ve masquerade kullanir. Discord, Spacebar, Daccord ve Fluxer desteklenen yerlerde Discord-uyumlu native mesaj route'larini kullanir. Matrix local media upload ile native yanit/reaction/pin uygulayabilir. Mattermost ve Rocket.Chat local dosya upload edip native yanit/reaction/pin uygulayabilir. Zulip local dosyalari mesaj linki olarak upload edebilir ve reaction uygulayabilir. Native upload icin content arsivinde local media dosyalari gerekir; remote CDN URL'leri otomatik indirilmez. Formatli mesajlardan opsiyonel fidelity alanlarini cikarmak icin `--no-attachments`, `--no-embeds`, `--no-reactions`, `--no-stickers`, `--no-polls`, `--no-threads` veya `--no-custom-emoji` kullanin. GuildBridge guvensiz yapi-sablonu icerik flag'lerini reddeder.
 
 ## En iyi proje adi
 
@@ -320,10 +359,13 @@ Gerekiyorsa `FLUXER_API_BASE` degerini self-hosted instance'iniza ayarlayin.
 
 ```bash
 STOAT_BOT_TOKEN="..."
+# Stoat role-management route'lari user/session auth isterse STOAT_SESSION_TOKEN kullanin.
+# Session token'larini gizli tutun ve mumkunse ayri bir migration/admin hesabi kullanin.
+# STOAT_SESSION_TOKEN="..."
 STOAT_API_BASE="https://api.stoat.chat"
 ```
 
-Stoat uyumlu endpoint'ler ve authentication zamanla degisebilir. Kendi instance'iniz icin base URL ve saglayici implementasyonunu duzenlenebilir tutun.
+Stoat uyumlu endpoint'ler ve authentication zamanla degisebilir. GuildBridge `STOAT_BOT_TOKEN` degerini `X-Bot-Token`, `STOAT_SESSION_TOKEN` degerini `X-Session-Token` olarak gonderir; session-token yolunu yalnizca hedef route user authentication istediginde kullanin.
 
 ### Spacebar
 

@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from guildbridge.config import RuntimeConfig
-from guildbridge.http import HttpClient
+from guildbridge.content import (
+    ContentArchive,
+    ContentCapability,
+    ContentImportOptions,
+    apply_content_actions,
+    content_text_from_action,
+    dry_run_content_import,
+)
+from guildbridge.http import HttpClient, sanitize_text
 from guildbridge.models import (
     Action,
     Channel,
@@ -18,7 +27,14 @@ from guildbridge.models import (
 from guildbridge.permissions import mattermost_to_neutral
 from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
 
-from .base import ExportOptions, ImportOptions, Provider, plan_or_apply_action, require_response_id
+from .base import (
+    ExportOptions,
+    ImportOptions,
+    Provider,
+    plan_or_apply_action,
+    require_response_id,
+    response_id,
+)
 
 
 class MattermostProvider(Provider):
@@ -35,6 +51,10 @@ class MattermostProvider(Provider):
             max_retries=config.max_retries,
             user_agent=config.user_agent,
         )
+        self._content_options = ContentImportOptions()
+        self._content_message_ids: dict[str, str] = {}
+        self._content_native_warnings: list[str] = []
+        self._content_user_id: str | None = None
 
     def export_template(self, options: ExportOptions) -> CommunityTemplate:
         if not options.source_id:
@@ -44,6 +64,217 @@ class MattermostProvider(Provider):
         team = self.http.get(f"/teams/{options.source_id}")
         channels = self._unwrap_list(self.http.get(f"/teams/{options.source_id}/channels"))
         return self._build_template(team, channels, options=options)
+
+    def content_capabilities(self) -> ContentCapability:
+        capability = ContentCapability.text_content_provider(self.name, import_supported=True, reliability_supported=True)
+        capability.notes.append("Live content import sends formatted archived messages to mapped Mattermost channel IDs.")
+        capability.notes.append(
+            "Text fallback preserves attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, threads, and timestamps as formatted text."
+        )
+        capability.notes.append(
+            "Opt-in native content import can upload local files, post replies, apply pins/reactions, and carry embed text in Mattermost post props when permissions allow it."
+        )
+        for feature in ("attachments", "embeds", "replies", "reactions", "pins"):
+            capability.import_[feature] = "supported"
+        return capability
+
+    def import_content(self, archive: ContentArchive, options: ContentImportOptions) -> ImportResult:
+        if options.apply and not self.config.mattermost_token:
+            raise ValueError("Mattermost content import requires MATTERMOST_TOKEN or MATTERMOST_PERSONAL_ACCESS_TOKEN when --apply is used.")
+        if options.apply and not options.channel_map:
+            raise ValueError(
+                "Mattermost content import requires --channel-map for live writes so archive channel IDs map to existing channel IDs."
+            )
+        plan = dry_run_content_import(self.name, archive, options, path_template="/posts")
+        if not options.apply:
+            return plan
+        self._prepare_native_content_state(options)
+        result = apply_content_actions(self.name, plan.actions, options, self._send_content_action)
+        result.warnings[:0] = plan.warnings
+        result.warnings.extend(self._content_native_warnings)
+        return result
+
+    def _send_content_action(self, action: Action) -> dict[str, Any] | str | None:
+        payload = action.payload or {}
+        if not self._content_options.uses_native_content:
+            return self.http.post(
+                action.path,
+                json_body={"channel_id": str(payload.get("channel_id") or ""), "message": content_text_from_action(action)},
+            )
+        message_payload: dict[str, Any] = {
+            "channel_id": str(payload.get("channel_id") or ""),
+            "message": content_text_from_action(action),
+        }
+        if self._content_options.native_replies:
+            reply_id = self._mapped_reply_id(payload)
+            if reply_id:
+                message_payload["root_id"] = reply_id
+        if self._content_options.native_embeds:
+            props = self._native_props(payload)
+            if props:
+                message_payload["props"] = props
+        if self._content_options.native_attachments:
+            file_ids = self._upload_native_files(payload)
+            if file_ids:
+                message_payload["file_ids"] = file_ids
+        response = self.http.post(action.path, json_body=message_payload)
+        self._record_native_message_response(action, response)
+        message_id = response_id(response if isinstance(response, dict) else {}, "id", "post.id")
+        if message_id and int(payload.get("part_index") or 1) == 1:
+            self._apply_native_followups(payload, message_id)
+        return response
+
+    def _prepare_native_content_state(self, options: ContentImportOptions) -> None:
+        self._content_options = options
+        self._content_message_ids = {}
+        self._content_native_warnings = []
+        self._content_user_id = None
+
+    def _native_props(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_embeds = payload.get("embeds")
+        if not isinstance(raw_embeds, list):
+            return {}
+        attachments: list[dict[str, Any]] = []
+        for raw in raw_embeds[:10]:
+            if not isinstance(raw, dict):
+                continue
+            attachment = without_none(
+                {
+                    "title": raw.get("title"),
+                    "title_link": raw.get("url"),
+                    "text": raw.get("description"),
+                    "image_url": raw.get("image_url"),
+                    "thumb_url": raw.get("thumbnail_url"),
+                }
+            )
+            if attachment:
+                attachments.append(attachment)
+        return {"attachments": attachments} if attachments else {}
+
+    def _upload_native_files(self, payload: dict[str, Any]) -> list[str]:
+        channel_id = str(payload.get("channel_id") or "")
+        if not channel_id:
+            return []
+        file_ids: list[str] = []
+        attachments = payload.get("attachments")
+        if isinstance(attachments, list):
+            for item in attachments[:10]:
+                path = self._local_content_path(item, label="attachment")
+                if not path:
+                    continue
+                try:
+                    uploaded = self.http.post_file(
+                        "/files",
+                        file_path=path,
+                        field_name="files",
+                        form_body={"channel_id": channel_id},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self._content_native_warnings.append(f"Native file upload failed for {path.name}: {sanitize_text(str(exc))}")
+                    continue
+                file_id = self._mattermost_file_id(uploaded)
+                if file_id:
+                    file_ids.append(file_id)
+        return file_ids
+
+    def _local_content_path(self, item: object, *, label: str) -> Path | None:
+        if not isinstance(item, dict):
+            return None
+        raw_path = item.get("local_path")
+        metadata = item.get("metadata")
+        if not raw_path and isinstance(metadata, dict):
+            raw_path = metadata.get("local_path") or metadata.get("source_path")
+        if not raw_path:
+            self._content_native_warnings.append(f"Native {label} upload skipped; no local file path was available.")
+            return None
+        path = Path(str(raw_path)).expanduser()
+        if not path.exists() or not path.is_file():
+            self._content_native_warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
+            return None
+        return path
+
+    @staticmethod
+    def _mattermost_file_id(uploaded: Any) -> str | None:
+        if not isinstance(uploaded, dict):
+            return None
+        file_infos = uploaded.get("file_infos")
+        if isinstance(file_infos, list) and file_infos:
+            first = file_infos[0]
+            if isinstance(first, dict):
+                return response_id(first, "id", "_id")
+        return response_id(uploaded, "id", "file_id")
+
+    def _mapped_reply_id(self, payload: dict[str, Any]) -> str | None:
+        reply_to = payload.get("reply_to_id")
+        if not reply_to:
+            return None
+        mapped = self._content_message_ids.get(f"{reply_to}:1") or self._content_message_ids.get(str(reply_to))
+        if not mapped:
+            self._content_native_warnings.append(f"Native reply skipped for {reply_to!r}; referenced message was not mapped yet.")
+            return None
+        return mapped
+
+    def _record_native_message_response(self, action: Action, response: object) -> None:
+        if not isinstance(response, dict):
+            return
+        message_id = response_id(response, "id", "post.id")
+        if not message_id:
+            return
+        payload = action.payload or {}
+        source_message_id = str(payload.get("source_message_id") or "")
+        if not source_message_id:
+            return
+        part_index = int(payload.get("part_index") or 1)
+        self._content_message_ids[source_message_id] = message_id
+        self._content_message_ids[f"{source_message_id}:{part_index}"] = message_id
+
+    def _apply_native_followups(self, payload: dict[str, Any], message_id: str) -> None:
+        if self._content_options.native_pins and payload.get("pinned"):
+            self._safe_native_followup("pin", lambda: self.http.post(f"/posts/{message_id}/pin", json_body={}))
+        if self._content_options.native_reactions:
+            self._apply_native_reactions(message_id, payload)
+
+    def _apply_native_reactions(self, message_id: str, payload: dict[str, Any]) -> None:
+        reactions = payload.get("reactions")
+        if not isinstance(reactions, list):
+            return
+        user_id = self._current_user_id()
+        if not user_id:
+            self._content_native_warnings.append("Native reactions skipped; Mattermost current user id could not be resolved.")
+            return
+        for reaction in reactions:
+            if not isinstance(reaction, dict) or not reaction.get("emoji"):
+                continue
+            emoji = str(reaction["emoji"])
+            count = int(reaction.get("count") or 1)
+            if count > 1:
+                self._content_native_warnings.append(
+                    f"Native reaction {emoji!r} applied once to {message_id}; original archive count was {count}."
+                )
+            self._safe_native_followup(
+                "reaction",
+                lambda emoji_name=emoji: self.http.post(
+                    "/reactions",
+                    json_body={"user_id": user_id, "post_id": message_id, "emoji_name": emoji_name},
+                ),
+            )
+
+    def _current_user_id(self) -> str | None:
+        if self._content_user_id:
+            return self._content_user_id
+        try:
+            user = self.http.get("/users/me")
+        except Exception as exc:  # noqa: BLE001
+            self._content_native_warnings.append(f"Native reaction user lookup failed: {sanitize_text(str(exc))}")
+            return None
+        self._content_user_id = response_id(user if isinstance(user, dict) else {}, "id", "_id")
+        return self._content_user_id
+
+    def _safe_native_followup(self, label: str, operation: Any) -> None:
+        try:
+            operation()
+        except Exception as exc:  # noqa: BLE001
+            self._content_native_warnings.append(f"Native {label} follow-up failed: {sanitize_text(str(exc))}")
 
     def import_template(self, template: CommunityTemplate, options: ImportOptions) -> ImportResult:
         if options.apply and not self.config.mattermost_token:

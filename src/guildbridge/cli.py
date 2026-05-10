@@ -9,16 +9,32 @@ from pathlib import Path
 from typing import Any
 
 from guildbridge.config import RuntimeConfig
+from guildbridge.content import (
+    CONTENT_FEATURES,
+    ContentArchive,
+    ContentImportOptions,
+    content_archive_fingerprint,
+    content_capabilities_document,
+    content_capabilities_table,
+    content_not_implemented_message,
+    load_channel_map,
+    load_content_archive,
+    load_discord_chat_export,
+    selected_content_features,
+)
 from guildbridge.diagnostics import format_error_report
 from guildbridge.journal import (
     ApplyJournal,
     ApplyJournalContext,
     default_journal_path,
     template_fingerprint,
+    utc_now,
     validate_resume_journal,
 )
-from guildbridge.models import CommunityTemplate
+from guildbridge.models import CommunityTemplate, ImportResult
 from guildbridge.plan import (
+    PLAN_SCHEMA,
+    action_fingerprint,
     apply_result_plan_metadata,
     build_plan_context,
     build_plan_metadata,
@@ -149,6 +165,31 @@ def _provider_targets(values: str | Sequence[str] | None) -> list[str]:
     if not targets:
         raise ValueError("At least one --to provider is required.")
     return targets
+
+
+def _selected_content_features_from_args(args: argparse.Namespace) -> list[str]:
+    return selected_content_features(
+        include_content=bool(getattr(args, "include_content", False)),
+        requested_features=list(getattr(args, "content_feature", None) or []),
+    )
+
+
+def _reject_unsupported_content(
+    args: argparse.Namespace,
+    *,
+    source_provider: str | None,
+    target_providers: list[str],
+) -> None:
+    features = _selected_content_features_from_args(args)
+    if not features:
+        return
+    raise ValueError(
+        content_not_implemented_message(
+            source_provider=source_provider,
+            target_providers=target_providers,
+            features=features,
+        )
+    )
 
 
 def _provider_option_value(
@@ -289,6 +330,34 @@ def _batch_result(
     return data
 
 
+def _content_plan_metadata(
+    *,
+    command: str,
+    provider: str,
+    archive_name: str,
+    archive_hash: str,
+    result: ImportResult,
+    source_provider: str | None = None,
+    target_id: str | None = None,
+    target_name: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema": PLAN_SCHEMA,
+        "created_at": utc_now(),
+        "context": {
+            "command": command,
+            "provider": provider,
+            "source_provider": source_provider,
+            "template_hash": archive_hash,
+            "template_name": archive_name,
+            "target_id": target_id,
+            "target_name": target_name,
+        },
+        "action_count": len(result.actions),
+        "action_hash": action_fingerprint(result.actions),
+    }
+
+
 def _import_to_target(
     args: argparse.Namespace,
     *,
@@ -375,6 +444,7 @@ def _import_to_target(
 def command_export(args: argparse.Namespace) -> int:
     config = RuntimeConfig.from_env()
     provider = get_provider(args.provider_from, config)
+    _reject_unsupported_content(args, source_provider=provider.name, target_providers=[])
     template = provider.export_template(
         ExportOptions(source_id=args.source_id, template=args.template, include_user_overwrites=args.include_user_overwrites)
     )
@@ -389,6 +459,7 @@ def command_export(args: argparse.Namespace) -> int:
 def command_import(args: argparse.Namespace) -> int:
     config = RuntimeConfig.from_env()
     targets = _target_specs(args, config)
+    _reject_unsupported_content(args, source_provider=None, target_providers=[target.provider.name for target in targets])
     template = load_template(args.file)
     if args.redact:
         template = redact_template(template)
@@ -459,6 +530,11 @@ def command_migrate(args: argparse.Namespace) -> int:
     config = RuntimeConfig.from_env()
     source_provider = get_provider(args.provider_from, config)
     targets = _target_specs(args, config)
+    _reject_unsupported_content(
+        args,
+        source_provider=source_provider.name,
+        target_providers=[target.provider.name for target in targets],
+    )
     template = source_provider.export_template(
         ExportOptions(source_id=args.source_id, template=args.template, include_user_overwrites=args.include_user_overwrites)
     )
@@ -561,6 +637,221 @@ def command_providers(_: argparse.Namespace) -> int:
     return 0
 
 
+def command_content_features(args: argparse.Namespace) -> int:
+    config = RuntimeConfig.from_env()
+    capabilities = [get_provider(name, config).content_capabilities() for name in provider_names()]
+    if args.format == "json":
+        write_json(content_capabilities_document(capabilities), args.out)
+    else:
+        print(content_capabilities_table(capabilities))
+    return 0
+
+
+def _content_options_from_args(
+    args: argparse.Namespace,
+    *,
+    target: TargetSpec,
+    channel_map: dict[str, str],
+    apply: bool,
+) -> ContentImportOptions:
+    return ContentImportOptions(
+        apply=apply,
+        target_id=target.target_id,
+        target_name=target.target_name,
+        channel_map=channel_map,
+        preserve_authors=not getattr(args, "no_authors", False),
+        include_attachments=not getattr(args, "no_attachments", False),
+        include_reactions=not getattr(args, "no_reactions", False),
+        include_embeds=not getattr(args, "no_embeds", False),
+        include_stickers=not getattr(args, "no_stickers", False),
+        include_polls=not getattr(args, "no_polls", False),
+        include_threads=not getattr(args, "no_threads", False),
+        include_custom_emoji=not getattr(args, "no_custom_emoji", False),
+        native_attachments=bool(getattr(args, "native_attachments", False)),
+        native_embeds=bool(getattr(args, "native_embeds", False)),
+        native_replies=bool(getattr(args, "native_replies", False)),
+        native_reactions=bool(getattr(args, "native_reactions", False)),
+        native_pins=bool(getattr(args, "native_pins", False)),
+        native_custom_emoji=bool(getattr(args, "native_custom_emoji", False)),
+        native_masquerade=bool(getattr(args, "native_masquerade", False)),
+        native_stickers=bool(getattr(args, "native_stickers", False)),
+        native_content=bool(getattr(args, "native_content", False)),
+        message_limit=getattr(args, "message_limit", None),
+        journal_path=getattr(args, "content_journal_out", None),
+        resume_journal=getattr(args, "resume_content_journal", None),
+        dead_letter_path=getattr(args, "content_dead_letter_out", None),
+        report_path=getattr(args, "content_report_out", None),
+        lock_path=getattr(args, "content_lock_file", None),
+        incremental_state_path=getattr(args, "content_incremental_state", None),
+        incremental=bool(getattr(args, "content_incremental", False)),
+        continue_on_error=bool(getattr(args, "content_continue_on_error", False)),
+        max_failures=int(getattr(args, "content_max_failures", 1) or 1),
+        parallel_sends=int(getattr(args, "content_parallel_sends", 1) or 1),
+    )
+
+
+def _content_import_to_target(
+    args: argparse.Namespace,
+    *,
+    archive: ContentArchive,
+    target: TargetSpec,
+    command: str,
+    source_provider: str | None = None,
+    reviewed_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    archive_hash = content_archive_fingerprint(archive)
+    channel_map = load_channel_map(getattr(args, "channel_map", None))
+    if args.apply:
+        candidate = target.provider.import_content(
+            archive,
+            _content_options_from_args(args, target=target, channel_map=channel_map, apply=False),
+        )
+        candidate_plan = _content_plan_metadata(
+            command=command,
+            provider=target.provider.name,
+            source_provider=source_provider,
+            archive_name=archive.name,
+            archive_hash=archive_hash,
+            target_id=target.target_id,
+            target_name=target.target_name,
+            result=candidate,
+        )
+        reviewed_plan = (
+            validate_reviewed_plan_data(reviewed_data, candidate_plan)
+            if reviewed_data is not None
+            else validate_reviewed_plan(args.plan_in, candidate_plan)
+        )
+        plan = apply_result_plan_metadata(candidate_plan, args.plan_in)
+        plan["reviewed_action_hash"] = reviewed_plan["action_hash"]
+    else:
+        plan = None
+    result = target.provider.import_content(
+        archive,
+        _content_options_from_args(args, target=target, channel_map=channel_map, apply=args.apply),
+    )
+    if plan is None:
+        plan = _content_plan_metadata(
+            command=command,
+            provider=target.provider.name,
+            source_provider=source_provider,
+            archive_name=archive.name,
+            archive_hash=archive_hash,
+            target_id=target.target_id,
+            target_name=target.target_name,
+            result=result,
+        )
+    return result_to_dict(result, plan=plan)
+
+
+def _content_batch_or_single_result(
+    args: argparse.Namespace,
+    *,
+    archive: ContentArchive,
+    targets: list[TargetSpec],
+    command: str,
+    source_provider: str | None = None,
+    validation_problems: list[str] | None = None,
+) -> dict[str, Any]:
+    validate_apply_safety(
+        apply=args.apply,
+        confirm_apply=args.confirm_apply,
+        validation_problems=validation_problems or [],
+        force_invalid_template=bool(getattr(args, "force_invalid_archive", False)),
+    )
+    validate_apply_plan_args(args)
+    multi_target = len(targets) > 1
+    reviewed_batch = (
+        _load_reviewed_batch_plan(
+            args.plan_in,
+            command=command,
+            source_provider=source_provider,
+            target_providers=[target.provider.name for target in targets],
+        )
+        if args.apply and multi_target
+        else None
+    )
+    results = [
+        _content_import_to_target(
+            args,
+            archive=archive,
+            target=target,
+            command=command,
+            source_provider=source_provider,
+            reviewed_data=reviewed_batch.get(target.provider.name) if reviewed_batch else None,
+        )
+        for target in targets
+    ]
+    if not multi_target:
+        return results[0]
+    return _batch_result(
+        command=command,
+        source_provider=source_provider,
+        target_providers=[target.provider.name for target in targets],
+        results=results,
+    )
+
+
+def command_content_export(args: argparse.Namespace) -> int:
+    if not args.discord_chat_export:
+        raise ValueError("Content export currently requires --discord-chat-export <file-or-folder>.")
+    archive = load_discord_chat_export(args.discord_chat_export)
+    problems = archive.validate()
+    if problems:
+        archive.warnings.extend(problems)
+    write_json(archive.to_dict(), args.out)
+    print(f"Exported {len(archive.messages)} messages from {len(archive.channels)} channel(s).", file=sys.stderr)
+    return 0
+
+
+def command_content_import(args: argparse.Namespace) -> int:
+    config = RuntimeConfig.from_env()
+    archive = load_content_archive(args.file)
+    problems = archive.validate()
+    if problems:
+        print("Content archive validation problems:", file=sys.stderr)
+        for problem in problems:
+            print(f"- {problem}", file=sys.stderr)
+    targets = _target_specs(args, config)
+    result = _content_batch_or_single_result(
+        args,
+        archive=archive,
+        targets=targets,
+        command="content-import",
+        validation_problems=problems,
+    )
+    write_json(result, args.plan_out)
+    action_count = result.get("action_count") or len(result.get("actions", []))
+    print(f"{'Applied' if args.apply else 'Planned'} {action_count} content action(s).", file=sys.stderr)
+    return 0
+
+
+def command_content_migrate(args: argparse.Namespace) -> int:
+    if getattr(args, "provider_from", "discord") != "discord":
+        raise ValueError("Content migrate currently supports --from discord through DiscordChatExporter JSON.")
+    if not args.discord_chat_export:
+        raise ValueError("Content migrate currently requires --discord-chat-export <file-or-folder>.")
+    config = RuntimeConfig.from_env()
+    archive = load_discord_chat_export(args.discord_chat_export)
+    problems = archive.validate()
+    if problems:
+        print("Content archive validation problems:", file=sys.stderr)
+        for problem in problems:
+            print(f"- {problem}", file=sys.stderr)
+    targets = _target_specs(args, config)
+    result = _content_batch_or_single_result(
+        args,
+        archive=archive,
+        targets=targets,
+        command="content-migrate",
+        source_provider="discord",
+        validation_problems=problems,
+    )
+    write_json(result, args.plan_out)
+    action_count = result.get("action_count") or len(result.get("actions", []))
+    print(f"{'Applied' if args.apply else 'Planned'} {action_count} content migration action(s).", file=sys.stderr)
+    return 0
+
+
 def command_platforms(args: argparse.Namespace) -> int:
     if args.check:
         checks = runtime_check()
@@ -587,6 +878,74 @@ def command_platforms(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_content_target_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--to",
+        dest="provider_to",
+        action="append",
+        required=True,
+        help="target provider; repeat or comma-separate for multiple targets",
+    )
+    parser.add_argument(
+        "--target-id",
+        action="append",
+        help="existing target guild/server/space id; repeat as provider=value for provider-specific targets",
+    )
+    parser.add_argument(
+        "--target-name",
+        action="append",
+        help="target community name; repeat as provider=value for provider-specific targets",
+    )
+    parser.add_argument(
+        "--channel-map",
+        help="JSON mapping from content archive channel ids to target channel ids; can also be a GuildBridge plan result",
+    )
+    parser.add_argument("--plan-out", default="-", help="write content plan/result JSON path or - for stdout")
+    parser.add_argument("--plan-in", help="reviewed dry-run content plan required before --apply writes are allowed")
+    parser.add_argument("--apply", action="store_true", help="perform content writes after a reviewed dry-run plan")
+    parser.add_argument(
+        "--confirm-apply",
+        help=f"must be set to {APPLY_CONFIRMATION!r} when --apply is used",
+    )
+    parser.add_argument(
+        "--force-invalid-archive",
+        action="store_true",
+        help="allow --apply despite content archive validation problems after manual review",
+    )
+    parser.add_argument("--message-limit", type=int, help="limit the number of messages planned or imported")
+    parser.add_argument("--no-authors", action="store_true", help="do not include archived author names in formatted messages")
+    parser.add_argument("--no-attachments", action="store_true", help="do not include attachment references in formatted messages")
+    parser.add_argument("--no-reactions", action="store_true", help="do not include reaction summaries in formatted messages")
+    parser.add_argument("--no-embeds", action="store_true", help="do not include embed summaries in formatted messages")
+    parser.add_argument("--no-stickers", action="store_true", help="do not include sticker references in formatted messages")
+    parser.add_argument("--no-polls", action="store_true", help="do not include poll summaries in formatted messages")
+    parser.add_argument("--no-threads", action="store_true", help="do not include thread/forum references in formatted messages")
+    parser.add_argument("--no-custom-emoji", action="store_true", help="do not include custom emoji summaries in formatted messages")
+    parser.add_argument(
+        "--native-content",
+        action="store_true",
+        help="use provider-native content features where supported instead of text-only fallbacks",
+    )
+    parser.add_argument("--native-attachments", action="store_true", help="upload local attachments natively where supported")
+    parser.add_argument("--native-embeds", action="store_true", help="send embeds natively where supported")
+    parser.add_argument("--native-replies", action="store_true", help="link replies natively where supported")
+    parser.add_argument("--native-reactions", action="store_true", help="apply reactions natively where supported")
+    parser.add_argument("--native-pins", action="store_true", help="pin migrated messages natively where supported")
+    parser.add_argument("--native-custom-emoji", action="store_true", help="create custom emoji natively where supported")
+    parser.add_argument("--native-masquerade", action="store_true", help="send messages with original author display names where supported")
+    parser.add_argument("--native-stickers", action="store_true", help="upload local sticker media as native attachments where supported")
+    parser.add_argument("--content-journal-out", help="write a content apply journal JSON file")
+    parser.add_argument("--resume-content-journal", help="resume content apply safety from a previous content apply journal")
+    parser.add_argument("--content-dead-letter-out", help="write failed content actions to this JSON file")
+    parser.add_argument("--content-report-out", help="write a content migration report JSON file")
+    parser.add_argument("--content-lock-file", help="lock file used to prevent concurrent content writes to the same target")
+    parser.add_argument("--content-incremental-state", help="JSON state file used to skip content actions already applied earlier")
+    parser.add_argument("--content-incremental", action="store_true", help="skip actions present in --content-incremental-state")
+    parser.add_argument("--content-continue-on-error", action="store_true", help="continue content import after failed messages and write dead letters")
+    parser.add_argument("--content-max-failures", type=int, default=1, help="stop after this many consecutive content failures")
+    parser.add_argument("--content-parallel-sends", type=int, default=1, help="reserved parallelism setting; live writes remain ordered")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="guildbridge",
@@ -606,6 +965,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--template", help="provider template URL/code, currently useful for Discord")
     p_export.add_argument("--out", default="community.template.json", help="output template JSON path or - for stdout")
     p_export.add_argument("--include-user-overwrites", action="store_true", help="request user/member overwrite diagnostics; unsafe user targets are still dropped")
+    p_export.add_argument("--include-content", action="store_true", help="opt into private content migration features when implemented")
+    p_export.add_argument(
+        "--content-feature",
+        action="append",
+        choices=CONTENT_FEATURES,
+        help="limit optional content migration to one feature; repeat for multiple features",
+    )
     p_export.set_defaults(func=command_export)
 
     p_import = sub.add_parser("import", help="import a neutral JSON template into a provider")
@@ -643,6 +1009,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--resume-journal", help="validate this apply run against a failed or interrupted journal before writing")
     p_import.add_argument("--audit-log-reason", help="optional audit-log reason where supported")
     p_import.add_argument("--redact", action="store_true", help="redact template before import")
+    p_import.add_argument("--include-content", action="store_true", help="opt into private content migration features when implemented")
+    p_import.add_argument(
+        "--content-feature",
+        action="append",
+        choices=CONTENT_FEATURES,
+        help="limit optional content migration to one feature; repeat for multiple features",
+    )
     p_import.set_defaults(func=command_import)
 
     p_migrate = sub.add_parser("migrate", help="export then import in one command")
@@ -658,6 +1031,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("--journal-out", help="write an apply journal JSON file; defaults under .guildbridge/journals when --apply is used")
     p_migrate.add_argument("--resume-journal", help="validate this apply run against a failed or interrupted journal before writing")
     p_migrate.add_argument("--include-user-overwrites", action="store_true", help="request user/member overwrite diagnostics; unsafe user targets are still dropped")
+    p_migrate.add_argument("--include-content", action="store_true", help="opt into private content migration features when implemented")
+    p_migrate.add_argument(
+        "--content-feature",
+        action="append",
+        choices=CONTENT_FEATURES,
+        help="limit optional content migration to one feature; repeat for multiple features",
+    )
     p_migrate.add_argument("--redact", action="store_true", default=True, help="redact template before import; enabled by default")
     p_migrate.add_argument("--apply", action="store_true", help="perform write actions; by default this only prints a dry-run plan")
     p_migrate.add_argument(
@@ -683,6 +1063,50 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_providers = sub.add_parser("providers", help="list providers and aliases")
     p_providers.set_defaults(func=command_providers)
+
+    p_content = sub.add_parser("content-features", help="show optional content migration feature coverage")
+    p_content.add_argument("--format", choices=("text", "json"), default="text", help="output format")
+    p_content.add_argument("--out", default="-", help="JSON output path when --format json is used")
+    p_content.set_defaults(func=command_content_features)
+
+    p_content_export = sub.add_parser(
+        "content-export",
+        help="convert an offline provider content export into a GuildBridge content archive",
+    )
+    p_content_export.add_argument(
+        "--discord-chat-export",
+        required=True,
+        help="DiscordChatExporter JSON file or folder to convert",
+    )
+    p_content_export.add_argument("--out", default="community.content.json", help="output content archive JSON path or - for stdout")
+    p_content_export.set_defaults(func=command_content_export)
+
+    p_content_import = sub.add_parser(
+        "content-import",
+        help="plan or apply a GuildBridge content archive into one or more providers",
+    )
+    p_content_import.add_argument("--file", required=True, help="GuildBridge content archive JSON file")
+    _add_content_target_args(p_content_import)
+    p_content_import.set_defaults(func=command_content_import)
+
+    p_content_migrate = sub.add_parser(
+        "content-migrate",
+        help="convert an offline source export and plan or apply it into one or more providers",
+    )
+    p_content_migrate.add_argument(
+        "--from",
+        dest="provider_from",
+        choices=("discord",),
+        default="discord",
+        help="offline content source provider; currently discord through DiscordChatExporter JSON",
+    )
+    p_content_migrate.add_argument(
+        "--discord-chat-export",
+        required=True,
+        help="DiscordChatExporter JSON file or folder to migrate",
+    )
+    _add_content_target_args(p_content_migrate)
+    p_content_migrate.set_defaults(func=command_content_migrate)
 
     p_platforms = sub.add_parser("platforms", help="list supported operating systems")
     p_platforms.add_argument("--check", action="store_true", help="check the current runtime for GuildBridge support")
