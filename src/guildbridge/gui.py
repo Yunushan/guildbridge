@@ -501,7 +501,7 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Button(
             actions,
             text="Dry-run Check",
-            command=lambda: self._run(
+            command=lambda: self._run_dry_run(
                 build_import_args(
                     self._selected_providers(provider_to),
                     file=file.get(),
@@ -515,7 +515,8 @@ class GuildBridgeGUI(ttk.Frame):
                     redact=redact.get(),
                     apply=False,
                     force_invalid_template=force_invalid_template.get(),
-                )
+                ),
+                plan_out=plan_out.get(),
             ),
         ).grid(row=0, column=0, sticky="e", padx=(0, 8))
         ttk.Button(
@@ -595,7 +596,7 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Button(
             actions,
             text="Dry-run Check",
-            command=lambda: self._run(
+            command=lambda: self._run_dry_run(
                 build_migrate_args(
                     provider_from.get(),
                     self._selected_providers(provider_to),
@@ -613,7 +614,8 @@ class GuildBridgeGUI(ttk.Frame):
                     redact=redact.get(),
                     apply=False,
                     force_invalid_template=force_invalid_template.get(),
-                )
+                ),
+                plan_out=plan_out.get(),
             ),
         ).grid(row=0, column=0, sticky="e", padx=(0, 8))
         ttk.Button(
@@ -730,6 +732,16 @@ class GuildBridgeGUI(ttk.Frame):
         worker = threading.Thread(target=self._worker, args=(args,), daemon=True)
         worker.start()
         self.after(100, self._poll)
+
+    def _run_dry_run(self, args: list[str], *, plan_out: str) -> None:
+        if not plan_out.strip() or plan_out.strip() == "-":
+            messagebox.showerror(
+                "Dry-run Check",
+                "Dry-run Check requires a Plan/result JSON file path. This keeps generated plans out of the output panel.",
+                parent=self.master,
+            )
+            return
+        self._run(args)
 
     def _confirm_apply(self, reviewed_plan: str, plan_out: str, prompt: ApplyPrompt | None) -> bool:
         plan_error = apply_confirmation_error(

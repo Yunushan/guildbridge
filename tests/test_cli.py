@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from guildbridge.cli import main
+from guildbridge.cli import main, write_json
 from guildbridge.models import CommunityTemplate, Role
 from guildbridge.safety import APPLY_CONFIRMATION, validate_apply_safety
 
@@ -35,6 +35,12 @@ def test_redact_command(tmp_path: Path) -> None:
     assert rc == 0
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["privacy"]["stores_tokens"] is False
+
+
+def test_write_json_stdout_handles_emoji(capsys) -> None:  # type: ignore[no-untyped-def]
+    write_json({"name": "Stats \U0001f4ca"}, "-")
+
+    assert "Stats \U0001f4ca" in capsys.readouterr().out
 
 
 def test_apply_requires_confirmation(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]

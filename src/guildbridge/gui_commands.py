@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -192,6 +193,13 @@ def subprocess_creationflags() -> int:
     return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
+def subprocess_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 def _text(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -214,9 +222,12 @@ def run_cli_args(
             cwd=str(cwd) if cwd is not None else None,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             check=False,
             creationflags=subprocess_creationflags(),
+            env=subprocess_environment(),
         )
         duration = time.monotonic() - started
         return CommandResult(

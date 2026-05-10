@@ -17,6 +17,7 @@ from guildbridge.gui_commands import (
     run_cli_args,
     subprocess_command,
     subprocess_creationflags,
+    subprocess_environment,
 )
 
 
@@ -154,6 +155,13 @@ def test_subprocess_creationflags_hide_windows_console() -> None:
     assert subprocess_creationflags() == expected
 
 
+def test_subprocess_environment_forces_utf8() -> None:
+    env = subprocess_environment()
+
+    assert env["PYTHONUTF8"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8"
+
+
 def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
@@ -175,9 +183,12 @@ def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
         "cwd": ".",
         "capture_output": True,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
         "timeout": 5,
         "check": False,
         "creationflags": subprocess_creationflags(),
+        "env": subprocess_environment(),
     }
 
 

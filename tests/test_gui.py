@@ -13,6 +13,8 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "Force invalid template after review" in source
     assert "Dry-run Check" in source
     assert "Actual Run" in source
+    assert "_run_dry_run" in source
+    assert "Dry-run Check requires a Plan/result JSON file path" in source
     assert "messagebox.askyesno" in source
     assert "_reviewed_plan_preview" in source
     assert "apply_confirmation_error" in source

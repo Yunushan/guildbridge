@@ -51,10 +51,30 @@ def load_template(path: str | Path) -> CommunityTemplate:
 def write_json(data: dict[str, Any], path: str | None) -> None:
     text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
     if not path or path == "-":
-        print(text)
+        write_stdout_utf8(text)
         return
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(text, encoding="utf-8")
+
+
+def write_stdout_utf8(text: str) -> None:
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(text)
+        return
+    buffer.write(text.encode("utf-8"))
+    buffer.flush()
+
+
+def configure_stdio_utf8() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 
 def prepare_apply_journal(
@@ -678,6 +698,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio_utf8()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.version:
