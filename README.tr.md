@@ -45,7 +45,7 @@ Normal yapi sablonlarinda bilerek **disa aktarilmayan** veriler:
 
 ### Opsiyonel icerik migrasyonu
 
-GuildBridge artik mesajlar, yazarlar, zaman damgalari, ekler, emoji, sticker, pin, yanit, reaction, embed, anket, thread, forum postlari, sunucu banner'i, rol renkleri, kanal izinleri, NSFW isaretleri, offline export, pre-creation review, pause/resume, incremental migration, dead-letter retry, message splitting, raporlar, kilitler ve circuit breaker gibi ozellikler icin acik bir opsiyonel icerik migrasyonu yoluna sahiptir. Parallel sends planlanan bir opsiyon olarak takip edilir; canli yazmalar su an sirali kalir.
+GuildBridge artik mesajlar, yazarlar, zaman damgalari, ekler, emoji, sticker, pin, yanit, reaction, embed, anket, thread, forum postlari, sunucu banner'i, rol renkleri, kanal izinleri, NSFW isaretleri, offline export, pre-creation review, pause/resume, incremental migration, dead-letter retry, message splitting, raporlar, kilitler, circuit breaker ve kanal-sirali parallel sends gibi ozellikler icin acik bir opsiyonel icerik migrasyonu yoluna sahiptir.
 
 Bu icerik yolu varsayilan olarak **kapalidir** ve gizlilik guvenli yapi sablonlarindan ayridir. Normal `export`, `import` ve `migrate` komutlari yalnizca yapi tasir. Icerik ayri bir tarafsiz arsiv ile islenir:
 
@@ -56,7 +56,29 @@ guildbridge content-export --discord-chat-export ./DiscordChatExporter --out com
 guildbridge content-import --file community.content.json --to stoat,fluxer --plan-out content.plan.json
 ```
 
-Ilk desteklenen kaynak offline DiscordChatExporter JSON'dir. GuildBridge bunu `guildbridge.content.v1` formatina cevirir, ham kaynak ID'lerini hash'ler ve mesaj metni, yazarlar, zaman damgalari, ek URL/local path bilgileri, embed'ler, yanitlar, pin'ler, reaction'lar, custom emoji isaretleri, sticker'lar, anketler, thread/forum metadata'si ve sunucu banner/icon URL'lerini private arsivde korur. CLI, masaustu GUI Content sekmesi veya web GUI Content paneli uzerinden her hedef saglayici icin content import dry-run plani uretebilir. Canli formatli mesaj yazma Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost ve Zulip icin desteklenir; bunun icin incelenmis plan, hedef kanal eslemesi ve provider token'i gerekir. Mumble metin gecmisi import yuzeyi olmadigi icin yapi/ses kanali tarafinda kalir.
+Ilk desteklenen kaynak DiscordChatExporter JSON'dir. GuildBridge mevcut bir offline export'u cevirebilir veya Discord guild/server ID'si ve token environment variable verdiginizde local kurulu DiscordChatExporter CLI'yi calistirabilir:
+
+```bash
+set DISCORD_TOKEN=your-discord-token
+guildbridge content-export \
+  --source-id 123456789012345678 \
+  --discord-chat-exporter-bin DiscordChatExporter.Cli \
+  --discord-export-out .guildbridge/content/discord-chat-exporter/server \
+  --out community.content.json
+```
+
+DiscordChatExporter kurulu degilse, `.guildbridge/tools/discord-chat-exporter` altinda cache'lenen yonetilen indirmeyi acikca secebilirsiniz:
+
+```bash
+guildbridge content-export \
+  --source-id 123456789012345678 \
+  --download-discord-chat-exporter \
+  --discord-chat-exporter-version latest \
+  --discord-export-out .guildbridge/content/discord-chat-exporter/server \
+  --out community.content.json
+```
+
+GuildBridge remote exporter binary'lerini sadece `--download-discord-chat-exporter` verildiginde indirir ve Discord token'larini template, archive, plan, journal veya report dosyalarina yazmaz. DiscordChatExporter cikisini `guildbridge.content.v1` formatina cevirir, ham kaynak ID'lerini hash'ler ve mesaj metni, yazarlar, zaman damgalari, ek URL/local path bilgileri, embed'ler, yanitlar, pin'ler, reaction'lar, custom emoji isaretleri, sticker'lar, anketler, thread/forum metadata'si, sunucu banner/icon URL'leri, role color metadata'si, kanal permission metadata'si ve NSFW kanal flag'lerini private arsivde veya companion structure flow'da korur. CLI, masaustu GUI Content sekmesi veya web GUI Content paneli uzerinden her hedef saglayici icin content import dry-run plani uretebilir. Canli formatli mesaj yazma Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost ve Zulip icin desteklenir; bunun icin incelenmis plan, hedef kanal eslemesi ve provider token'i gerekir. `--content-parallel-sends N` birden fazla kaynak kanali ayni anda gonderir, ancak her kanal icindeki mesaj sirasini korur. `--content-thread-mode reference|merge|channel|markdown`, thread/forum mesajlarini referans olarak tutar, parent kanal gecmisine birlestirir, eslenen thread kanallarina yollar veya local markdown thread arsivleri yazar. Mumble metin gecmisi import yuzeyi olmadigi icin yapi/ses kanali tarafinda kalir.
 
 Apply tarafindaki content import islemleri journal, rapor, lock dosyasi, incremental state ve dead-letter dosyasi yazabilir:
 
@@ -80,7 +102,9 @@ guildbridge content-import \
   --content-incremental
 ```
 
-Ekler, embed'ler, yanitlar, reaction'lar, pin'ler, sticker'lar, anketler, custom emoji, yazarlar, zaman damgalari ve thread/forum referanslari varsayilan olarak formatli metin halinde korunur. Provider-native content davranisi `--native-content` ile topluca veya `--native-attachments`, `--native-embeds`, `--native-replies`, `--native-reactions`, `--native-pins`, `--native-custom-emoji`, `--native-masquerade` ve `--native-stickers` ile tek tek acilabilir. Stoat/Revolt Ferry tarzinda Autumn upload, native embed, yanit, reaction, pin, custom emoji ve masquerade kullanir. Discord, Spacebar, Daccord ve Fluxer desteklenen yerlerde Discord-uyumlu native mesaj route'larini kullanir. Matrix local media upload ile native yanit/reaction/pin uygulayabilir. Mattermost ve Rocket.Chat local dosya upload edip native yanit/reaction/pin uygulayabilir. Zulip local dosyalari mesaj linki olarak upload edebilir ve reaction uygulayabilir. Native upload icin content arsivinde local media dosyalari gerekir; remote CDN URL'leri otomatik indirilmez. Formatli mesajlardan opsiyonel fidelity alanlarini cikarmak icin `--no-attachments`, `--no-embeds`, `--no-reactions`, `--no-stickers`, `--no-polls`, `--no-threads` veya `--no-custom-emoji` kullanin. GuildBridge guvensiz yapi-sablonu icerik flag'lerini reddeder.
+Discord'dan Stoat'a tek tik Ferry tarzi bir akis istiyorsaniz `--ferry-parity` kullanin. Bu ayar native content'i, cache'lenen remote media indirmelerini, thread-channel modunu, uc paralel kanal gonderimini, incremental state'i, raporlari, dead-letter dosyalarini, lock dosyalarini ve continue-on-error varsayilanlarini `.guildbridge/content/ferry-parity/<provider>/<target>/` altinda acar.
+
+Ekler, embed'ler, yanitlar, reaction'lar, pin'ler, sticker'lar, anketler, custom emoji, yazarlar, zaman damgalari ve thread/forum referanslari varsayilan olarak formatli metin halinde korunur. Provider-native content davranisi `--native-content` ile topluca veya `--native-attachments`, `--native-embeds`, `--native-replies`, `--native-reactions`, `--native-pins`, `--native-custom-emoji`, `--native-masquerade` ve `--native-stickers` ile tek tek acilabilir. Stoat/Revolt Ferry tarzinda Autumn upload, native embed, yanit, reaction, pin, custom emoji, local arsiv path'lerinden veya indirilen sunucu asset URL'lerinden sunucu icon/banner upload ve masquerade kullanir. Discord ve Spacebar local veya indirilen server icon/banner asset'lerini Discord-uyumlu guild patch route'lariyla uygulayabilir. Discord, Spacebar, Daccord ve Fluxer desteklenen yerlerde Discord-uyumlu native mesaj route'larini kullanir. Matrix local veya indirilen media upload ile native yanit/reaction/pin uygulayabilir. Mattermost ve Rocket.Chat local veya indirilen dosyalari upload edip native yanit/reaction/pin uygulayabilir. Zulip local veya indirilen dosyalari mesaj linki olarak upload edebilir ve reaction uygulayabilir. Remote CDN/media URL'leri sadece `--download-remote-assets` veya `--ferry-parity` aciksa indirilir; cache dosyalari `.guildbridge/content/remote-assets/` altinda tutulur ve git'e alinmamalidir. JSON apply report dosyalarina ek olarak fidelity score ve feature count iceren markdown migration report yazilir. Formatli mesajlardan opsiyonel fidelity alanlarini cikarmak icin `--no-attachments`, `--no-embeds`, `--no-reactions`, `--no-stickers`, `--no-polls`, `--no-threads` veya `--no-custom-emoji` kullanin. GuildBridge guvensiz yapi-sablonu icerik flag'lerini reddeder.
 
 ## En iyi proje adi
 

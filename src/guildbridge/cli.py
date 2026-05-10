@@ -6,20 +6,25 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.content import (
     CONTENT_FEATURES,
     ContentArchive,
     ContentImportOptions,
+    DiscordChatExporterBootstrapOptions,
+    DiscordChatExporterOptions,
+    ThreadMode,
     content_archive_fingerprint,
     content_capabilities_document,
     content_capabilities_table,
     content_not_implemented_message,
+    download_discord_chat_exporter,
     load_channel_map,
     load_content_archive,
     load_discord_chat_export,
+    run_discord_chat_exporter,
     selected_content_features,
 )
 from guildbridge.diagnostics import format_error_report
@@ -57,6 +62,15 @@ class TargetSpec:
     provider: Provider
     target_id: str | None
     target_name: str | None
+
+
+def _safe_cli_path_part(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-") or "target"
+
+
+def _ferry_artifact_path(target: TargetSpec, filename: str) -> str:
+    target_part = _safe_cli_path_part(target.target_id or target.target_name or target.provider.name)
+    return str(Path(".guildbridge") / "content" / "ferry-parity" / target.provider.name / target_part / filename)
 
 
 def load_template(path: str | Path) -> CommunityTemplate:
@@ -654,6 +668,15 @@ def _content_options_from_args(
     channel_map: dict[str, str],
     apply: bool,
 ) -> ContentImportOptions:
+    ferry_parity = bool(getattr(args, "ferry_parity", False))
+    raw_parallel_sends = int(getattr(args, "content_parallel_sends", 1) or 1)
+    parallel_sends = 3 if ferry_parity and raw_parallel_sends == 1 else raw_parallel_sends
+    raw_thread_mode = str(getattr(args, "content_thread_mode", "reference") or "reference")
+    if raw_thread_mode not in {"reference", "merge", "channel", "markdown"}:
+        raise ValueError("content_thread_mode must be one of: reference, merge, channel, markdown")
+    thread_mode = cast(ThreadMode, raw_thread_mode)
+    if ferry_parity and thread_mode == "reference":
+        thread_mode = "channel"
     return ContentImportOptions(
         apply=apply,
         target_id=target.target_id,
@@ -675,18 +698,24 @@ def _content_options_from_args(
         native_custom_emoji=bool(getattr(args, "native_custom_emoji", False)),
         native_masquerade=bool(getattr(args, "native_masquerade", False)),
         native_stickers=bool(getattr(args, "native_stickers", False)),
-        native_content=bool(getattr(args, "native_content", False)),
+        native_content=bool(getattr(args, "native_content", False) or ferry_parity),
         message_limit=getattr(args, "message_limit", None),
-        journal_path=getattr(args, "content_journal_out", None),
+        journal_path=getattr(args, "content_journal_out", None) or (_ferry_artifact_path(target, "content-journal.json") if ferry_parity else None),
         resume_journal=getattr(args, "resume_content_journal", None),
-        dead_letter_path=getattr(args, "content_dead_letter_out", None),
-        report_path=getattr(args, "content_report_out", None),
-        lock_path=getattr(args, "content_lock_file", None),
-        incremental_state_path=getattr(args, "content_incremental_state", None),
-        incremental=bool(getattr(args, "content_incremental", False)),
-        continue_on_error=bool(getattr(args, "content_continue_on_error", False)),
+        dead_letter_path=getattr(args, "content_dead_letter_out", None) or (_ferry_artifact_path(target, "dead-letter.json") if ferry_parity else None),
+        report_path=getattr(args, "content_report_out", None) or (_ferry_artifact_path(target, "migration-report.json") if ferry_parity else None),
+        lock_path=getattr(args, "content_lock_file", None) or (_ferry_artifact_path(target, "content.lock") if ferry_parity else None),
+        incremental_state_path=getattr(args, "content_incremental_state", None) or (
+            _ferry_artifact_path(target, "incremental-state.json") if ferry_parity else None
+        ),
+        incremental=bool(getattr(args, "content_incremental", False) or ferry_parity),
+        continue_on_error=bool(getattr(args, "content_continue_on_error", False) or ferry_parity),
         max_failures=int(getattr(args, "content_max_failures", 1) or 1),
-        parallel_sends=int(getattr(args, "content_parallel_sends", 1) or 1),
+        parallel_sends=parallel_sends,
+        thread_mode=thread_mode,
+        thread_archive_dir=getattr(args, "content_thread_archive_dir", None)
+        or (_ferry_artifact_path(target, "thread-archives") if ferry_parity else None),
+        download_remote_assets=bool(getattr(args, "download_remote_assets", False) or ferry_parity),
     )
 
 
@@ -791,10 +820,48 @@ def _content_batch_or_single_result(
     )
 
 
+def _resolve_discord_chat_export_path(args: argparse.Namespace) -> str | Path:
+    discord_chat_export = getattr(args, "discord_chat_export", None)
+    exporter_bin = getattr(args, "discord_chat_exporter_bin", None)
+    download_exporter = bool(getattr(args, "download_discord_chat_exporter", False))
+    if discord_chat_export:
+        if exporter_bin or download_exporter:
+            raise ValueError(
+                "Use --discord-chat-export for an existing export, or use DiscordChatExporter execution options, not both."
+            )
+        return discord_chat_export
+    if download_exporter:
+        if exporter_bin:
+            raise ValueError("Use either --discord-chat-exporter-bin or --download-discord-chat-exporter, not both.")
+        exporter_bin = download_discord_chat_exporter(
+            DiscordChatExporterBootstrapOptions(
+                version=getattr(args, "discord_chat_exporter_version", "latest") or "latest",
+                install_dir=getattr(args, "discord_chat_exporter_install_dir", None),
+                timeout_seconds=int(getattr(args, "discord_export_timeout", 3600) or 3600),
+            )
+        )
+    if not exporter_bin:
+        raise ValueError(
+            "Content export requires --discord-chat-export <file-or-folder> or "
+            "--discord-chat-exporter-bin with --source-id. Use --download-discord-chat-exporter to fetch a managed DCE CLI."
+        )
+    source_id = (getattr(args, "source_id", None) or "").strip()
+    if not source_id:
+        raise ValueError("--discord-chat-exporter-bin requires --source-id with the Discord guild/server id.")
+    return run_discord_chat_exporter(
+        DiscordChatExporterOptions(
+            exporter_bin=exporter_bin,
+            guild_id=source_id,
+            output_path=getattr(args, "discord_export_out", None),
+            token_env=getattr(args, "discord_token_env", "DISCORD_TOKEN") or "DISCORD_TOKEN",
+            export_format=getattr(args, "discord_export_format", "Json") or "Json",
+            timeout_seconds=int(getattr(args, "discord_export_timeout", 3600) or 3600),
+        )
+    )
+
+
 def command_content_export(args: argparse.Namespace) -> int:
-    if not args.discord_chat_export:
-        raise ValueError("Content export currently requires --discord-chat-export <file-or-folder>.")
-    archive = load_discord_chat_export(args.discord_chat_export)
+    archive = load_discord_chat_export(_resolve_discord_chat_export_path(args))
     problems = archive.validate()
     if problems:
         archive.warnings.extend(problems)
@@ -828,10 +895,8 @@ def command_content_import(args: argparse.Namespace) -> int:
 def command_content_migrate(args: argparse.Namespace) -> int:
     if getattr(args, "provider_from", "discord") != "discord":
         raise ValueError("Content migrate currently supports --from discord through DiscordChatExporter JSON.")
-    if not args.discord_chat_export:
-        raise ValueError("Content migrate currently requires --discord-chat-export <file-or-folder>.")
     config = RuntimeConfig.from_env()
-    archive = load_discord_chat_export(args.discord_chat_export)
+    archive = load_discord_chat_export(_resolve_discord_chat_export_path(args))
     problems = archive.validate()
     if problems:
         print("Content archive validation problems:", file=sys.stderr)
@@ -926,6 +991,19 @@ def _add_content_target_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="use provider-native content features where supported instead of text-only fallbacks",
     )
+    parser.add_argument(
+        "--ferry-parity",
+        action="store_true",
+        help=(
+            "enable Discord-stoat-ferry-style defaults: native content, remote media downloads, thread-channel mode, "
+            "parallel sends, incremental state, dead letters, reports, lock files, and continue-on-error"
+        ),
+    )
+    parser.add_argument(
+        "--download-remote-assets",
+        action="store_true",
+        help="download remote attachment/icon/banner URLs into .guildbridge before provider-native uploads",
+    )
     parser.add_argument("--native-attachments", action="store_true", help="upload local attachments natively where supported")
     parser.add_argument("--native-embeds", action="store_true", help="send embeds natively where supported")
     parser.add_argument("--native-replies", action="store_true", help="link replies natively where supported")
@@ -943,7 +1021,62 @@ def _add_content_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--content-incremental", action="store_true", help="skip actions present in --content-incremental-state")
     parser.add_argument("--content-continue-on-error", action="store_true", help="continue content import after failed messages and write dead letters")
     parser.add_argument("--content-max-failures", type=int, default=1, help="stop after this many consecutive content failures")
-    parser.add_argument("--content-parallel-sends", type=int, default=1, help="reserved parallelism setting; live writes remain ordered")
+    parser.add_argument(
+        "--content-parallel-sends",
+        type=int,
+        default=1,
+        help="send multiple source channels concurrently while preserving message order inside each channel",
+    )
+    parser.add_argument(
+        "--content-thread-mode",
+        choices=("reference", "merge", "channel", "markdown"),
+        default="reference",
+        help=(
+            "how to handle thread/forum messages: reference keeps text references, merge folds them into the parent channel, "
+            "channel routes them through mapped thread ids, and markdown writes local thread archive files"
+        ),
+    )
+    parser.add_argument(
+        "--content-thread-archive-dir",
+        help="directory for local markdown thread/forum archives when --content-thread-mode markdown is used",
+    )
+
+
+def _add_discord_content_export_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--discord-chat-export",
+        help="existing DiscordChatExporter JSON file or folder to convert",
+    )
+    parser.add_argument("--source-id", help="Discord guild/server id when running DiscordChatExporter")
+    parser.add_argument(
+        "--discord-chat-exporter-bin",
+        help="path to a locally installed DiscordChatExporter.Cli executable to run before conversion",
+    )
+    parser.add_argument(
+        "--download-discord-chat-exporter",
+        action="store_true",
+        help="download and cache DiscordChatExporter.Cli for this platform before exporting; requires --source-id",
+    )
+    parser.add_argument(
+        "--discord-chat-exporter-version",
+        default="latest",
+        help="DiscordChatExporter release tag to download, or latest; default: latest",
+    )
+    parser.add_argument(
+        "--discord-chat-exporter-install-dir",
+        help="directory used for managed DiscordChatExporter downloads; default: .guildbridge/tools/discord-chat-exporter",
+    )
+    parser.add_argument(
+        "--discord-token-env",
+        default="DISCORD_TOKEN",
+        help="environment variable containing the Discord token for DiscordChatExporter; default: DISCORD_TOKEN",
+    )
+    parser.add_argument(
+        "--discord-export-out",
+        help="DiscordChatExporter JSON output file/folder; defaults under .guildbridge/content/discord-chat-exporter",
+    )
+    parser.add_argument("--discord-export-format", default="Json", help="DiscordChatExporter format argument; default: Json")
+    parser.add_argument("--discord-export-timeout", type=int, default=3600, help="DiscordChatExporter timeout in seconds")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1073,11 +1206,7 @@ def build_parser() -> argparse.ArgumentParser:
         "content-export",
         help="convert an offline provider content export into a GuildBridge content archive",
     )
-    p_content_export.add_argument(
-        "--discord-chat-export",
-        required=True,
-        help="DiscordChatExporter JSON file or folder to convert",
-    )
+    _add_discord_content_export_args(p_content_export)
     p_content_export.add_argument("--out", default="community.content.json", help="output content archive JSON path or - for stdout")
     p_content_export.set_defaults(func=command_content_export)
 
@@ -1100,11 +1229,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="discord",
         help="offline content source provider; currently discord through DiscordChatExporter JSON",
     )
-    p_content_migrate.add_argument(
-        "--discord-chat-export",
-        required=True,
-        help="DiscordChatExporter JSON file or folder to migrate",
-    )
+    _add_discord_content_export_args(p_content_migrate)
     _add_content_target_args(p_content_migrate)
     p_content_migrate.set_defaults(func=command_content_migrate)
 

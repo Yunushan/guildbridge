@@ -16,6 +16,7 @@ from guildbridge.content import (
     apply_content_actions,
     content_text_from_action,
     dry_run_content_import,
+    resolve_content_asset_path,
 )
 from guildbridge.http import HttpClient, HttpError, sanitize_text
 from guildbridge.models import (
@@ -208,20 +209,12 @@ class MatrixProvider(Provider):
         return require_response_id(uploaded, "Matrix media upload", "content_uri", "uri", "url")
 
     def _local_content_path(self, item: object, *, label: str) -> Path | None:
-        if not isinstance(item, dict):
-            return None
-        raw_path = item.get("local_path")
-        metadata = item.get("metadata")
-        if not raw_path and isinstance(metadata, dict):
-            raw_path = metadata.get("local_path") or metadata.get("source_path")
-        if not raw_path:
-            self._content_native_warnings.append(f"Native {label} upload skipped; no local file path was available.")
-            return None
-        path = Path(str(raw_path)).expanduser()
-        if not path.exists() or not path.is_file():
-            self._content_native_warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
-            return None
-        return path
+        return resolve_content_asset_path(
+            item,
+            label=label,
+            allow_remote_download=self._content_options.download_remote_assets,
+            warnings=self._content_native_warnings,
+        )
 
     def _apply_native_reactions(self, room_id: str, event_id: str, payload: dict[str, Any]) -> None:
         reactions = payload.get("reactions")

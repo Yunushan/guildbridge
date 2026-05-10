@@ -45,7 +45,7 @@ Normal structure templates intentionally do **not** export:
 
 ### Optional content migration
 
-GuildBridge now has an explicit optional content-migration path for features such as messages, authors, timestamps, attachments, emoji, stickers, pins, replies, reactions, embeds, polls, threads, forum posts, server banners, role colors, channel permissions, NSFW flags, offline exports, pre-creation review, pause/resume, incremental migration, dead-letter retry, message splitting, reports, locks, and circuit breakers. Parallel sends are tracked as a planned option; live writes currently stay ordered.
+GuildBridge now has an explicit optional content-migration path for features such as messages, authors, timestamps, attachments, emoji, stickers, pins, replies, reactions, embeds, polls, threads, forum posts, server banners, role colors, channel permissions, NSFW flags, offline exports, pre-creation review, pause/resume, incremental migration, dead-letter retry, message splitting, reports, locks, circuit breakers, and channel-ordered parallel sends.
 
 This content path is **off by default** and is separate from privacy-safe structure templates. Normal `export`, `import`, and `migrate` commands stay structure-only. Content is handled through a separate neutral archive:
 
@@ -56,7 +56,29 @@ guildbridge content-export --discord-chat-export ./DiscordChatExporter --out com
 guildbridge content-import --file community.content.json --to stoat,fluxer --plan-out content.plan.json
 ```
 
-The first supported source is offline DiscordChatExporter JSON. GuildBridge converts it into `guildbridge.content.v1`, hashes raw source IDs, and preserves message text, authors, timestamps, attachment URLs/local paths, embeds, replies, pins, reactions, custom emoji markers, stickers, polls, thread/forum metadata, and server banner/icon URLs in the private archive. It can dry-run a content import plan for every target provider from the CLI, desktop GUI Content tab, or web GUI Content panel. Live formatted-message writes are supported for Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost, and Zulip when you provide a reviewed plan, a target channel map, and provider tokens. Mumble remains structure/voice-channel only because it has no native text-history import surface.
+The first supported source is DiscordChatExporter JSON. GuildBridge can convert an existing offline export, or run a locally installed DiscordChatExporter CLI for you when you provide a Discord guild/server ID and a token environment variable:
+
+```bash
+set DISCORD_TOKEN=your-discord-token
+guildbridge content-export \
+  --source-id 123456789012345678 \
+  --discord-chat-exporter-bin DiscordChatExporter.Cli \
+  --discord-export-out .guildbridge/content/discord-chat-exporter/server \
+  --out community.content.json
+```
+
+If you do not already have DiscordChatExporter, you can opt into a managed download that is cached under `.guildbridge/tools/discord-chat-exporter`:
+
+```bash
+guildbridge content-export \
+  --source-id 123456789012345678 \
+  --download-discord-chat-exporter \
+  --discord-chat-exporter-version latest \
+  --discord-export-out .guildbridge/content/discord-chat-exporter/server \
+  --out community.content.json
+```
+
+GuildBridge only downloads remote exporter binaries when `--download-discord-chat-exporter` is set and does not store Discord tokens in templates, archives, plans, journals, or reports. It converts DiscordChatExporter output into `guildbridge.content.v1`, hashes raw source IDs, and preserves message text, authors, timestamps, attachment URLs/local paths, embeds, replies, pins, reactions, custom emoji markers, stickers, polls, thread/forum metadata, server banner/icon URLs, role-color metadata, channel permission metadata, and NSFW channel flags in the private archive or companion structure flow. It can dry-run a content import plan for every target provider from the CLI, desktop GUI Content tab, or web GUI Content panel. Live formatted-message writes are supported for Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost, and Zulip when you provide a reviewed plan, a target channel map, and provider tokens. `--content-parallel-sends N` sends multiple source channels concurrently while preserving message order within each channel. `--content-thread-mode reference|merge|channel|markdown` controls whether thread/forum messages stay as references, merge into parent-channel history, route to mapped thread channels, or write local markdown thread archives. Mumble remains structure/voice-channel only because it has no native text-history import surface.
 
 Apply-side content imports can write journals, reports, lock files, incremental state, and dead-letter files:
 
@@ -80,7 +102,9 @@ guildbridge content-import \
   --content-incremental
 ```
 
-Attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, authors, timestamps, and thread/forum references are preserved as formatted text by default. Provider-native content behavior is opt-in with `--native-content` or narrower flags such as `--native-attachments`, `--native-embeds`, `--native-replies`, `--native-reactions`, `--native-pins`, `--native-custom-emoji`, `--native-masquerade`, and `--native-stickers`. Stoat/Revolt uses Ferry-style Autumn uploads plus native embeds, replies, reactions, pins, custom emoji, and masquerade. Discord, Spacebar, Daccord, and Fluxer use Discord-compatible native message routes where supported. Matrix can upload local media and apply replies/reactions/pins. Mattermost and Rocket.Chat can upload local files and apply native replies/reactions/pins. Zulip can upload local files as message links and apply reactions. Native uploads require local media files in the content archive; remote CDN URLs are not downloaded automatically. Use `--no-attachments`, `--no-embeds`, `--no-reactions`, `--no-stickers`, `--no-polls`, `--no-threads`, or `--no-custom-emoji` to omit optional fidelity items from formatted messages. GuildBridge refuses unsafe structure-template content flags.
+For Discord-to-Stoat migrations that should behave like a one-click Ferry-style run, use `--ferry-parity`. It enables native content, cached remote media downloads, thread-channel mode, three parallel channel sends, incremental state, reports, dead letters, lock files, and continue-on-error defaults under `.guildbridge/content/ferry-parity/<provider>/<target>/`.
+
+Attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, authors, timestamps, and thread/forum references are preserved as formatted text by default. Provider-native content behavior is opt-in with `--native-content` or narrower flags such as `--native-attachments`, `--native-embeds`, `--native-replies`, `--native-reactions`, `--native-pins`, `--native-custom-emoji`, `--native-masquerade`, and `--native-stickers`. Stoat/Revolt uses Ferry-style Autumn uploads plus native embeds, replies, reactions, pins, custom emoji, server icon/banner uploads from local archive paths or downloaded server asset URLs, and masquerade. Discord and Spacebar can apply local or downloaded server icon/banner assets through Discord-compatible guild patch routes. Discord, Spacebar, Daccord, and Fluxer use Discord-compatible native message routes where supported. Matrix can upload local or downloaded media and apply replies/reactions/pins. Mattermost and Rocket.Chat can upload local or downloaded files and apply native replies/reactions/pins. Zulip can upload local or downloaded files as message links and apply reactions. Remote CDN/media URLs are downloaded only when `--download-remote-assets` or `--ferry-parity` is set; cached files live under `.guildbridge/content/remote-assets/`, which should remain untracked. JSON apply reports are accompanied by a markdown migration report with a fidelity score and feature counts. Use `--no-attachments`, `--no-embeds`, `--no-reactions`, `--no-stickers`, `--no-polls`, `--no-threads`, or `--no-custom-emoji` to omit optional fidelity items from formatted messages. GuildBridge refuses unsafe structure-template content flags.
 
 ## Best project name
 

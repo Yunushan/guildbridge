@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import zipfile
+from collections.abc import Iterator
+from io import BytesIO
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -19,16 +23,22 @@ from guildbridge.content import (
     ContentMessage,
     ContentReaction,
     ContentSource,
+    DiscordChatExporterBootstrapOptions,
+    DiscordChatExporterOptions,
     apply_content_actions,
     content_action_key,
     content_capabilities_document,
     content_not_implemented_message,
+    download_discord_chat_exporter,
     dry_run_content_import,
     load_channel_map,
     load_completed_content_actions,
     load_discord_chat_export,
+    resolve_content_asset_path,
+    run_discord_chat_exporter,
     selected_content_features,
 )
+from guildbridge.models import Action
 from guildbridge.providers.discord import DiscordProvider
 from guildbridge.providers.matrix import MatrixProvider
 from guildbridge.providers.mattermost import MattermostProvider
@@ -41,6 +51,7 @@ class RecordingContentHttp:
     def __init__(self) -> None:
         self.posts: list[tuple[str, dict[str, object], dict[str, str]]] = []
         self.puts: list[tuple[str, dict[str, object] | None, dict[str, str]]] = []
+        self.patches: list[tuple[str, dict[str, object] | None, dict[str, str]]] = []
 
     def post(self, path: str, *, json_body: dict[str, object], headers: dict[str, str]) -> dict[str, str]:
         self.posts.append((path, json_body, headers))
@@ -54,6 +65,16 @@ class RecordingContentHttp:
         headers: dict[str, str],
     ) -> dict[str, str]:
         self.puts.append((path, json_body, headers))
+        return {"ok": "true"}
+
+    def patch(
+        self,
+        path: str,
+        *,
+        json_body: dict[str, object] | None = None,
+        headers: dict[str, str],
+    ) -> dict[str, str]:
+        self.patches.append((path, json_body, headers))
         return {"ok": "true"}
 
 
@@ -74,6 +95,7 @@ class RecordingNativeHttp:
         self.post_raw_calls: list[dict[str, object]] = []
         self.post_form_calls: list[dict[str, object]] = []
         self.puts: list[dict[str, object]] = []
+        self.patches: list[dict[str, object]] = []
         self.gets: list[str] = []
 
     def post(
@@ -155,6 +177,15 @@ class RecordingNativeHttp:
         self.puts.append({"path": path, "json_body": json_body, "headers": headers})
         return {"event_id": f"event-{len(self.puts)}"}
 
+    def patch(
+        self,
+        path: str,
+        json_body: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        self.patches.append({"path": path, "json_body": json_body, "headers": headers})
+        return {"ok": True}
+
     def get(self, path: str, headers: dict[str, str] | None = None) -> dict[str, str]:
         del headers
         self.gets.append(path)
@@ -170,6 +201,40 @@ def test_selected_content_features_are_opt_in() -> None:
 def test_selected_content_features_reject_unknown_name() -> None:
     with pytest.raises(ValueError, match="Unknown content feature"):
         selected_content_features(include_content=False, requested_features=["history"])
+
+
+def test_resolve_content_asset_path_downloads_remote_asset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        status_code = 200
+        headers = {"content-length": "11"}
+
+        def iter_content(self, *, chunk_size: int) -> Iterator[bytes]:
+            del chunk_size
+            yield b"hello "
+            yield b"world"
+
+    calls: list[tuple[str, bool, int]] = []
+
+    def fake_get(url: str, *, stream: bool, timeout: int) -> Response:
+        calls.append((url, stream, timeout))
+        return Response()
+
+    monkeypatch.setattr("guildbridge.content.requests.get", fake_get)
+    warnings: list[str] = []
+
+    path = resolve_content_asset_path(
+        {"url": "https://cdn.example.invalid/path/file.txt", "filename": "file.txt"},
+        label="attachment",
+        allow_remote_download=True,
+        warnings=warnings,
+        cache_dir=tmp_path / "remote-assets",
+        max_bytes=100,
+    )
+
+    assert path is not None
+    assert path.read_bytes() == b"hello world"
+    assert calls == [("https://cdn.example.invalid/path/file.txt", True, 60)]
+    assert warnings == []
 
 
 def test_content_capabilities_document_marks_templates_private_by_default() -> None:
@@ -227,6 +292,7 @@ def test_discord_chat_exporter_json_converts_to_private_content_archive(tmp_path
     assert archive.source.platform == "discord"
     assert archive.source.id_hash != "example-guild-id"
     assert archive.channels[0].id != "example-channel-id"
+    assert any(channel.type == "thread" and channel.parent_id == archive.channels[0].id for channel in archive.channels)
     assert archive.messages[0].id != "example-message-id"
     assert archive.messages[0].author.id_hash != "example-user-id"
     assert archive.messages[0].attachments[0].filename == "guide.png"
@@ -244,6 +310,101 @@ def test_discord_chat_exporter_json_converts_to_private_content_archive(tmp_path
     assert "Stickers:" in planned_text
     assert "Poll: Move?" in planned_text
     assert "Custom emoji: wave" in planned_text
+
+
+def test_run_discord_chat_exporter_invokes_local_cli_and_redacts_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output_path = tmp_path / "dce"
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(command: list[str], **_kwargs: object) -> Completed:
+        calls.append(command)
+        output_path.mkdir(parents=True, exist_ok=True)
+        (output_path / "general.json").write_text(
+            json.dumps({"guild": {"id": "guild-1", "name": "Example"}, "channel": {"id": "chan-1"}, "messages": []}),
+            encoding="utf-8",
+        )
+        return Completed()
+
+    monkeypatch.setenv("DISCORD_TOKEN", "secret-token")
+    monkeypatch.setattr("guildbridge.content.subprocess.run", fake_run)
+
+    result_path = run_discord_chat_exporter(
+        DiscordChatExporterOptions(exporter_bin="DiscordChatExporter.Cli", guild_id="guild-1", output_path=output_path)
+    )
+
+    assert result_path == output_path
+    assert calls[0][:2] == ["DiscordChatExporter.Cli", "exportguild"]
+    assert calls[0][calls[0].index("-g") + 1] == "guild-1"
+    archive = load_discord_chat_export(result_path)
+    assert archive.name == "Example"
+
+
+def test_run_discord_chat_exporter_error_hides_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Completed:
+        returncode = 1
+        stdout = ""
+        stderr = "failed with secret-token"
+
+    monkeypatch.setenv("DISCORD_TOKEN", "secret-token")
+    monkeypatch.setattr("guildbridge.content.subprocess.run", lambda *_args, **_kwargs: Completed())
+
+    with pytest.raises(ValueError) as error:
+        run_discord_chat_exporter(
+            DiscordChatExporterOptions(exporter_bin="DiscordChatExporter.Cli", guild_id="guild-1", output_path=tmp_path)
+        )
+
+    assert "[redacted]" in str(error.value)
+    assert "secret-token" not in str(error.value)
+
+
+def test_download_discord_chat_exporter_fetches_matching_release_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("DiscordChatExporter.Cli.exe", "binary")
+    archive_bytes = archive.getvalue()
+    calls: list[str] = []
+
+    class Response:
+        def __init__(self, *, data: dict[str, object] | None = None, content: bytes = b"") -> None:
+            self.status_code = 200
+            self._data = data or {}
+            self.content = content
+
+        def json(self) -> dict[str, object]:
+            return self._data
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        calls.append(url)
+        if url.endswith("/latest"):
+            return Response(
+                data={
+                    "tag_name": "v2.0.0",
+                    "assets": [
+                        {"name": "DiscordChatExporter.Cli.linux-x64.zip", "browser_download_url": "https://example.invalid/linux.zip"},
+                        {"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://example.invalid/win.zip"},
+                    ],
+                }
+            )
+        return Response(content=archive_bytes)
+
+    monkeypatch.setattr("guildbridge.content.sys.platform", "win32")
+    monkeypatch.setattr("guildbridge.content.platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("guildbridge.content.requests.get", fake_get)
+
+    executable = download_discord_chat_exporter(
+        DiscordChatExporterBootstrapOptions(install_dir=tmp_path / "tools", timeout_seconds=1)
+    )
+
+    assert executable.name == "DiscordChatExporter.Cli.exe"
+    assert executable.read_text(encoding="utf-8") == "binary"
+    assert calls[-1] == "https://example.invalid/win.zip"
 
 
 def test_load_channel_map_accepts_plain_and_result_shapes(tmp_path: Path) -> None:
@@ -281,6 +442,73 @@ def test_dry_run_content_import_maps_channels_and_splits_long_messages() -> None
     assert result.actions[0].payload["source_channel_id"] == "source-channel"
 
 
+def test_dry_run_content_import_thread_channel_mode_routes_to_thread_map() -> None:
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[
+            ContentChannel(id="source-channel", name="general"),
+            ContentChannel(id="thread-1", name="feature-thread", type="thread", parent_id="source-channel"),
+        ],
+        messages=[ContentMessage(id="message-1", channel_id="source-channel", thread_id="thread-1", content="threaded")],
+    )
+
+    result = dry_run_content_import(
+        "stoat",
+        archive,
+        ContentImportOptions(channel_map={"thread-1": "target-thread"}, thread_mode="channel"),
+        path_template="/channels/{channel_id}/messages",
+    )
+
+    assert result.actions[0].path == "/channels/target-thread/messages"
+    assert result.actions[0].payload["source_channel_id"] == "thread-1"
+    assert result.actions[0].payload["original_source_channel_id"] == "source-channel"
+    assert result.actions[0].payload["thread_mode"] == "channel"
+
+
+def test_thread_markdown_mode_creates_local_archive_action_and_apply_writes_file(tmp_path: Path) -> None:
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[
+            ContentChannel(id="source-channel", name="general"),
+            ContentChannel(id="thread-1", name="feature-thread", type="thread", parent_id="source-channel"),
+        ],
+        messages=[ContentMessage(id="message-1", channel_id="source-channel", thread_id="thread-1", content="threaded")],
+    )
+    plan = dry_run_content_import(
+        "stoat",
+        archive,
+        ContentImportOptions(
+            channel_map={"source-channel": "target-channel"},
+            thread_mode="markdown",
+            thread_archive_dir=str(tmp_path / "threads"),
+        ),
+    )
+
+    assert len(plan.actions) == 1
+    action = plan.actions[0]
+    assert action.method == "WRITE_MARKDOWN"
+    assert str(tmp_path / "threads") in action.path
+    result = apply_content_actions(
+        "stoat",
+        plan.actions,
+        ContentImportOptions(
+            apply=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+        lambda _action: pytest.fail("local markdown actions must not call provider APIs"),
+    )
+
+    assert result.applied is True
+    markdown = Path(action.path).read_text(encoding="utf-8")
+    assert "# Thread Archive: feature-thread" in markdown
+    assert "threaded" in markdown
+
+
 def test_apply_content_actions_writes_journal_report_and_incremental_state(tmp_path: Path) -> None:
     archive = ContentArchive(
         name="Archive",
@@ -313,8 +541,56 @@ def test_apply_content_actions_writes_journal_report_and_incremental_state(tmp_p
     assert result.id_map["message-1:1"] == "posted-message"
     assert json.loads(journal.read_text(encoding="utf-8"))["events"][0]["status"] == "succeeded"
     assert json.loads(report.read_text(encoding="utf-8"))["status"] == "succeeded"
+    assert "Fidelity score" in (tmp_path / "report.md").read_text(encoding="utf-8")
     assert content_action_key(plan.actions[0]) in load_completed_content_actions(incremental)
     assert not dead_letter.exists()
+
+
+def test_apply_content_actions_parallelizes_across_channels_and_preserves_channel_order(tmp_path: Path) -> None:
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="channel-a", name="a"), ContentChannel(id="channel-b", name="b")],
+        messages=[
+            ContentMessage(id="a1", channel_id="channel-a", content="a1"),
+            ContentMessage(id="b1", channel_id="channel-b", content="b1"),
+            ContentMessage(id="a2", channel_id="channel-a", content="a2"),
+            ContentMessage(id="b2", channel_id="channel-b", content="b2"),
+        ],
+    )
+    plan = dry_run_content_import(
+        "stoat",
+        archive,
+        ContentImportOptions(channel_map={"channel-a": "target-a", "channel-b": "target-b"}, parallel_sends=2),
+    )
+    first_wave = Barrier(2, timeout=2)
+    seen_by_channel: dict[str, list[str]] = {"channel-a": [], "channel-b": []}
+
+    def send(action: Action) -> dict[str, str]:
+        payload = action.payload or {}
+        source_channel = str(payload["source_channel_id"])
+        seen_by_channel[source_channel].append(str(payload["source_message_id"]))
+        if payload["source_message_id"] in {"a1", "b1"}:
+            first_wave.wait()
+        return {"_id": f"posted-{payload['source_message_id']}"}
+
+    result = apply_content_actions(
+        "stoat",
+        plan.actions,
+        ContentImportOptions(
+            apply=True,
+            parallel_sends=2,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+        send,
+    )
+
+    assert seen_by_channel == {"channel-a": ["a1", "a2"], "channel-b": ["b1", "b2"]}
+    assert result.id_map["a1:1"] == "posted-a1"
+    assert "parallel_sends enabled" in "\n".join(result.warnings)
 
 
 def test_apply_content_actions_dead_letters_and_continues(tmp_path: Path) -> None:
@@ -455,6 +731,43 @@ def test_stoat_native_content_uses_uploads_embeds_replies_reactions_and_pins(tmp
     ]
 
 
+def test_stoat_native_content_uploads_local_server_assets(tmp_path: Path) -> None:
+    provider = StoatProvider(RuntimeConfig(stoat_token="token"))
+    recorder = RecordingContentHttp()
+    autumn = RecordingAutumnHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    provider.autumn = autumn  # type: ignore[assignment]
+    icon = tmp_path / "icon.png"
+    banner = tmp_path / "banner.png"
+    icon.write_bytes(b"icon")
+    banner.write_bytes(b"banner")
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[ContentMessage(id="message-1", channel_id="source-channel", content="hello")],
+        metadata={"server_icon_path": str(icon), "server_banner_path": str(banner)},
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            target_id="target-server",
+            channel_map={"source-channel": "target-channel"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    assert autumn.uploads[:2] == [("/icons", str(icon), {"X-Bot-Token": "token"}), ("/banners", str(banner), {"X-Bot-Token": "token"})]
+    assert recorder.patches == [("/servers/target-server", {"icon": "file-1", "banner": "file-2"}, {"X-Bot-Token": "token"})]
+
+
 def test_discord_native_content_uses_files_embeds_replies_reactions_and_pins(tmp_path: Path) -> None:
     provider = DiscordProvider(RuntimeConfig(discord_token="token"))
     recorder = RecordingNativeHttp()
@@ -509,6 +822,44 @@ def test_discord_native_content_uses_files_embeds_replies_reactions_and_pins(tmp
         "/channels/target-channel/messages/pins/message-2",
         "/channels/target-channel/messages/message-2/reactions/rocket/@me",
     ]
+
+
+def test_discord_native_content_applies_local_server_assets(tmp_path: Path) -> None:
+    provider = DiscordProvider(RuntimeConfig(discord_token="token"))
+    recorder = RecordingNativeHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    icon = tmp_path / "icon.png"
+    banner = tmp_path / "banner.png"
+    icon.write_bytes(b"icon")
+    banner.write_bytes(b"banner")
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[ContentMessage(id="message-1", channel_id="source-channel", content="hello")],
+        metadata={"server_icon_path": str(icon), "server_banner_path": str(banner)},
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            target_id="target-guild",
+            channel_map={"source-channel": "target-channel"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    assert recorder.patches[0]["path"] == "/guilds/target-guild"
+    payload = recorder.patches[0]["json_body"]
+    assert isinstance(payload, dict)
+    assert str(payload["icon"]).startswith("data:image/png;base64,")
+    assert str(payload["banner"]).startswith("data:image/png;base64,")
 
 
 def test_mattermost_native_content_uses_files_embeds_replies_reactions_and_pins(tmp_path: Path) -> None:
@@ -570,6 +921,9 @@ def test_matrix_zulip_and_rocket_native_capabilities_are_opt_in() -> None:
     rocket = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
     zulip = ZulipProvider(RuntimeConfig(zulip_email="bot@example.test", zulip_api_key="token"))
 
+    assert matrix.content_capabilities().import_["role_colors"] == "supported"
+    assert matrix.content_capabilities().import_["channel_permissions"] == "supported"
+    assert matrix.content_capabilities().import_["nsfw_channels"] == "supported"
     assert matrix.content_capabilities().import_["attachments"] == "supported"
     assert matrix.content_capabilities().import_["reactions"] == "supported"
     assert rocket.content_capabilities().import_["pins"] == "supported"

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from functools import partial
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -16,6 +15,7 @@ from guildbridge.content import (
     content_action_key,
     content_text_from_action,
     dry_run_content_import,
+    resolve_content_asset_path,
 )
 from guildbridge.http import HttpClient, sanitize_text
 from guildbridge.models import (
@@ -50,6 +50,14 @@ AUTUMN_TAG_LIMITS = {
     "banners": 6 * 1024 * 1024,
     "emojis": 500 * 1024,
 }
+
+
+def _metadata_first(metadata: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 class StoatProvider(Provider):
@@ -101,9 +109,9 @@ class StoatProvider(Provider):
             "Live content import sends formatted archived messages to mapped Stoat channel IDs through the message API."
         )
         capability.notes.append(
-            "Opt-in native content import can upload local attachments/stickers to Autumn, send embeds and replies, apply pins/reactions, create custom emoji, and use Stoat masquerade. Text fallbacks remain the default."
+            "Opt-in native content import can upload local attachments/stickers/server assets to Autumn, send embeds and replies, apply pins/reactions, create custom emoji, and use Stoat masquerade. Text fallbacks remain the default."
         )
-        for feature in ("attachments", "embeds", "replies", "reactions", "pins", "custom_emoji", "stickers"):
+        for feature in ("attachments", "embeds", "replies", "reactions", "pins", "custom_emoji", "stickers", "server_banner"):
             capability.import_[feature] = "supported"
         return capability
 
@@ -151,6 +159,8 @@ class StoatProvider(Provider):
             self._content_native_warnings.append(
                 "Stoat native content features work best with STOAT_SESSION_TOKEN. Bot tokens may lack upload, masquerade, reaction, pin, or custom emoji permissions."
             )
+        if options.native_content:
+            self._apply_native_server_assets(archive, options)
         if options.native_custom_emoji:
             self._create_native_custom_emoji(archive, options)
 
@@ -322,19 +332,44 @@ class StoatProvider(Provider):
             else:
                 self._content_emoji_ids[emoji.id_hash] = file_id
 
+    def _apply_native_server_assets(self, archive: ContentArchive, options: ContentImportOptions) -> None:
+        metadata = archive.metadata or {}
+        icon_path = _metadata_first(metadata, "server_icon_path", "server_icon_local_path", "icon_path", "icon_local_path")
+        banner_path = _metadata_first(metadata, "server_banner_path", "server_banner_local_path", "banner_path", "banner_local_path")
+        icon_url = _metadata_first(metadata, "server_icon_url", "icon_url")
+        banner_url = _metadata_first(metadata, "server_banner_url", "banner_url")
+        if not any((icon_path, banner_path, icon_url, banner_url)):
+            return
+        if not options.target_id:
+            self._content_native_warnings.append("Native server icon/banner skipped because --target-id was not provided.")
+            return
+        patch: dict[str, str] = {}
+        if icon_path or icon_url:
+            icon_id = self._upload_autumn_dict("icons", {"local_path": icon_path, "url": icon_url}, label="server icon")
+            if icon_id:
+                patch["icon"] = icon_id
+        if banner_path or banner_url:
+            banner_id = self._upload_autumn_dict("banners", {"local_path": banner_path, "url": banner_url}, label="server banner")
+            if banner_id:
+                patch["banner"] = banner_id
+        if not patch:
+            return
+        self._safe_followup(
+            "server icon/banner",
+            lambda: self.http.patch(f"/servers/{options.target_id}", json_body=patch, headers=self._headers()),
+        )
+
     def _upload_autumn_dict(self, tag: str, item: dict[str, Any], *, label: object) -> str | None:
-        local_path = item.get("local_path")
-        metadata = item.get("metadata")
-        if not local_path and isinstance(metadata, dict):
-            local_path = metadata.get("local_path") or metadata.get("source_path")
-        if not local_path:
-            self._content_native_warnings.append(f"Native {tag} upload skipped for {label!r}; no local file path was available.")
-            return None
-        path = Path(str(local_path)).expanduser()
-        if not path.exists() or not path.is_file():
-            self._content_native_warnings.append(f"Native {tag} upload skipped for {label!r}; file was not found at {path}.")
-            return None
         limit = AUTUMN_TAG_LIMITS.get(tag)
+        path = resolve_content_asset_path(
+            item,
+            label=f"{tag} for {label!r}",
+            allow_remote_download=self._content_options.download_remote_assets,
+            warnings=self._content_native_warnings,
+            max_bytes=limit,
+        )
+        if not path:
+            return None
         if limit is not None and path.stat().st_size > limit:
             self._content_native_warnings.append(
                 f"Native {tag} upload skipped for {label!r}; {path.stat().st_size} bytes exceeds the {limit} byte limit."

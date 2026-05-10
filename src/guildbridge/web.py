@@ -142,6 +142,15 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
     if action == "content_export":
         return build_content_export_args(
             discord_chat_export=_first(form, "discord_chat_export"),
+            source_id=_first(form, "source_id"),
+            discord_chat_exporter_bin=_first(form, "discord_chat_exporter_bin"),
+            download_discord_chat_exporter=_checked(form, "download_discord_chat_exporter"),
+            discord_chat_exporter_version=_first(form, "discord_chat_exporter_version"),
+            discord_chat_exporter_install_dir=_first(form, "discord_chat_exporter_install_dir"),
+            discord_token_env=_first(form, "discord_token_env"),
+            discord_export_out=_first(form, "discord_export_out"),
+            discord_export_format=_first(form, "discord_export_format"),
+            discord_export_timeout=_first(form, "discord_export_timeout"),
             out=_first(form, "out", "community.content.json"),
         )
     if action == "content_import":
@@ -165,6 +174,8 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
             no_threads=_checked(form, "no_threads"),
             no_custom_emoji=_checked(form, "no_custom_emoji"),
             native_content=_checked(form, "native_content"),
+            ferry_parity=_checked(form, "ferry_parity"),
+            download_remote_assets=_checked(form, "download_remote_assets"),
             content_journal_out=_first(form, "content_journal_out"),
             resume_content_journal=_first(form, "resume_content_journal"),
             content_dead_letter_out=_first(form, "content_dead_letter_out"),
@@ -175,11 +186,22 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
             content_continue_on_error=_checked(form, "content_continue_on_error"),
             content_max_failures=_first(form, "content_max_failures"),
             content_parallel_sends=_first(form, "content_parallel_sends"),
+            content_thread_mode=_first(form, "content_thread_mode"),
+            content_thread_archive_dir=_first(form, "content_thread_archive_dir"),
         )
     if action == "content_migrate":
         return build_content_migrate_args(
             _values(form, "provider_to", "stoat"),
             discord_chat_export=_first(form, "discord_chat_export"),
+            source_id=_first(form, "source_id"),
+            discord_chat_exporter_bin=_first(form, "discord_chat_exporter_bin"),
+            download_discord_chat_exporter=_checked(form, "download_discord_chat_exporter"),
+            discord_chat_exporter_version=_first(form, "discord_chat_exporter_version"),
+            discord_chat_exporter_install_dir=_first(form, "discord_chat_exporter_install_dir"),
+            discord_token_env=_first(form, "discord_token_env"),
+            discord_export_out=_first(form, "discord_export_out"),
+            discord_export_format=_first(form, "discord_export_format"),
+            discord_export_timeout=_first(form, "discord_export_timeout"),
             target_id=_first(form, "target_id"),
             target_name=_first(form, "target_name"),
             channel_map=_first(form, "channel_map"),
@@ -197,6 +219,8 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
             no_threads=_checked(form, "no_threads"),
             no_custom_emoji=_checked(form, "no_custom_emoji"),
             native_content=_checked(form, "native_content"),
+            ferry_parity=_checked(form, "ferry_parity"),
+            download_remote_assets=_checked(form, "download_remote_assets"),
             content_journal_out=_first(form, "content_journal_out"),
             resume_content_journal=_first(form, "resume_content_journal"),
             content_dead_letter_out=_first(form, "content_dead_letter_out"),
@@ -207,6 +231,8 @@ def build_web_args(form: Mapping[str, list[str]]) -> list[str]:
             content_continue_on_error=_checked(form, "content_continue_on_error"),
             content_max_failures=_first(form, "content_max_failures"),
             content_parallel_sends=_first(form, "content_parallel_sends"),
+            content_thread_mode=_first(form, "content_thread_mode"),
+            content_thread_archive_dir=_first(form, "content_thread_archive_dir"),
         )
     if action == "validate":
         return build_validate_args(_first(form, "file"))
@@ -343,6 +369,12 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
     )
     providers_default = _provider_options("discord")
     providers_fluxer = _provider_options("fluxer")
+    thread_mode_options = (
+        '<option value="reference" selected>reference</option>'
+        '<option value="merge">merge</option>'
+        '<option value="channel">channel</option>'
+        '<option value="markdown">markdown</option>'
+    )
     csrf = _csrf_input(csrf_token)
     auth = _auth_input(auth_token)
     theme_field = _theme_input(theme)
@@ -755,6 +787,15 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
           {theme_field}
           <input type="hidden" name="action" value="content_export">
           {_text_field("DiscordChatExporter file/folder", "discord_chat_export")}
+          {_text_field("Discord guild/server ID", "source_id")}
+          {_text_field("DiscordChatExporter app", "discord_chat_exporter_bin")}
+          {_checkbox_field("Download DiscordChatExporter if needed", "download_discord_chat_exporter")}
+          {_text_field("Managed DCE version", "discord_chat_exporter_version", value="latest")}
+          {_text_field("Managed DCE install folder", "discord_chat_exporter_install_dir")}
+          {_text_field("Discord token env var", "discord_token_env", value="DISCORD_TOKEN")}
+          {_text_field("Discord export output", "discord_export_out")}
+          {_text_field("Discord export format", "discord_export_format", value="Json")}
+          {_text_field("Discord export timeout", "discord_export_timeout", value="3600")}
           {_text_field("Archive output", "out", value="community.content.json")}
           <div class="form-actions"><button type="submit">Export Content Archive</button></div>
         </form>
@@ -764,6 +805,15 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
           {theme_field}
           <input type="hidden" name="action" value="content_migrate">
           {_text_field("DiscordChatExporter file/folder", "discord_chat_export")}
+          {_text_field("Discord guild/server ID", "source_id")}
+          {_text_field("DiscordChatExporter app", "discord_chat_exporter_bin")}
+          {_checkbox_field("Download DiscordChatExporter if needed", "download_discord_chat_exporter")}
+          {_text_field("Managed DCE version", "discord_chat_exporter_version", value="latest")}
+          {_text_field("Managed DCE install folder", "discord_chat_exporter_install_dir")}
+          {_text_field("Discord token env var", "discord_token_env", value="DISCORD_TOKEN")}
+          {_text_field("Discord export output", "discord_export_out")}
+          {_text_field("Discord export format", "discord_export_format", value="Json")}
+          {_text_field("Discord export timeout", "discord_export_timeout", value="3600")}
           {_multi_select_field("To", "provider_to", providers_fluxer)}
           {_text_field("Target ID", "target_id")}
           {_text_field("Target name", "target_name")}
@@ -779,6 +829,8 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
           {_text_field("Message limit", "message_limit")}
           {_text_field("Max failures", "content_max_failures", value="1")}
           {_text_field("Parallel sends", "content_parallel_sends", value="1")}
+          {_select_field("Thread mode", "content_thread_mode", thread_mode_options)}
+          {_text_field("Thread archive folder", "content_thread_archive_dir")}
           {_checkbox_field("Omit author names", "no_authors")}
           {_checkbox_field("Omit attachment references", "no_attachments")}
           {_checkbox_field("Omit reactions", "no_reactions")}
@@ -788,6 +840,8 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
           {_checkbox_field("Omit thread/forum references", "no_threads")}
           {_checkbox_field("Omit custom emoji summary", "no_custom_emoji")}
           {_checkbox_field("Use provider-native content features", "native_content")}
+          {_checkbox_field("Discord -> Stoat full-fidelity preset", "ferry_parity")}
+          {_checkbox_field("Download remote media/assets", "download_remote_assets")}
           {_checkbox_field("Use incremental state", "content_incremental")}
           {_checkbox_field("Continue after failed messages", "content_continue_on_error")}
           {_checkbox_field("Force invalid archive after review", "force_invalid_archive", danger=True)}
@@ -816,6 +870,8 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
           {_text_field("Message limit", "message_limit")}
           {_text_field("Max failures", "content_max_failures", value="1")}
           {_text_field("Parallel sends", "content_parallel_sends", value="1")}
+          {_select_field("Thread mode", "content_thread_mode", thread_mode_options)}
+          {_text_field("Thread archive folder", "content_thread_archive_dir")}
           {_checkbox_field("Omit author names", "no_authors")}
           {_checkbox_field("Omit attachment references", "no_attachments")}
           {_checkbox_field("Omit reactions", "no_reactions")}
@@ -825,6 +881,8 @@ def render_page(result: CommandResult | None = None, *, csrf_token: str = "", au
           {_checkbox_field("Omit thread/forum references", "no_threads")}
           {_checkbox_field("Omit custom emoji summary", "no_custom_emoji")}
           {_checkbox_field("Use provider-native content features", "native_content")}
+          {_checkbox_field("Discord -> Stoat full-fidelity preset", "ferry_parity")}
+          {_checkbox_field("Download remote media/assets", "download_remote_assets")}
           {_checkbox_field("Use incremental state", "content_incremental")}
           {_checkbox_field("Continue after failed messages", "content_continue_on_error")}
           {_checkbox_field("Force invalid archive after review", "force_invalid_archive", danger=True)}

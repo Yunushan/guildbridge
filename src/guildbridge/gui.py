@@ -373,6 +373,14 @@ class GuildBridgeGUI(ttk.Frame):
         if self.providers and not variable.get():
             variable.set(self.providers[0])
 
+    @staticmethod
+    def _option_combo(frame: ttk.Frame, label: str, row: int, variable: StringVar, values: tuple[str, ...]) -> None:
+        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        combo = ttk.Combobox(frame, textvariable=variable, values=values, state="readonly")
+        combo.grid(row=row, column=1, sticky="ew", pady=4)
+        if values and variable.get() not in values:
+            variable.set(values[0])
+
     def _provider_listbox(self, frame: ttk.Frame, label: str, row: int, defaults: tuple[str, ...]) -> Listbox:
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8), pady=4)
         listbox = Listbox(frame, selectmode="multiple", exportselection=False, height=min(max(len(self.providers), 3), 8))
@@ -680,6 +688,12 @@ class GuildBridgeGUI(ttk.Frame):
     def _content_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         tab, frame = self._new_tab(parent)
         discord_export = StringVar()
+        discord_source_id = StringVar()
+        discord_exporter_bin = StringVar()
+        discord_exporter_version = StringVar(value="latest")
+        discord_exporter_install_dir = StringVar()
+        discord_token_env = StringVar(value="DISCORD_TOKEN")
+        discord_export_out = StringVar()
         archive_file = StringVar()
         archive_out = StringVar(value="community.content.json")
         target_id = StringVar()
@@ -696,6 +710,8 @@ class GuildBridgeGUI(ttk.Frame):
         message_limit = StringVar()
         content_max_failures = StringVar(value="1")
         content_parallel_sends = StringVar(value="1")
+        content_thread_mode = StringVar(value="reference")
+        content_thread_archive_dir = StringVar()
         no_authors = BooleanVar(value=False)
         no_attachments = BooleanVar(value=False)
         no_reactions = BooleanVar(value=False)
@@ -705,6 +721,9 @@ class GuildBridgeGUI(ttk.Frame):
         no_threads = BooleanVar(value=False)
         no_custom_emoji = BooleanVar(value=False)
         native_content = BooleanVar(value=False)
+        ferry_parity = BooleanVar(value=False)
+        download_remote_assets = BooleanVar(value=False)
+        download_discord_chat_exporter = BooleanVar(value=False)
         force_invalid_archive = BooleanVar(value=False)
         content_incremental = BooleanVar(value=False)
         content_continue_on_error = BooleanVar(value=False)
@@ -715,6 +734,12 @@ class GuildBridgeGUI(ttk.Frame):
             1,
             (
                 Field("DiscordChatExporter file/folder", discord_export, "folder"),
+                Field("Discord guild/server ID", discord_source_id),
+                Field("DiscordChatExporter app", discord_exporter_bin, "open"),
+                Field("Managed DCE version", discord_exporter_version),
+                Field("Managed DCE install folder", discord_exporter_install_dir, "folder"),
+                Field("Discord token env var", discord_token_env),
+                Field("Discord export output", discord_export_out, "folder"),
                 Field("Content archive JSON", archive_file, "open"),
                 Field("Archive output JSON", archive_out, "save"),
                 Field("Target ID", target_id),
@@ -731,8 +756,11 @@ class GuildBridgeGUI(ttk.Frame):
                 Field("Message limit", message_limit),
                 Field("Max failures", content_max_failures),
                 Field("Parallel sends", content_parallel_sends),
+                Field("Thread archive folder", content_thread_archive_dir, "folder"),
             ),
         )
+        self._option_combo(frame, "Thread mode", row, content_thread_mode, ("reference", "merge", "channel", "markdown"))
+        row += 1
         ttk.Checkbutton(frame, text="Omit author names", variable=no_authors).grid(row=row, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Omit attachment references", variable=no_attachments).grid(row=row + 1, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Omit reactions", variable=no_reactions).grid(row=row + 2, column=1, sticky="w")
@@ -742,14 +770,17 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Omit thread/forum references", variable=no_threads).grid(row=row + 6, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Omit custom emoji summary", variable=no_custom_emoji).grid(row=row + 7, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Use provider-native content features", variable=native_content).grid(row=row + 8, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Incremental resume state", variable=content_incremental).grid(row=row + 9, column=1, sticky="w")
-        ttk.Checkbutton(frame, text="Continue after failed messages", variable=content_continue_on_error).grid(row=row + 10, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Discord -> Stoat full-fidelity preset", variable=ferry_parity).grid(row=row + 9, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Download remote media/assets", variable=download_remote_assets).grid(row=row + 10, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Download DiscordChatExporter if needed", variable=download_discord_chat_exporter).grid(row=row + 11, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Incremental resume state", variable=content_incremental).grid(row=row + 12, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Continue after failed messages", variable=content_continue_on_error).grid(row=row + 13, column=1, sticky="w")
         ttk.Checkbutton(frame, text="Force invalid archive after review", variable=force_invalid_archive).grid(
-            row=row + 11, column=1, sticky="w"
+            row=row + 14, column=1, sticky="w"
         )
 
         actions = ttk.Frame(frame)
-        actions.grid(row=row + 12, column=1, sticky="e", pady=(12, 0))
+        actions.grid(row=row + 15, column=1, sticky="e", pady=(12, 0))
 
         def content_options(*, apply: bool, reviewed: bool) -> dict[str, Any]:
             return {
@@ -770,6 +801,8 @@ class GuildBridgeGUI(ttk.Frame):
                 "no_threads": no_threads.get(),
                 "no_custom_emoji": no_custom_emoji.get(),
                 "native_content": native_content.get(),
+                "ferry_parity": ferry_parity.get(),
+                "download_remote_assets": download_remote_assets.get(),
                 "content_journal_out": content_journal_out.get(),
                 "resume_content_journal": resume_content_journal.get(),
                 "content_dead_letter_out": content_dead_letter_out.get(),
@@ -780,13 +813,25 @@ class GuildBridgeGUI(ttk.Frame):
                 "content_continue_on_error": content_continue_on_error.get(),
                 "content_max_failures": content_max_failures.get(),
                 "content_parallel_sends": content_parallel_sends.get(),
+                "content_thread_mode": content_thread_mode.get(),
+                "content_thread_archive_dir": content_thread_archive_dir.get(),
             }
 
         ttk.Button(
             actions,
             text="Export Archive",
             command=lambda: self._run(
-                build_content_export_args(discord_chat_export=discord_export.get(), out=archive_out.get())
+                build_content_export_args(
+                    discord_chat_export=discord_export.get(),
+                    source_id=discord_source_id.get(),
+                    discord_chat_exporter_bin=discord_exporter_bin.get(),
+                    download_discord_chat_exporter=download_discord_chat_exporter.get(),
+                    discord_chat_exporter_version=discord_exporter_version.get(),
+                    discord_chat_exporter_install_dir=discord_exporter_install_dir.get(),
+                    discord_token_env=discord_token_env.get(),
+                    discord_export_out=discord_export_out.get(),
+                    out=archive_out.get(),
+                )
             ),
         ).grid(row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 8))
         ttk.Button(
@@ -808,6 +853,13 @@ class GuildBridgeGUI(ttk.Frame):
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
                     discord_chat_export=discord_export.get(),
+                    source_id=discord_source_id.get(),
+                    discord_chat_exporter_bin=discord_exporter_bin.get(),
+                    download_discord_chat_exporter=download_discord_chat_exporter.get(),
+                    discord_chat_exporter_version=discord_exporter_version.get(),
+                    discord_chat_exporter_install_dir=discord_exporter_install_dir.get(),
+                    discord_token_env=discord_token_env.get(),
+                    discord_export_out=discord_export_out.get(),
                     **content_options(apply=False, reviewed=False),
                 ),
                 plan_out=plan_out.get(),
@@ -841,6 +893,13 @@ class GuildBridgeGUI(ttk.Frame):
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
                     discord_chat_export=discord_export.get(),
+                    source_id=discord_source_id.get(),
+                    discord_chat_exporter_bin=discord_exporter_bin.get(),
+                    download_discord_chat_exporter=download_discord_chat_exporter.get(),
+                    discord_chat_exporter_version=discord_exporter_version.get(),
+                    discord_chat_exporter_install_dir=discord_exporter_install_dir.get(),
+                    discord_token_env=discord_token_env.get(),
+                    discord_export_out=discord_export_out.get(),
                     **content_options(apply=True, reviewed=True),
                 ),
                 apply_requested=True,

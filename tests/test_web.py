@@ -101,26 +101,37 @@ def test_build_web_content_args() -> None:
     migrate_args = build_web_args(
         {
             "action": ["content_migrate"],
-            "discord_chat_export": ["dce"],
+            "source_id": ["guild"],
+            "download_discord_chat_exporter": ["on"],
+            "discord_chat_exporter_version": ["v2.0.0"],
             "provider_to": ["stoat", "fluxer"],
             "target_id": ["server"],
             "channel_map": ["channel-map.json"],
             "plan_out": ["content.plan.json"],
+            "content_thread_mode": ["markdown"],
+            "content_thread_archive_dir": ["threads"],
             "no_embeds": ["on"],
+            "ferry_parity": ["on"],
+            "download_remote_assets": ["on"],
         }
     )
-    assert migrate_args[:7] == [
+    assert migrate_args[:5] == [
         "content-migrate",
         "--from",
         "discord",
-        "--discord-chat-export",
-        "dce",
-        "--to",
-        "stoat",
+        "--source-id",
+        "guild",
     ]
     assert "--to" in migrate_args
+    assert migrate_args[migrate_args.index("--to") + 1] == "stoat"
+    assert "--download-discord-chat-exporter" in migrate_args
+    assert migrate_args[migrate_args.index("--discord-chat-exporter-version") + 1] == "v2.0.0"
     assert migrate_args[migrate_args.index("--channel-map") + 1] == "channel-map.json"
+    assert migrate_args[migrate_args.index("--content-thread-mode") + 1] == "markdown"
+    assert migrate_args[migrate_args.index("--content-thread-archive-dir") + 1] == "threads"
     assert "--no-embeds" in migrate_args
+    assert "--ferry-parity" in migrate_args
+    assert "--download-remote-assets" in migrate_args
 
     import_args = build_web_args(
         {
@@ -148,7 +159,11 @@ def test_render_page_includes_mobile_platforms() -> None:
     assert "Force invalid template after review" in page
     assert "Content" in page
     assert "DiscordChatExporter file/folder" in page
+    assert "Download DiscordChatExporter if needed" in page
+    assert "Discord -&gt; Stoat full-fidelity preset" in page
+    assert "Download remote media/assets" in page
     assert "Run Content Migrate" in page
+    assert "Thread mode" in page
     assert f'name="{CSRF_FIELD}" value="test-token"' in page
     assert f'name="{AUTH_FIELD}" value="lan-token"' in page
     assert f"Type {APPLY_CONFIRMATION}" in page

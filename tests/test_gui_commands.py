@@ -113,6 +113,39 @@ def test_build_content_command_args() -> None:
         "--out",
         "content.json",
     ]
+    exporter_args = build_content_export_args(
+        source_id="guild",
+        download_discord_chat_exporter=True,
+        discord_chat_exporter_version="v2.0.0",
+        discord_chat_exporter_install_dir="tools/dce",
+        discord_token_env="DISCORD_TOKEN",
+        discord_export_out="exports",
+        out="content.json",
+    )
+    assert exporter_args[:6] == [
+        "content-export",
+        "--source-id",
+        "guild",
+        "--download-discord-chat-exporter",
+        "--discord-chat-exporter-version",
+        "v2.0.0",
+    ]
+    assert exporter_args[exporter_args.index("--discord-chat-exporter-install-dir") + 1] == "tools/dce"
+    assert exporter_args[exporter_args.index("--discord-token-env") + 1] == "DISCORD_TOKEN"
+    local_exporter_args = build_content_export_args(
+        source_id="guild",
+        discord_chat_exporter_bin="DiscordChatExporter.Cli",
+        discord_token_env="DISCORD_TOKEN",
+    )
+    assert local_exporter_args[:7] == [
+        "content-export",
+        "--source-id",
+        "guild",
+        "--discord-chat-exporter-bin",
+        "DiscordChatExporter.Cli",
+        "--discord-token-env",
+        "DISCORD_TOKEN",
+    ]
 
     import_args = build_content_import_args(
         ["stoat", "fluxer"],
@@ -121,24 +154,38 @@ def test_build_content_command_args() -> None:
         plan_out="content.plan.json",
         no_attachments=True,
         native_content=True,
+        ferry_parity=True,
+        download_remote_assets=True,
+        content_thread_mode="markdown",
+        content_thread_archive_dir="threads",
     )
     assert import_args[:7] == ["content-import", "--file", "content.json", "--to", "stoat", "--to", "fluxer"]
     assert import_args[import_args.index("--channel-map") + 1] == "channel-map.json"
     assert "--no-attachments" in import_args
     assert "--native-content" in import_args
+    assert "--ferry-parity" in import_args
+    assert "--download-remote-assets" in import_args
+    assert import_args[import_args.index("--content-thread-mode") + 1] == "markdown"
+    assert import_args[import_args.index("--content-thread-archive-dir") + 1] == "threads"
 
     migrate_args = build_content_migrate_args(
         "stoat",
-        discord_chat_export="dce",
+        source_id="guild",
+        download_discord_chat_exporter=True,
+        discord_chat_exporter_version="latest",
         plan_in="reviewed.plan.json",
         apply=True,
         force_invalid_archive=True,
         message_limit="10",
+        content_thread_mode="channel",
     )
-    assert migrate_args[:5] == ["content-migrate", "--from", "discord", "--discord-chat-export", "dce"]
+    assert migrate_args[:5] == ["content-migrate", "--from", "discord", "--source-id", "guild"]
+    assert migrate_args[migrate_args.index("--source-id") + 1] == "guild"
+    assert "--download-discord-chat-exporter" in migrate_args
     assert "--apply" in migrate_args
     assert "--force-invalid-archive" in migrate_args
     assert migrate_args[migrate_args.index("--message-limit") + 1] == "10"
+    assert migrate_args[migrate_args.index("--content-thread-mode") + 1] == "channel"
     assert migrate_args[migrate_args.index("--confirm-apply") + 1] == "APPLY"
 
 

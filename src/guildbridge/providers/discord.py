@@ -18,6 +18,8 @@ from guildbridge.content import (
     apply_content_actions,
     content_text_from_action,
     dry_run_content_import,
+    metadata_first,
+    resolve_content_asset_path,
 )
 from guildbridge.http import HttpClient, sanitize_text
 from guildbridge.models import (
@@ -63,6 +65,7 @@ NEUTRAL_TO_DISCORD_CHANNEL_TYPES = {
 }
 DISCORD_SUPPRESS_NOTIFICATIONS = 1 << 12
 DISCORD_EMOJI_SIZE_LIMIT = 256 * 1024
+DISCORD_SERVER_ASSET_SIZE_LIMIT = 10 * 1024 * 1024
 
 
 class DiscordProvider(Provider):
@@ -220,17 +223,26 @@ class DiscordProvider(Provider):
         return bool(self.config.discord_token)
 
     def content_capabilities(self) -> ContentCapability:
-        capability = ContentCapability.text_content_provider(self.name, import_supported=True, reliability_supported=True)
+        capability = ContentCapability.text_content_provider(
+            self.name,
+            export_supported=self.name == "discord",
+            import_supported=True,
+            reliability_supported=True,
+        )
         capability.notes.append(
             f"Live content import sends formatted archived messages to mapped {self.provider_label} channel IDs."
         )
+        if self.name == "discord":
+            capability.notes.append(
+                "Offline Discord content export is supported through existing DiscordChatExporter JSON, a locally installed DiscordChatExporter CLI, or an explicit managed DCE download."
+            )
         capability.notes.append(
             "Text fallback preserves attachments, embeds, replies, reactions, pins, stickers, polls, custom emoji, threads, and timestamps as formatted text."
         )
         capability.notes.append(
             "Opt-in native content import can upload local attachments, send embeds/replies, apply pins/reactions, and create custom emoji when the target API and bot permissions support those operations."
         )
-        for feature in ("attachments", "embeds", "replies", "reactions", "pins", "custom_emoji"):
+        for feature in ("attachments", "embeds", "replies", "reactions", "pins", "custom_emoji", "server_banner"):
             capability.import_[feature] = "supported"
         return capability
 
@@ -278,6 +290,8 @@ class DiscordProvider(Provider):
         self._content_message_ids = {}
         self._content_native_warnings = []
         self._content_emoji_ids = {}
+        if options.native_content:
+            self._apply_native_server_assets(archive, options)
         if options.native_custom_emoji:
             self._create_native_custom_emoji(archive, options)
 
@@ -336,20 +350,12 @@ class DiscordProvider(Provider):
         return files
 
     def _local_content_path(self, item: object, *, label: str) -> Path | None:
-        if not isinstance(item, dict):
-            return None
-        raw_path = item.get("local_path")
-        metadata = item.get("metadata")
-        if not raw_path and isinstance(metadata, dict):
-            raw_path = metadata.get("local_path") or metadata.get("source_path")
-        if not raw_path:
-            self._content_native_warnings.append(f"Native {label} upload skipped; no local file path was available.")
-            return None
-        path = Path(str(raw_path)).expanduser()
-        if not path.exists() or not path.is_file():
-            self._content_native_warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
-            return None
-        return path
+        return resolve_content_asset_path(
+            item,
+            label=label,
+            allow_remote_download=self._content_options.download_remote_assets,
+            warnings=self._content_native_warnings,
+        )
 
     def _mapped_reply_id(self, action_payload: dict[str, Any]) -> str | None:
         reply_to = action_payload.get("reply_to_id")
@@ -426,6 +432,7 @@ class DiscordProvider(Provider):
             path = self._local_content_path(
                 {
                     "local_path": emoji.local_path,
+                    "url": emoji.url,
                     "metadata": emoji.metadata,
                 },
                 label="custom emoji",
@@ -448,6 +455,65 @@ class DiscordProvider(Provider):
             created_id = response_id(created if isinstance(created, dict) else {}, "id", "emoji.id")
             if created_id:
                 self._content_emoji_ids[emoji.id_hash] = f"{payload['name']}:{created_id}"
+
+    def _apply_native_server_assets(self, archive: ContentArchive, options: ContentImportOptions) -> None:
+        metadata = archive.metadata or {}
+        icon_item = {
+            "local_path": metadata_first(metadata, "server_icon_path", "server_icon_local_path", "icon_path", "icon_local_path"),
+            "url": metadata_first(metadata, "server_icon_url", "icon_url"),
+            "name": "server-icon",
+            "metadata": metadata,
+        }
+        banner_item = {
+            "local_path": metadata_first(
+                metadata,
+                "server_banner_path",
+                "server_banner_local_path",
+                "banner_path",
+                "banner_local_path",
+            ),
+            "url": metadata_first(metadata, "server_banner_url", "banner_url"),
+            "name": "server-banner",
+            "metadata": metadata,
+        }
+        if not any((icon_item["local_path"], icon_item["url"], banner_item["local_path"], banner_item["url"])):
+            return
+        if not options.target_id:
+            self._content_native_warnings.append("Native server icon/banner skipped because --target-id was not provided.")
+            return
+        patch = without_none(
+            {
+                "icon": self._server_asset_data_uri(icon_item, label="server icon"),
+                "banner": self._server_asset_data_uri(banner_item, label="server banner"),
+            }
+        )
+        if not patch:
+            return
+        self._safe_native_followup(
+            "server icon/banner",
+            lambda: self.http.patch(f"/guilds/{options.target_id}", json_body=patch),
+        )
+
+    def _server_asset_data_uri(self, item: dict[str, Any], *, label: str) -> str | None:
+        if not item.get("local_path") and not item.get("url"):
+            return None
+        path = resolve_content_asset_path(
+            item,
+            label=label,
+            allow_remote_download=self._content_options.download_remote_assets,
+            warnings=self._content_native_warnings,
+            max_bytes=DISCORD_SERVER_ASSET_SIZE_LIMIT,
+        )
+        if not path:
+            return None
+        if path.stat().st_size > DISCORD_SERVER_ASSET_SIZE_LIMIT:
+            self._content_native_warnings.append(
+                f"Native {label} upload skipped; {path.stat().st_size} bytes exceeds the {DISCORD_SERVER_ASSET_SIZE_LIMIT} byte limit."
+            )
+            return None
+        mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
 
     def _safe_native_followup(self, label: str, operation: Any) -> None:
         try:

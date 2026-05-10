@@ -2,14 +2,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import platform
 import re
 import secrets
+import stat
+import subprocess
+import sys
+import zipfile
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Lock
 from types import TracebackType
 from typing import Any, Literal
+from urllib.parse import urlparse
+
+import requests
 
 from guildbridge.http import sanitize_text
 from guildbridge.models import Action, ImportResult
@@ -23,6 +34,7 @@ CONTENT_IMPORT_REPORT_SCHEMA = "guildbridge.content-import-report.v1"
 CONTENT_INCREMENTAL_STATE_SCHEMA = "guildbridge.content-incremental-state.v1"
 CONTENT_VERSION = "1.0"
 CONTENT_STATUS = Literal["not_implemented", "planned", "supported", "not_applicable"]
+ThreadMode = Literal["reference", "merge", "channel", "markdown"]
 CONTENT_FEATURES: tuple[str, ...] = (
     "messages",
     "message_authors",
@@ -55,6 +67,10 @@ CONTENT_FEATURES: tuple[str, ...] = (
 CONTENT_FEATURE_SET = set(CONTENT_FEATURES)
 MESSAGE_LIMIT = 1900
 CUSTOM_EMOJI_RE = re.compile(r"<(?P<animated>a?):(?P<name>[A-Za-z0-9_.~-]+):(?P<id>\d+)>")
+DCE_REPOSITORY = "Tyrrrz/DiscordChatExporter"
+DCE_RELEASE_API = f"https://api.github.com/repos/{DCE_REPOSITORY}/releases"
+DCE_EXECUTABLE = "DiscordChatExporter.Cli"
+REMOTE_ASSET_CACHE_DIR = Path(".guildbridge") / "content" / "remote-assets"
 
 
 @dataclass(frozen=True)
@@ -105,6 +121,9 @@ class ContentCapability:
             "offline_exports",
             "pre_creation_review",
             "message_splitting",
+            "role_colors",
+            "channel_permissions",
+            "nsfw_channels",
         ):
             export[feature] = "supported" if export_supported else "planned"
             import_[feature] = "supported" if import_supported else "planned"
@@ -115,9 +134,9 @@ class ContentCapability:
             "migration_lock",
             "incremental_migration",
             "circuit_breaker",
+            "parallel_sends",
         ):
             import_[feature] = "supported" if reliability_supported and import_supported else "planned"
-        import_["parallel_sends"] = "planned"
         return cls(
             provider=provider,
             export=export,
@@ -125,6 +144,7 @@ class ContentCapability:
             notes=[
                 "Content support is optional and requires an explicit channel id map for writes.",
                 "Messages are imported as formatted text; platform-native author/timestamp fidelity varies by provider.",
+                "Role colors, channel permissions, and NSFW channel flags are preserved through the structure/template flow; target-native semantics remain provider-specific.",
             ],
         )
 
@@ -355,8 +375,13 @@ class ContentImportOptions:
     continue_on_error: bool = False
     max_failures: int = 1
     parallel_sends: int = 1
+    thread_mode: ThreadMode = "reference"
+    thread_archive_dir: str | None = None
+    download_remote_assets: bool = False
 
     def __post_init__(self) -> None:
+        if self.thread_mode not in {"reference", "merge", "channel", "markdown"}:
+            raise ValueError("thread_mode must be one of: reference, merge, channel, markdown")
         if self.native_content:
             self.native_attachments = True
             self.native_embeds = True
@@ -381,6 +406,23 @@ class ContentImportOptions:
                 self.native_stickers,
             )
         )
+
+
+@dataclass(frozen=True)
+class DiscordChatExporterOptions:
+    exporter_bin: str | Path
+    guild_id: str
+    output_path: str | Path | None = None
+    token_env: str = "DISCORD_TOKEN"
+    export_format: str = "Json"
+    timeout_seconds: int = 60 * 60
+
+
+@dataclass(frozen=True)
+class DiscordChatExporterBootstrapOptions:
+    version: str = "latest"
+    install_dir: str | Path | None = None
+    timeout_seconds: int = 120
 
 
 def validate_content_features(features: list[str]) -> list[str]:
@@ -676,8 +718,11 @@ def apply_content_actions(
     send_action: Callable[[Action], Mapping[str, Any] | str | None],
 ) -> ImportResult:
     result = ImportResult(provider=provider, applied=True)
-    if options.parallel_sends and options.parallel_sends > 1:
-        result.warnings.append("parallel_sends is accepted for planning, but live writes currently run sequentially to preserve order.")
+    parallel_workers = max(1, int(options.parallel_sends or 1))
+    if parallel_workers > 1:
+        result.warnings.append(
+            f"parallel_sends enabled with {parallel_workers} worker(s); message order is preserved within each source channel."
+        )
 
     journal_path = options.journal_path or str(
         default_content_apply_path(provider, "journals", target_id=options.target_id or options.target_name)
@@ -705,58 +750,127 @@ def apply_content_actions(
     journal.start()
     try:
         with ContentMigrationLock(lock_path):
-            for action in actions:
-                action_key = content_action_key(action)
-                result.actions.append(action)
-                if action_key in completed:
-                    skipped += 1
-                    journal.record_skip(action, "already completed in resume or incremental state")
-                    continue
+            if parallel_workers > 1 and len(actions) > 1:
+                result.actions.extend(actions)
+                state_lock = Lock()
+                stop_event = Event()
 
-                journal_index = journal.record_action(action)
-                try:
-                    response = send_action(action)
-                except Exception as exc:
-                    consecutive_failures += 1
-                    failure = _dead_letter_entry(action, exc, action_key=action_key)
-                    failures.append(failure)
-                    journal.action_failed(journal_index, exc)
-                    result.warnings.append(f"Content action failed for {action.path}: {sanitize_text(str(exc))}")
-                    if not options.continue_on_error or consecutive_failures >= max_failures:
-                        report = _content_apply_report(
+                def apply_parallel_action(action: Action) -> None:
+                    nonlocal skipped
+                    if stop_event.is_set():
+                        return
+                    action_key = content_action_key(action)
+                    with state_lock:
+                        if action_key in completed or action_key in newly_completed:
+                            skipped += 1
+                            journal.record_skip(action, "already completed in resume, incremental state, or this apply run")
+                            return
+                        journal_index = journal.record_action(action)
+                    try:
+                        response = _apply_local_content_action(action) if action.method == "WRITE_MARKDOWN" else send_action(action)
+                    except Exception as exc:
+                        with state_lock:
+                            failures.append(_dead_letter_entry(action, exc, action_key=action_key))
+                            journal.action_failed(journal_index, exc)
+                            result.warnings.append(f"Content action failed for {action.path}: {sanitize_text(str(exc))}")
+                            if not options.continue_on_error or len(failures) >= max_failures:
+                                stop_event.set()
+                        return
+
+                    response_id = _response_id(response)
+                    source_key = _source_message_key(action)
+                    with state_lock:
+                        if response_id and source_key:
+                            result.id_map[source_key] = response_id
+                        journal.action_succeeded(journal_index, response_id)
+                        newly_completed.add(action_key)
+
+                groups = _group_content_actions_by_source_channel(actions)
+                with ThreadPoolExecutor(max_workers=min(parallel_workers, len(groups))) as executor:
+                    futures = [executor.submit(_apply_content_action_group, group, apply_parallel_action, stop_event) for group in groups]
+                    for future in as_completed(futures):
+                        future.result()
+                if failures and (not options.continue_on_error or len(failures) >= max_failures):
+                    report = _content_apply_report(
+                        provider=provider,
+                        actions=actions,
+                        applied=len(newly_completed),
+                        skipped=skipped,
+                        failures=failures,
+                        journal_path=journal_path,
+                        dead_letter_path=dead_letter_path,
+                        report_path=report_path,
+                        lock_path=lock_path,
+                    )
+                    write_content_dead_letters(dead_letter_path, provider=provider, failures=failures)
+                    write_content_report(report_path, report)
+                    write_content_markdown_report(report["markdown_report_path"], report)
+                    if options.incremental_state_path:
+                        write_content_incremental_state(
+                            options.incremental_state_path,
                             provider=provider,
-                            actions=actions,
-                            applied=len(newly_completed),
-                            skipped=skipped,
-                            failures=failures,
-                            journal_path=journal_path,
-                            dead_letter_path=dead_letter_path,
-                            report_path=report_path,
-                            lock_path=lock_path,
+                            target_id=options.target_id,
+                            completed=completed | newly_completed,
                         )
-                        write_content_dead_letters(dead_letter_path, provider=provider, failures=failures)
-                        write_content_report(report_path, report)
-                        if options.incremental_state_path:
-                            write_content_incremental_state(
-                                options.incremental_state_path,
-                                provider=provider,
-                                target_id=options.target_id,
-                                completed=completed | newly_completed,
-                            )
-                        journal.fail(exc, report)
-                        raise ValueError(
-                            f"Content import stopped after {consecutive_failures} consecutive failure(s). "
-                            f"Dead-letter queue: {dead_letter_path}. Report: {report_path}."
-                        ) from exc
-                    continue
+                    journal.fail(failures[-1]["error"], report)
+                    raise ValueError(
+                        f"Content import stopped after {len(failures)} failure(s). "
+                        f"Dead-letter queue: {dead_letter_path}. Report: {report_path}."
+                    )
+            else:
+                for action in actions:
+                    action_key = content_action_key(action)
+                    result.actions.append(action)
+                    if action_key in completed:
+                        skipped += 1
+                        journal.record_skip(action, "already completed in resume or incremental state")
+                        continue
 
-                response_id = _response_id(response)
-                source_key = _source_message_key(action)
-                if response_id and source_key:
-                    result.id_map[source_key] = response_id
-                journal.action_succeeded(journal_index, response_id)
-                newly_completed.add(action_key)
-                consecutive_failures = 0
+                    journal_index = journal.record_action(action)
+                    try:
+                        response = _apply_local_content_action(action) if action.method == "WRITE_MARKDOWN" else send_action(action)
+                    except Exception as exc:
+                        consecutive_failures += 1
+                        failure = _dead_letter_entry(action, exc, action_key=action_key)
+                        failures.append(failure)
+                        journal.action_failed(journal_index, exc)
+                        result.warnings.append(f"Content action failed for {action.path}: {sanitize_text(str(exc))}")
+                        if not options.continue_on_error or consecutive_failures >= max_failures:
+                            report = _content_apply_report(
+                                provider=provider,
+                                actions=actions,
+                                applied=len(newly_completed),
+                                skipped=skipped,
+                                failures=failures,
+                                journal_path=journal_path,
+                                dead_letter_path=dead_letter_path,
+                                report_path=report_path,
+                                lock_path=lock_path,
+                            )
+                            write_content_dead_letters(dead_letter_path, provider=provider, failures=failures)
+                            write_content_report(report_path, report)
+                            write_content_markdown_report(report["markdown_report_path"], report)
+                            if options.incremental_state_path:
+                                write_content_incremental_state(
+                                    options.incremental_state_path,
+                                    provider=provider,
+                                    target_id=options.target_id,
+                                    completed=completed | newly_completed,
+                                )
+                            journal.fail(exc, report)
+                            raise ValueError(
+                                f"Content import stopped after {consecutive_failures} consecutive failure(s). "
+                                f"Dead-letter queue: {dead_letter_path}. Report: {report_path}."
+                            ) from exc
+                        continue
+
+                    response_id = _response_id(response)
+                    source_key = _source_message_key(action)
+                    if response_id and source_key:
+                        result.id_map[source_key] = response_id
+                    journal.action_succeeded(journal_index, response_id)
+                    newly_completed.add(action_key)
+                    consecutive_failures = 0
     except Exception:
         raise
     else:
@@ -773,6 +887,7 @@ def apply_content_actions(
         )
         write_content_dead_letters(dead_letter_path, provider=provider, failures=failures)
         write_content_report(report_path, report)
+        write_content_markdown_report(report["markdown_report_path"], report)
         if options.incremental_state_path:
             write_content_incremental_state(
                 options.incremental_state_path,
@@ -783,6 +898,7 @@ def apply_content_actions(
         journal.finish(result, report)
         result.warnings.append(f"Content apply journal written to {journal_path}")
         result.warnings.append(f"Content import report written to {report_path}")
+        result.warnings.append(f"Content markdown report written to {report['markdown_report_path']}")
         if failures:
             result.warnings.append(f"Content dead-letter queue written to {dead_letter_path}")
         return result
@@ -806,6 +922,44 @@ def write_content_report(path: str | Path, report: dict[str, Any]) -> None:
     _write_json_atomic(Path(path), report)
 
 
+def write_content_markdown_report(path: str | Path, report: dict[str, Any]) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    raw_fidelity = report.get("fidelity")
+    fidelity: Mapping[str, Any] = raw_fidelity if isinstance(raw_fidelity, dict) else {}
+    raw_feature_counts = fidelity.get("feature_counts")
+    feature_counts: Mapping[str, Any] = raw_feature_counts if isinstance(raw_feature_counts, dict) else {}
+    lines = [
+        "# GuildBridge Content Migration Report",
+        "",
+        f"- Provider: {report.get('provider')}",
+        f"- Status: {report.get('status')}",
+        f"- Created: {report.get('created_at')}",
+        f"- Fidelity score: {fidelity.get('score', 'n/a')}/100",
+        f"- Actions: {report.get('action_count')}",
+        f"- Applied: {report.get('applied_count')}",
+        f"- Skipped: {report.get('skipped_count')}",
+        f"- Failed: {report.get('failed_count')}",
+        "",
+        "## Feature Counts",
+        "",
+    ]
+    for key in sorted(feature_counts):
+        lines.append(f"- {key}: {feature_counts[key]}")
+    lines.extend(
+        [
+            "",
+            "## Files",
+            "",
+            f"- JSON report: {report.get('report_path')}",
+            f"- Journal: {report.get('journal_path')}",
+            f"- Dead letters: {report.get('dead_letter_path') or 'none'}",
+            f"- Lock file: {report.get('lock_path')}",
+            "",
+        ]
+    )
+    Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+
 def _dead_letter_entry(action: Action, error: BaseException | str, *, action_key: str) -> dict[str, Any]:
     return {
         "action_key": action_key,
@@ -813,6 +967,11 @@ def _dead_letter_entry(action: Action, error: BaseException | str, *, action_key
         "action": asdict(action),
         "error": sanitize_text(str(error)),
     }
+
+
+def _content_markdown_report_path(report_path: str) -> str:
+    path = Path(report_path)
+    return str(path.with_suffix(".md")) if path.suffix else str(path / "migration_report.md")
 
 
 def _content_apply_report(
@@ -827,6 +986,7 @@ def _content_apply_report(
     report_path: str,
     lock_path: str,
 ) -> dict[str, Any]:
+    markdown_report_path = _content_markdown_report_path(report_path)
     return {
         "schema": CONTENT_IMPORT_REPORT_SCHEMA,
         "provider": provider,
@@ -838,8 +998,59 @@ def _content_apply_report(
         "journal_path": journal_path,
         "dead_letter_path": dead_letter_path if failures else None,
         "report_path": report_path,
+        "markdown_report_path": markdown_report_path,
         "lock_path": lock_path,
         "status": "failed" if failures else "succeeded",
+        "fidelity": _content_fidelity(actions=actions, failures=failures, skipped=skipped),
+    }
+
+
+def _content_fidelity(*, actions: list[Action], failures: list[dict[str, Any]], skipped: int) -> dict[str, Any]:
+    write_actions = [action for action in actions if action.method != "WRITE_MARKDOWN"]
+    total = len(write_actions)
+    failed = len(failures)
+    successful = max(0, total - failed - skipped)
+    success_rate = successful / total if total else 1.0
+    feature_penalty = 0
+    feature_counts = {
+        "attachments": 0,
+        "embeds": 0,
+        "replies": 0,
+        "pins": 0,
+        "reactions": 0,
+        "polls": 0,
+        "stickers": 0,
+        "threads": 0,
+        "markdown_thread_archives": 0,
+    }
+    for action in actions:
+        payload = action.payload or {}
+        if action.method == "WRITE_MARKDOWN":
+            feature_counts["markdown_thread_archives"] += 1
+            continue
+        if payload.get("attachments"):
+            feature_counts["attachments"] += 1
+        if payload.get("embeds"):
+            feature_counts["embeds"] += 1
+        if payload.get("reply_to_id"):
+            feature_counts["replies"] += 1
+        if payload.get("pinned"):
+            feature_counts["pins"] += 1
+        if payload.get("reactions"):
+            feature_counts["reactions"] += 1
+        if payload.get("poll"):
+            feature_counts["polls"] += 1
+        if payload.get("stickers"):
+            feature_counts["stickers"] += 1
+        if payload.get("thread_id"):
+            feature_counts["threads"] += 1
+    score = max(0, round(success_rate * 100) - feature_penalty)
+    return {
+        "score": score,
+        "successful_message_actions": successful,
+        "failed_message_actions": failed,
+        "skipped_message_actions": skipped,
+        "feature_counts": feature_counts,
     }
 
 
@@ -869,6 +1080,37 @@ def _source_message_key(action: Action) -> str | None:
     return f"{source_id}:{part_index}" if part_index else str(source_id)
 
 
+def _apply_local_content_action(action: Action) -> dict[str, str]:
+    if action.method != "WRITE_MARKDOWN":
+        raise ValueError(f"Unsupported local content action {action.method!r}")
+    payload = action.payload or {}
+    content = str(payload.get("content") or "")
+    path = Path(action.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return {"id": str(path)}
+
+
+def _group_content_actions_by_source_channel(actions: list[Action]) -> list[list[Action]]:
+    groups: dict[str, list[Action]] = {}
+    for action in actions:
+        payload = action.payload or {}
+        group_key = str(payload.get("source_channel_id") or payload.get("channel_id") or action.path)
+        groups.setdefault(group_key, []).append(action)
+    return list(groups.values())
+
+
+def _apply_content_action_group(
+    actions: list[Action],
+    apply_action: Callable[[Action], None],
+    stop_event: Event,
+) -> None:
+    for action in actions:
+        if stop_event.is_set():
+            return
+        apply_action(action)
+
+
 def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
@@ -883,6 +1125,294 @@ def _utc_now() -> str:
 
 def _safe_path_part(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-") or "run"
+
+
+def metadata_first(metadata: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def resolve_content_asset_path(
+    item: object,
+    *,
+    label: str,
+    allow_remote_download: bool,
+    warnings: list[str],
+    cache_dir: str | Path | None = None,
+    max_bytes: int | None = None,
+) -> Path | None:
+    """Resolve a content asset to a local file, optionally caching a remote URL."""
+    if not isinstance(item, Mapping):
+        return None
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+    raw_path = item.get("local_path")
+    if not raw_path and isinstance(metadata, Mapping):
+        raw_path = metadata_first(metadata, "local_path", "source_path")
+    if raw_path:
+        path = Path(str(raw_path)).expanduser()
+        if path.exists() and path.is_file():
+            return path
+        warnings.append(f"Native {label} upload skipped; file was not found at {path}.")
+        return None
+
+    url = item.get("url")
+    if not isinstance(url, str) and isinstance(metadata, Mapping):
+        url = metadata_first(metadata, "url", "source_url")
+    if not isinstance(url, str) or not url.strip():
+        warnings.append(f"Native {label} upload skipped; no local file path was available.")
+        return None
+    if not allow_remote_download:
+        warnings.append(f"Native {label} upload skipped; remote URL is available but --download-remote-assets is not enabled.")
+        return None
+    return _download_remote_content_asset(
+        url.strip(),
+        item=item,
+        label=label,
+        warnings=warnings,
+        cache_dir=Path(cache_dir) if cache_dir else REMOTE_ASSET_CACHE_DIR,
+        max_bytes=max_bytes,
+    )
+
+
+def _download_remote_content_asset(
+    url: str,
+    *,
+    item: Mapping[str, Any],
+    label: str,
+    warnings: list[str],
+    cache_dir: Path,
+    max_bytes: int | None,
+) -> Path | None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        warnings.append(f"Native {label} upload skipped; remote asset URL is not HTTP(S).")
+        return None
+    filename = _remote_asset_filename(url, item)
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
+    target = cache_dir / digest / filename
+    if target.exists() and target.is_file():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        response = requests.get(url, stream=True, timeout=60)
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if status_code >= 400:
+            warnings.append(f"Native {label} upload skipped; remote asset returned HTTP {status_code}.")
+            return None
+        headers = getattr(response, "headers", {}) or {}
+        length = headers.get("content-length") if isinstance(headers, Mapping) else None
+        if max_bytes is not None and length:
+            try:
+                if int(length) > max_bytes:
+                    warnings.append(f"Native {label} upload skipped; remote asset exceeds the {max_bytes} byte limit.")
+                    return None
+            except ValueError:
+                pass
+        total = 0
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        with tmp.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    handle.close()
+                    tmp.unlink(missing_ok=True)
+                    warnings.append(f"Native {label} upload skipped; remote asset exceeds the {max_bytes} byte limit.")
+                    return None
+                handle.write(chunk)
+        tmp.replace(target)
+        return target
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"Native {label} upload skipped; remote asset download failed: {sanitize_text(str(exc))}.")
+        return None
+
+
+def _remote_asset_filename(url: str, item: Mapping[str, Any]) -> str:
+    raw = item.get("filename") or item.get("name") or Path(urlparse(url).path).name or "asset"
+    name = "".join(ch if ch.isalnum() or ch in {".", "-", "_"} else "-" for ch in str(raw)).strip(".-")
+    return name or "asset"
+
+
+def download_discord_chat_exporter(options: DiscordChatExporterBootstrapOptions | None = None) -> Path:
+    """Download and cache DiscordChatExporter.Cli for the current platform."""
+    options = options or DiscordChatExporterBootstrapOptions()
+    runtime = _dce_runtime_id()
+    release = _dce_release_metadata(options)
+    version = str(release.get("tag_name") or options.version or "latest")
+    install_root = Path(options.install_dir) if options.install_dir else Path(".guildbridge") / "tools" / "discord-chat-exporter"
+    install_dir = install_root / _safe_path_part(version) / runtime
+    executable_name = _dce_executable_name()
+    existing = _find_dce_executable(install_dir, executable_name)
+    if existing:
+        return existing
+
+    asset = _select_dce_asset(release, runtime)
+    download_url = str(asset.get("browser_download_url") or "")
+    if not download_url:
+        raise ValueError(f"DiscordChatExporter release asset {asset.get('name')!r} has no download URL.")
+    install_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = install_dir / str(asset.get("name") or f"{DCE_EXECUTABLE}.zip")
+    response = requests.get(download_url, timeout=max(1, options.timeout_seconds))
+    if response.status_code >= 400:
+        raise ValueError(f"Could not download DiscordChatExporter asset: HTTP {response.status_code}.")
+    archive_path.write_bytes(response.content)
+    if zipfile.is_zipfile(archive_path):
+        _extract_zip_safely(archive_path, install_dir)
+    else:
+        direct_path = install_dir / executable_name
+        direct_path.write_bytes(archive_path.read_bytes())
+
+    executable = _find_dce_executable(install_dir, executable_name)
+    if not executable:
+        raise ValueError(f"DiscordChatExporter asset did not contain {executable_name!r}.")
+    if sys.platform != "win32":
+        executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return executable
+
+
+def _dce_release_metadata(options: DiscordChatExporterBootstrapOptions) -> dict[str, Any]:
+    version = (options.version or "latest").strip()
+    url = f"{DCE_RELEASE_API}/latest" if version in {"", "latest"} else f"{DCE_RELEASE_API}/tags/{version}"
+    response = requests.get(url, timeout=max(1, options.timeout_seconds))
+    if response.status_code >= 400:
+        raise ValueError(f"Could not inspect DiscordChatExporter release {version!r}: HTTP {response.status_code}.")
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("DiscordChatExporter release metadata was not a JSON object.")
+    return data
+
+
+def _dce_runtime_id() -> str:
+    system = sys.platform
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in {"arm64", "aarch64"} else "x64"
+    if system == "win32":
+        return f"win-{arch}"
+    if system == "darwin":
+        return f"osx-{arch}"
+    if system.startswith("linux"):
+        return f"linux-{arch}"
+    raise ValueError(f"Managed DiscordChatExporter download is not supported on {sys.platform!r}.")
+
+
+def _dce_executable_name() -> str:
+    return f"{DCE_EXECUTABLE}.exe" if sys.platform == "win32" else DCE_EXECUTABLE
+
+
+def _select_dce_asset(release: Mapping[str, Any], runtime: str) -> Mapping[str, Any]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("DiscordChatExporter release metadata does not list downloadable assets.")
+    scored: list[tuple[int, Mapping[str, Any]]] = []
+    for asset in assets:
+        if not isinstance(asset, Mapping):
+            continue
+        name = str(asset.get("name") or "")
+        lower = name.lower()
+        if "discordchatexporter.cli" not in lower:
+            continue
+        score = 0
+        if runtime in lower:
+            score += 100
+        if runtime.split("-", 1)[0] in lower:
+            score += 20
+        if runtime.rsplit("-", 1)[-1] in lower:
+            score += 10
+        if lower.endswith(".zip"):
+            score += 5
+        if score:
+            scored.append((score, asset))
+    if not scored:
+        names = ", ".join(str(asset.get("name")) for asset in assets if isinstance(asset, Mapping))
+        raise ValueError(f"No DiscordChatExporter.Cli release asset matched runtime {runtime!r}. Available assets: {names}")
+    return max(scored, key=lambda item: item[0])[1]
+
+
+def _extract_zip_safely(archive_path: Path, install_dir: Path) -> None:
+    base = install_dir.resolve()
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            target = (install_dir / member.filename).resolve()
+            if target != base and base not in target.parents:
+                raise ValueError(f"Refusing unsafe DiscordChatExporter archive path {member.filename!r}.")
+        archive.extractall(install_dir)
+
+
+def _find_dce_executable(root: Path, executable_name: str) -> Path | None:
+    if not root.exists():
+        return None
+    direct = root / executable_name
+    if direct.exists():
+        return direct
+    for candidate in root.rglob(executable_name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def run_discord_chat_exporter(options: DiscordChatExporterOptions) -> Path:
+    """Run a locally installed DiscordChatExporter CLI and return its JSON output path."""
+    token = os.environ.get(options.token_env)
+    if not token:
+        raise ValueError(
+            f"DiscordChatExporter requires ${options.token_env} to be set. "
+            "GuildBridge does not store Discord tokens in templates, plans, or archives."
+        )
+    guild_id = options.guild_id.strip()
+    if not guild_id:
+        raise ValueError("DiscordChatExporter requires a Discord guild/server id.")
+    output_path = (
+        Path(options.output_path)
+        if options.output_path
+        else Path(".guildbridge") / "content" / "discord-chat-exporter" / _safe_path_part(guild_id)
+    )
+    if output_path.suffix:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(options.exporter_bin),
+        "exportguild",
+        "-t",
+        token,
+        "-g",
+        guild_id,
+        "-o",
+        str(output_path),
+        "-f",
+        options.export_format,
+    ]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=max(1, options.timeout_seconds),
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = "\n".join(
+            part
+            for part in (
+                _redact_process_output(completed.stdout, token),
+                _redact_process_output(completed.stderr, token),
+            )
+            if part
+        )
+        raise ValueError(f"DiscordChatExporter failed with exit code {completed.returncode}.{f' Output: {detail}' if detail else ''}")
+    files = sorted(output_path.glob("*.json")) if output_path.is_dir() else ([output_path] if output_path.exists() else [])
+    if not files:
+        raise ValueError(f"DiscordChatExporter completed but no JSON files were found at {output_path}.")
+    return output_path
+
+
+def _redact_process_output(text: str, token: str) -> str:
+    return sanitize_text(text.replace(token, "[redacted]")).strip()[:4000]
 
 
 def load_discord_chat_export(path: str | Path) -> ContentArchive:
@@ -925,6 +1455,9 @@ def load_discord_chat_export(path: str | Path) -> ContentArchive:
         for raw_message in data.get("messages", []) or []:
             if not isinstance(raw_message, dict):
                 continue
+            thread_channel = _thread_channel_from_dce(raw_message, channel_id)
+            if thread_channel and thread_channel.id not in channels:
+                channels[thread_channel.id] = thread_channel
             messages.append(_message_from_dce(raw_message, channel_id))
 
     messages.sort(key=lambda message: (message.created_at or "", message.id))
@@ -969,6 +1502,14 @@ def load_discord_chat_export(path: str | Path) -> ContentArchive:
                 "source_format": "discord_chat_exporter",
                 "server_banner_url": guild.get("bannerUrl") if isinstance(guild, dict) else None,
                 "server_icon_url": guild.get("iconUrl") if isinstance(guild, dict) else None,
+                "server_banner_path": (
+                    guild.get("bannerPath") or guild.get("bannerFilePath") or guild.get("bannerLocalPath")
+                    if isinstance(guild, dict)
+                    else None
+                ),
+                "server_icon_path": (
+                    guild.get("iconPath") or guild.get("iconFilePath") or guild.get("iconLocalPath") if isinstance(guild, dict) else None
+                ),
                 "emoji_count": len(archive_emoji),
                 "sticker_count": len(archive_stickers),
             }
@@ -1145,6 +1686,34 @@ def _message_thread_id(raw: dict[str, Any]) -> str | None:
     return local_id("thread", "discord", str(raw_thread_id)) if raw_thread_id else None
 
 
+def _thread_channel_from_dce(raw: dict[str, Any], parent_channel_id: str) -> ContentChannel | None:
+    thread = raw.get("thread")
+    raw_thread_id = raw.get("threadId") or raw.get("thread_id")
+    name: str | None = None
+    raw_type: Any = "thread"
+    if isinstance(thread, dict):
+        raw_thread_id = raw_thread_id or thread.get("id")
+        raw_type = thread.get("type") or raw_type
+        if thread.get("name"):
+            name = str(thread.get("name"))
+    if not raw_thread_id:
+        return None
+    raw_id = str(raw_thread_id)
+    return ContentChannel(
+        id=local_id("thread", "discord", raw_id),
+        name=normalize_channel_name(name or f"thread-{raw_id[-8:]}"),
+        type=_dce_channel_type(raw_type),
+        parent_id=parent_channel_id,
+        metadata=without_none(
+            {
+                "source_thread_hash": hash_id("discord_thread", raw_id),
+                "parent_channel_id": parent_channel_id,
+                "source_kind": "thread",
+            }
+        ),
+    )
+
+
 def _custom_emoji_from_text(text: str) -> list[ContentEmoji]:
     found: dict[str, ContentEmoji] = {}
     for match in CUSTOM_EMOJI_RE.finditer(text):
@@ -1198,6 +1767,69 @@ def _embed_from_dce(raw: dict[str, Any]) -> ContentEmbed:
     )
 
 
+def _channel_lookup(archive: ContentArchive) -> dict[str, ContentChannel]:
+    return {channel.id: channel for channel in archive.channels}
+
+
+def _thread_label(channels: Mapping[str, ContentChannel], thread_id: str | None) -> str | None:
+    if not thread_id:
+        return None
+    channel = channels.get(thread_id)
+    if channel and channel.name:
+        return channel.name
+    return thread_id
+
+
+def _thread_markdown_path(options: ContentImportOptions, archive: ContentArchive, thread_id: str) -> Path:
+    root = (
+        Path(options.thread_archive_dir).expanduser()
+        if options.thread_archive_dir
+        else Path(".guildbridge") / "content" / "thread-archives" / _safe_path_part(archive.name)
+    )
+    return root / f"{_safe_path_part(thread_id)}.md"
+
+
+def _render_thread_markdown(
+    archive: ContentArchive,
+    messages: list[ContentMessage],
+    options: ContentImportOptions,
+    *,
+    thread_id: str,
+    channels: Mapping[str, ContentChannel],
+) -> str:
+    thread_name = _thread_label(channels, thread_id) or thread_id
+    parent_id = messages[0].channel_id if messages else None
+    parent_name = channels[parent_id].name if parent_id and parent_id in channels else parent_id
+    lines = [
+        f"# Thread Archive: {thread_name}",
+        "",
+        f"- Source archive: {archive.name}",
+        f"- Thread id: {thread_id}",
+        f"- Parent channel: {parent_name or 'unknown'}",
+        f"- Message count: {len(messages)}",
+        "",
+        "## Messages",
+        "",
+    ]
+    for message in messages:
+        lines.append("---")
+        lines.append(
+            format_message_for_import(
+                message,
+                preserve_authors=options.preserve_authors,
+                include_attachments=options.include_attachments,
+                include_reactions=options.include_reactions,
+                include_embeds=options.include_embeds,
+                include_stickers=options.include_stickers,
+                include_polls=options.include_polls,
+                include_threads=False,
+                include_custom_emoji=options.include_custom_emoji,
+            )
+        )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def format_message_for_import(
     message: ContentMessage,
     *,
@@ -1209,6 +1841,8 @@ def format_message_for_import(
     include_polls: bool = True,
     include_threads: bool = True,
     include_custom_emoji: bool = True,
+    thread_mode: ThreadMode = "reference",
+    thread_label: str | None = None,
 ) -> str:
     lines: list[str] = []
     header_parts: list[str] = []
@@ -1221,7 +1855,15 @@ def format_message_for_import(
     if message.reply_to_id:
         lines.append(f"(reply to {message.reply_to_id})")
     if include_threads and message.thread_id:
-        lines.append(f"(thread {message.thread_id})")
+        label = thread_label or message.thread_id
+        if thread_mode == "merge":
+            lines.append(f"(merged from thread {label})")
+        elif thread_mode == "channel":
+            lines.append(f"(thread channel {label})")
+        elif thread_mode == "markdown":
+            lines.append(f"(thread archived in markdown: {label})")
+        else:
+            lines.append(f"(thread {label})")
     if message.pinned:
         lines.append("(pinned)")
     if message.content.strip():
@@ -1289,8 +1931,20 @@ def dry_run_content_import(
 ) -> ImportResult:
     result = ImportResult(provider=provider, applied=False)
     messages = archive.messages[: options.message_limit] if options.message_limit else archive.messages
+    channels = _channel_lookup(archive)
+    thread_messages: dict[str, list[ContentMessage]] = {}
+    missing_thread_maps: set[str] = set()
     for message in messages:
-        target_channel = options.channel_map.get(message.channel_id, message.channel_id)
+        if options.include_threads and options.thread_mode == "markdown" and message.thread_id:
+            thread_messages.setdefault(message.thread_id, []).append(message)
+            continue
+
+        source_channel_id = message.channel_id
+        if options.include_threads and options.thread_mode == "channel" and message.thread_id:
+            source_channel_id = message.thread_id
+            if source_channel_id not in options.channel_map:
+                missing_thread_maps.add(source_channel_id)
+        target_channel = options.channel_map.get(source_channel_id, source_channel_id)
         text = format_message_for_import(
             message,
             preserve_authors=options.preserve_authors,
@@ -1301,6 +1955,8 @@ def dry_run_content_import(
             include_polls=options.include_polls,
             include_threads=options.include_threads,
             include_custom_emoji=options.include_custom_emoji,
+            thread_mode=options.thread_mode,
+            thread_label=_thread_label(channels, message.thread_id),
         )
         parts = split_message(text)
         for index, part in enumerate(parts, start=1):
@@ -1310,7 +1966,8 @@ def dry_run_content_import(
                 "source_message_id": message.id,
                 "part_index": index,
                 "part_count": len(parts),
-                "source_channel_id": message.channel_id,
+                "source_channel_id": source_channel_id,
+                "original_source_channel_id": message.channel_id,
                 "author": asdict(message.author),
                 "created_at": message.created_at,
                 "edited_at": message.edited_at,
@@ -1322,13 +1979,40 @@ def dry_run_content_import(
                 "pinned": message.pinned,
                 "reply_to_id": message.reply_to_id,
                 "thread_id": message.thread_id,
+                "thread_mode": options.thread_mode,
                 "metadata": message.metadata,
             }
             path = path_builder(target_channel, message, index) if path_builder else path_template.format(channel_id=target_channel)
             result.actions.append(Action(provider, method, path, payload))
+    for thread_id, grouped_messages in thread_messages.items():
+        markdown_path = _thread_markdown_path(options, archive, thread_id)
+        content = _render_thread_markdown(archive, grouped_messages, options, thread_id=thread_id, channels=channels)
+        result.actions.append(
+            Action(
+                provider,
+                "WRITE_MARKDOWN",
+                str(markdown_path),
+                {
+                    "thread_id": thread_id,
+                    "source_channel_id": grouped_messages[0].channel_id if grouped_messages else "",
+                    "message_count": len(grouped_messages),
+                    "content": content,
+                },
+                note="write local markdown thread/forum archive",
+            )
+        )
     result.warnings.extend(archive.warnings)
     if not options.channel_map:
         result.warnings.append("No channel map was provided; dry-run uses archive channel ids as target ids.")
+    if options.include_threads and options.thread_mode == "channel" and missing_thread_maps:
+        result.warnings.append(
+            "Thread channel mode is enabled but no channel map was provided for thread id(s): "
+            + ", ".join(sorted(missing_thread_maps))
+        )
+    if options.include_threads and options.thread_mode == "markdown" and thread_messages:
+        result.warnings.append(
+            f"Thread markdown mode will write {len(thread_messages)} local thread archive file(s) instead of sending those messages to provider APIs."
+        )
     if options.parallel_sends and options.parallel_sends > 1:
-        result.warnings.append("parallel_sends is recorded in the plan; live writes are currently ordered and sequential.")
+        result.warnings.append("parallel_sends will preserve message order inside each source channel during live writes.")
     return result

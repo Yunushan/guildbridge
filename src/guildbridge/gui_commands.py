@@ -145,11 +145,29 @@ def build_migrate_args(
 
 def build_content_export_args(
     *,
-    discord_chat_export: str,
+    discord_chat_export: str = "",
+    source_id: str = "",
+    discord_chat_exporter_bin: str = "",
+    download_discord_chat_exporter: bool = False,
+    discord_chat_exporter_version: str = "",
+    discord_chat_exporter_install_dir: str = "",
+    discord_token_env: str = "",
+    discord_export_out: str = "",
+    discord_export_format: str = "",
+    discord_export_timeout: str = "",
     out: str = "community.content.json",
 ) -> list[str]:
     args = ["content-export"]
     _add_value(args, "--discord-chat-export", discord_chat_export)
+    _add_value(args, "--source-id", source_id)
+    _add_value(args, "--discord-chat-exporter-bin", discord_chat_exporter_bin)
+    _add_flag(args, "--download-discord-chat-exporter", download_discord_chat_exporter)
+    _add_value(args, "--discord-chat-exporter-version", discord_chat_exporter_version)
+    _add_value(args, "--discord-chat-exporter-install-dir", discord_chat_exporter_install_dir)
+    _add_value(args, "--discord-token-env", discord_token_env)
+    _add_value(args, "--discord-export-out", discord_export_out)
+    _add_value(args, "--discord-export-format", discord_export_format)
+    _add_value(args, "--discord-export-timeout", discord_export_timeout)
     _add_value(args, "--out", out)
     return args
 
@@ -174,6 +192,8 @@ def _add_content_import_options(
     no_threads: bool = False,
     no_custom_emoji: bool = False,
     native_content: bool = False,
+    ferry_parity: bool = False,
+    download_remote_assets: bool = False,
     native_attachments: bool = False,
     native_embeds: bool = False,
     native_replies: bool = False,
@@ -192,6 +212,8 @@ def _add_content_import_options(
     content_continue_on_error: bool = False,
     content_max_failures: str = "",
     content_parallel_sends: str = "",
+    content_thread_mode: str = "",
+    content_thread_archive_dir: str = "",
 ) -> None:
     _add_value(args, "--target-id", target_id)
     _add_value(args, "--target-name", target_name)
@@ -207,6 +229,8 @@ def _add_content_import_options(
     _add_value(args, "--content-incremental-state", content_incremental_state)
     _add_value(args, "--content-max-failures", content_max_failures)
     _add_value(args, "--content-parallel-sends", content_parallel_sends)
+    _add_value(args, "--content-thread-mode", content_thread_mode)
+    _add_value(args, "--content-thread-archive-dir", content_thread_archive_dir)
     _add_flag(args, "--no-authors", no_authors)
     _add_flag(args, "--no-attachments", no_attachments)
     _add_flag(args, "--no-reactions", no_reactions)
@@ -216,6 +240,8 @@ def _add_content_import_options(
     _add_flag(args, "--no-threads", no_threads)
     _add_flag(args, "--no-custom-emoji", no_custom_emoji)
     _add_flag(args, "--native-content", native_content)
+    _add_flag(args, "--ferry-parity", ferry_parity)
+    _add_flag(args, "--download-remote-assets", download_remote_assets)
     _add_flag(args, "--native-attachments", native_attachments)
     _add_flag(args, "--native-embeds", native_embeds)
     _add_flag(args, "--native-replies", native_replies)
@@ -252,6 +278,8 @@ def build_content_import_args(
     no_threads: bool = False,
     no_custom_emoji: bool = False,
     native_content: bool = False,
+    ferry_parity: bool = False,
+    download_remote_assets: bool = False,
     native_attachments: bool = False,
     native_embeds: bool = False,
     native_replies: bool = False,
@@ -270,6 +298,8 @@ def build_content_import_args(
     content_continue_on_error: bool = False,
     content_max_failures: str = "",
     content_parallel_sends: str = "",
+    content_thread_mode: str = "",
+    content_thread_archive_dir: str = "",
 ) -> list[str]:
     args = ["content-import"]
     args.extend(["--file", file.strip()])
@@ -293,6 +323,8 @@ def build_content_import_args(
         no_threads=no_threads,
         no_custom_emoji=no_custom_emoji,
         native_content=native_content,
+        ferry_parity=ferry_parity,
+        download_remote_assets=download_remote_assets,
         native_attachments=native_attachments,
         native_embeds=native_embeds,
         native_replies=native_replies,
@@ -311,6 +343,8 @@ def build_content_import_args(
         content_continue_on_error=content_continue_on_error,
         content_max_failures=content_max_failures,
         content_parallel_sends=content_parallel_sends,
+        content_thread_mode=content_thread_mode,
+        content_thread_archive_dir=content_thread_archive_dir,
     )
     return args
 
@@ -318,7 +352,16 @@ def build_content_import_args(
 def build_content_migrate_args(
     provider_to: str | Sequence[str],
     *,
-    discord_chat_export: str,
+    discord_chat_export: str = "",
+    source_id: str = "",
+    discord_chat_exporter_bin: str = "",
+    download_discord_chat_exporter: bool = False,
+    discord_chat_exporter_version: str = "",
+    discord_chat_exporter_install_dir: str = "",
+    discord_token_env: str = "",
+    discord_export_out: str = "",
+    discord_export_format: str = "",
+    discord_export_timeout: str = "",
     target_id: str = "",
     target_name: str = "",
     channel_map: str = "",
@@ -336,6 +379,8 @@ def build_content_migrate_args(
     no_threads: bool = False,
     no_custom_emoji: bool = False,
     native_content: bool = False,
+    ferry_parity: bool = False,
+    download_remote_assets: bool = False,
     native_attachments: bool = False,
     native_embeds: bool = False,
     native_replies: bool = False,
@@ -354,9 +399,20 @@ def build_content_migrate_args(
     content_continue_on_error: bool = False,
     content_max_failures: str = "",
     content_parallel_sends: str = "",
+    content_thread_mode: str = "",
+    content_thread_archive_dir: str = "",
 ) -> list[str]:
     args = ["content-migrate", "--from", "discord"]
     _add_value(args, "--discord-chat-export", discord_chat_export)
+    _add_value(args, "--source-id", source_id)
+    _add_value(args, "--discord-chat-exporter-bin", discord_chat_exporter_bin)
+    _add_flag(args, "--download-discord-chat-exporter", download_discord_chat_exporter)
+    _add_value(args, "--discord-chat-exporter-version", discord_chat_exporter_version)
+    _add_value(args, "--discord-chat-exporter-install-dir", discord_chat_exporter_install_dir)
+    _add_value(args, "--discord-token-env", discord_token_env)
+    _add_value(args, "--discord-export-out", discord_export_out)
+    _add_value(args, "--discord-export-format", discord_export_format)
+    _add_value(args, "--discord-export-timeout", discord_export_timeout)
     _add_providers(args, "--to", provider_to)
     _add_content_import_options(
         args,
@@ -377,6 +433,8 @@ def build_content_migrate_args(
         no_threads=no_threads,
         no_custom_emoji=no_custom_emoji,
         native_content=native_content,
+        ferry_parity=ferry_parity,
+        download_remote_assets=download_remote_assets,
         native_attachments=native_attachments,
         native_embeds=native_embeds,
         native_replies=native_replies,
@@ -395,6 +453,8 @@ def build_content_migrate_args(
         content_continue_on_error=content_continue_on_error,
         content_max_failures=content_max_failures,
         content_parallel_sends=content_parallel_sends,
+        content_thread_mode=content_thread_mode,
+        content_thread_archive_dir=content_thread_archive_dir,
     )
     return args
 
