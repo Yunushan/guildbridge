@@ -156,12 +156,14 @@ def apply_confirmation_error(
 
 
 def _same_plan_path(plan_in: str, plan_out: str) -> bool:
-    if not plan_in.strip() or not plan_out.strip() or plan_out.strip() == "-":
+    plan_in_clean = plan_in.strip()
+    plan_out_clean = plan_out.strip()
+    if not plan_in_clean or not plan_out_clean or plan_out_clean == "-":
         return False
     try:
-        return Path(plan_in).expanduser().resolve() == Path(plan_out).expanduser().resolve()
+        return Path(plan_in_clean).expanduser().resolve() == Path(plan_out_clean).expanduser().resolve()
     except OSError:
-        return Path(plan_in).expanduser().absolute() == Path(plan_out).expanduser().absolute()
+        return Path(plan_in_clean).expanduser().absolute() == Path(plan_out_clean).expanduser().absolute()
 
 
 def build_validate_args(file: str) -> list[str]:

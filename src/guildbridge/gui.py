@@ -744,6 +744,8 @@ class GuildBridgeGUI(ttk.Frame):
         self._run(args)
 
     def _confirm_apply(self, reviewed_plan: str, plan_out: str, prompt: ApplyPrompt | None) -> bool:
+        reviewed_plan = reviewed_plan.strip()
+        plan_out = plan_out.strip()
         plan_error = apply_confirmation_error(
             apply=True,
             plan_in=reviewed_plan,
@@ -769,7 +771,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     @staticmethod
     def _reviewed_plan_preview(reviewed_plan: str) -> list[str]:
-        path = Path(reviewed_plan).expanduser()
+        path = Path(reviewed_plan.strip()).expanduser()
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except OSError as exc:
@@ -833,7 +835,7 @@ class GuildBridgeGUI(ttk.Frame):
         lines.extend(
             [
                 "",
-                f"Apply result output: {plan_out or 'output panel only'}",
+                f"Apply result output: {plan_out.strip() or 'output panel only'}",
                 "",
                 "Continue with the actual run?",
             ]

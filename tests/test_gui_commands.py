@@ -122,7 +122,7 @@ def test_apply_confirmation_error_requires_reviewed_plan_and_token() -> None:
     assert apply_confirmation_error(
         apply=True,
         plan_in="reviewed.plan.json",
-        plan_out="reviewed.plan.json",
+        plan_out=" reviewed.plan.json\n",
         confirmation="APPLY",
     ) == "Actual run requires Plan/result JSON to be empty, '-', or a different file than Reviewed plan JSON."
     assert apply_confirmation_error(apply=True, plan_in="plan.json", confirmation="wrong") == "Actual run was not confirmed."

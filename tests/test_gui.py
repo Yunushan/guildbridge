@@ -17,6 +17,7 @@ def test_desktop_gui_exposes_apply_safety_controls() -> None:
     assert "Dry-run Check requires a Plan/result JSON file path" in source
     assert "messagebox.askyesno" in source
     assert "_reviewed_plan_preview" in source
+    assert "Path(reviewed_plan.strip())" in source
     assert "apply_confirmation_error" in source
     assert "assets/guildbridge-icon.png" in source
     assert "iconphoto" in source
