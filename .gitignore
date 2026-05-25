@@ -29,6 +29,9 @@ htmlcov/
 /test
 *.plan.json
 *.result.json
+*.apply-result.json
+*.journal.json
+guildbridge-*.template.json
 community.template.json
 redacted.template.json
 exported.template.json

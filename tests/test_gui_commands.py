@@ -8,6 +8,7 @@ import pytest
 
 from guildbridge.gui_commands import (
     apply_confirmation_error,
+    build_check_access_args,
     build_content_export_args,
     build_content_import_args,
     build_content_migrate_args,
@@ -103,6 +104,16 @@ def test_build_migrate_args_accepts_comma_separated_targets() -> None:
     args = build_migrate_args("discord", "matrix,rocket.chat", source_id="123")
 
     assert args[:7] == ["migrate", "--from", "discord", "--to", "matrix", "--to", "rocket.chat"]
+
+
+def test_build_check_access_args_trims_values() -> None:
+    assert build_check_access_args(" stoat\n", " server-id\n") == [
+        "check-access",
+        "--provider",
+        "stoat",
+        "--id",
+        "server-id",
+    ]
 
 
 def test_build_content_command_args() -> None:

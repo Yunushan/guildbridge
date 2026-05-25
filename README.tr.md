@@ -248,18 +248,31 @@ guildbridge-web.exe
 3. Once **Platforms** sekmesini kullanarak CLI, masaustu GUI ve web GUI hazirligini kontrol edin.
 4. Kaynak saglayicidan tarafsiz template olusturmak icin **Export** kullanin. Source ID veya provider template URL/code girin, sonra output JSON yolu secin.
 5. Mevcut template'i bir veya daha fazla hedef saglayiciya aktarmak icin **Import**, tek export ile bir veya daha fazla hedefe import icin **Migrate** kullanin.
-6. Acik ve koyu mod arasinda gecmek icin **Theme** secicisini kullanin.
-7. Once **Dry-run Check** dugmesine basin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
-8. Olusturulan plan JSON dosyasini inceleyin.
-9. Gercek yazma yapmak icin incelenmis plani **Reviewed plan JSON** alaninda secin ve **Actual Run** dugmesine basin. Masaustu GUI hedef platform/sunucuyu ve gelecek degisiklikleri gosterir, sonra yazmalar baslamadan once Evet/Hayir onayi ister.
-10. Apply calistirmalarinda **Journal output JSON** kullanin ki yarida kalan yazmalar denetlenebilsin. **Resume journal JSON** yalnizca ayni komut, hedef, template ve incelenmis planla yarida kalmis apply'i tekrar denerken kullanin.
-11. Template paylasmadan once **Validate / Redact** kullanin.
+6. **Export**, **Import**, **Migrate** veya **Content** sekmelerinde assistant dugmelerini kullanarak `.guildbridge/gui` altinda git'e alinmayan local artifact yollarini olusturun.
+7. **Migrate** sekmesinde desteklenen herhangi bir kaynak ve bir veya daha fazla hedef secin, sonra **Prepare Selected Route** kullanin. **Discord -> Stoat Preset** bu yol icin kisayol olarak kalir.
+8. Discord kaynak veya hedef icin bot kurulumu gerekiyorsa **Invite Discord Bot** kullanin. **Discord app/client ID** bossa GuildBridge bunu `DISCORD_BOT_TOKEN` icinden turetmeyi dener.
+9. Plan olusturmadan once **Check Source Access** ve **Check Target Access** ile yapilandirilmis token'larin secilen kaynak ve hedefi okuyabildigini dogrulayin.
+10. Acik ve koyu mod arasinda gecmek icin **Theme** secicisini kullanin.
+11. Once **Dry-run Check** dugmesine basin. Bu, provider'a yazmadan **Plan/result JSON** icinde dry-run plan olusturur.
+12. Olusturulan plan JSON dosyasini inceleyin, sonra **Use Plan as Reviewed** ile bu plani **Reviewed plan JSON** alanina tasiyin ve **Plan/result JSON** alanini apply-result dosyasina cevirin.
+13. Gercek yazma yapmak icin **Actual Run** dugmesine basin. Masaustu GUI hedef platform/sunucuyu ve gelecek degisiklikleri gosterir, sonra yazmalar baslamadan once Evet/Hayir onayi ister.
+14. Apply calistirmalarinda **Journal output JSON** kullanin ki yarida kalan yazmalar denetlenebilsin. **Resume journal JSON** yalnizca ayni komut, hedef, template ve incelenmis planla yarida kalmis apply'i tekrar denerken kullanin.
+15. Template paylasmadan once **Validate / Redact** kullanin.
 
 Output paneli GUI'nin calistirdigi tam `guildbridge ...` komutunu, stdout/stderr ciktisini, exit code'u ve sureyi gosterir.
 
 Tarayici GUI varsayilan olarak `http://127.0.0.1:8765` adresinde baslar. Telefon ve tablet tarayicilari icin dokunmaya uygun kontroller, sabit gezinme, acik/koyu tema secimi, sonuc durum panelleri ve kaydirma guvenli platform tablolari olan responsive bir duzen kullanir. Ayrica her sunucu icin CSRF token'i kullanir, POST govde boyutunu sinirlar, temel tarayici guvenlik basliklari ekler ve tarayicidan tetiklenen yazma islemlerinin `--apply` ile calismasi icin `APPLY` yazilmasini zorunlu tutar.
 
 Masaustu GUI import ve migrate icin ayri **Dry-run Check** ve **Actual Run** dugmeleri sunar. Actual run icin incelenmis plan yolu ve hedef provider, hedef sunucu, aksiyon sayisi ve gelecek degisiklikleri gosteren Evet/Hayir onayi gerekir; GuildBridge saglayici yazmalari baslamadan once incelenmis plani yine dogrular. Tarayici GUI web uzerinden tetiklenen yazma islemleri icin yazili `APPLY` onayini kullanmaya devam eder.
+
+Discord ham `404 Unknown Guild` dondururse GuildBridge botun sunucuda olmadigini veya Source ID'nin kanal ID'si gibi gorundugunu daha acik bildirir. **Source ID** icin kanal URL'si veya kanal ID'si degil, server/guild ID kullanin.
+
+Ayni erisim kontrolu CLI'da da vardir:
+
+```bash
+guildbridge check-access --provider discord --id "SOURCE_GUILD_ID"
+guildbridge check-access --provider stoat --id "TARGET_SERVER_ID"
+```
 
 Ayni agdaki telefon veya tabletlerin baglanmasini sadece guvenilir aglarda istiyorsaniz `--host 0.0.0.0 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"` kullanin. LAN modu her istekte auth token'i ister; `--auth-token` vermediginizde GuildBridge bir token uretir ve baslangicta bir kez yazdirir.
 

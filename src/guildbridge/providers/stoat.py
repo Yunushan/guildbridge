@@ -17,7 +17,7 @@ from guildbridge.content import (
     dry_run_content_import,
     resolve_content_asset_path,
 )
-from guildbridge.http import HttpClient, sanitize_text
+from guildbridge.http import HttpClient, HttpError, sanitize_text
 from guildbridge.models import (
     Action,
     Category,
@@ -409,7 +409,20 @@ class StoatProvider(Provider):
             raise ValueError("Stoat export requires --source-id <server_id>.")
         if not self._has_token():
             raise ValueError("Stoat export requires STOAT_SESSION_TOKEN, STOAT_BOT_TOKEN, STOAT_TOKEN, or REVOLT_TOKEN.")
-        server = self.http.get(f"/servers/{options.source_id}", headers=self._headers())
+        try:
+            server = self.http.get(f"/servers/{options.source_id}", headers=self._headers())
+        except HttpError as exc:
+            if exc.status_code == 404:
+                raise ValueError(
+                    "Stoat server was not found, or the configured Stoat token cannot access it. "
+                    "Check the Stoat Target ID and retry Check Stoat Access."
+                ) from exc
+            if exc.status_code in {401, 403}:
+                raise ValueError(
+                    "Stoat token cannot access this server. "
+                    "Set STOAT_BOT_TOKEN/STOAT_TOKEN or STOAT_SESSION_TOKEN with the required server permissions."
+                ) from exc
+            raise
         role_items = self._roles_from_server(server)
         channels = self._channels_from_server(server)
         return self._build_template(server, role_items, channels, options=options)

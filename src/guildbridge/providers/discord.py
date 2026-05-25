@@ -21,7 +21,7 @@ from guildbridge.content import (
     metadata_first,
     resolve_content_asset_path,
 )
-from guildbridge.http import HttpClient, sanitize_text
+from guildbridge.http import HttpClient, HttpError, sanitize_text
 from guildbridge.models import (
     Action,
     Category,
@@ -96,9 +96,13 @@ class DiscordProvider(Provider):
             raise ValueError(f"{self.provider_label} export requires --source-id <guild_id> or --template <template_url_or_code>.")
         if not self._token_configured():
             raise ValueError(f"{self.provider_label} live guild export requires {self.token_env_hint}.")
-        guild = self.http.get(f"/guilds/{options.source_id}")
-        roles = self.http.get(f"/guilds/{options.source_id}/roles")
-        channels = self.http.get(f"/guilds/{options.source_id}/channels")
+        source_id = options.source_id.strip()
+        try:
+            guild = self.http.get(f"/guilds/{source_id}")
+            roles = self.http.get(f"/guilds/{source_id}/roles")
+            channels = self.http.get(f"/guilds/{source_id}/channels")
+        except HttpError as exc:
+            raise self._friendly_live_export_error(source_id, exc) from exc
         return self._build_template(
             guild,
             roles,
@@ -221,6 +225,35 @@ class DiscordProvider(Provider):
 
     def _token_configured(self) -> bool:
         return bool(self.config.discord_token)
+
+    def _friendly_live_export_error(self, source_id: str, exc: HttpError) -> ValueError:
+        if exc.status_code == 404:
+            channel_guild_id = self._guild_id_for_channel(source_id)
+            if channel_guild_id:
+                return ValueError(
+                    "Discord Source ID looks like a channel ID. "
+                    f"Use server/guild ID {channel_guild_id}, not channel ID {source_id}."
+                )
+            return ValueError(
+                "Bot is not in this Discord server, or the Discord Source ID is not a server/guild ID. "
+                "Invite the bot to the server with View Channels permission, then retry Check Discord Access."
+            )
+        if exc.status_code == 403:
+            return ValueError(
+                "Discord bot is in this server but cannot read it. "
+                "Grant View Channels and Read Message History, then retry Check Discord Access."
+            )
+        return ValueError(f"{self.provider_label} live guild export failed: {sanitize_text(str(exc))}")
+
+    def _guild_id_for_channel(self, channel_id: str) -> str | None:
+        try:
+            channel = self.http.get(f"/channels/{channel_id}", retries=0)
+        except Exception:
+            return None
+        if not isinstance(channel, dict):
+            return None
+        guild_id = channel.get("guild_id")
+        return str(guild_id) if guild_id else None
 
     def content_capabilities(self) -> ContentCapability:
         capability = ContentCapability.text_content_provider(

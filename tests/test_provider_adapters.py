@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from guildbridge.config import RuntimeConfig
+from guildbridge.http import HttpError
 from guildbridge.models import Category, Channel, CommunityTemplate, Role
 from guildbridge.plan import action_fingerprint
 from guildbridge.providers.base import ExportOptions, ImportOptions, require_response_id, safe_int
@@ -26,6 +27,16 @@ class EmptyCreateHttp:
 
     def post_form(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
         return {}
+
+
+class DiscordNotFoundHttp:
+    def __init__(self, *, channel_guild_id: str | None = None):
+        self.channel_guild_id = channel_guild_id
+
+    def get(self, path: str, **_kwargs: object) -> dict[str, Any]:
+        if path.startswith("/channels/") and self.channel_guild_id:
+            return {"id": path.rsplit("/", 1)[-1], "guild_id": self.channel_guild_id}
+        raise HttpError("GET", f"https://discord.example.test{path}", 404, '{"message":"Unknown Guild"}')
 
 
 def _template_with_role() -> CommunityTemplate:
@@ -95,6 +106,22 @@ def test_discord_export_drops_role_overwrites_missing_from_template_roles() -> N
     assert [ow.target_id for ow in template.channels[0].permission_overwrites] == ["everyone"]
     assert template.validate() == []
     assert any("not present in the Discord template roles" in warning for warning in template.warnings)
+
+
+def test_discord_live_export_reports_channel_id_instead_of_unknown_guild() -> None:
+    provider = DiscordProvider(RuntimeConfig(discord_token="token"))
+    provider.http = DiscordNotFoundHttp(channel_guild_id="guild123")  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="looks like a channel ID.*guild123"):
+        provider.export_template(ExportOptions(source_id="channel123"))
+
+
+def test_discord_live_export_reports_missing_bot_membership() -> None:
+    provider = DiscordProvider(RuntimeConfig(discord_token="token"))
+    provider.http = DiscordNotFoundHttp()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="Bot is not in this Discord server"):
+        provider.export_template(ExportOptions(source_id="guild123"))
 
 
 def test_fluxer_export_drops_user_overwrites_even_when_requested() -> None:

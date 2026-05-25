@@ -157,6 +157,14 @@ def _provider_hints(text: str, lowered: str) -> list[str]:
         return ["Pass the source server, guild, space, or room ID with --source-id, or use a supported provider template URL when available."]
     if "requires --target-id" in lowered:
         return ["Pass an existing target ID with --target-id, or choose a provider that can create a target from --target-name."]
+    if "bot is not in this discord server" in lowered:
+        return [
+            "Use Invite Discord Bot from the GUI, or open a Discord OAuth2 bot invite URL for the application.",
+            "Use the Discord server/guild ID as Source ID, not a channel ID or channel URL.",
+            "Grant View Channels and Read Message History, then retry Check Discord Access.",
+        ]
+    if "looks like a channel id" in lowered and "discord" in lowered:
+        return ["Replace the Discord Source ID with the server/guild ID shown in the error message."]
     if "response did not contain an id" in lowered:
         return [
             "The provider response did not match the expected API contract.",

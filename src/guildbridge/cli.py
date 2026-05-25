@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from guildbridge.access import check_provider_access
 from guildbridge.config import RuntimeConfig
 from guildbridge.content import (
     CONTENT_FEATURES,
@@ -651,6 +652,13 @@ def command_providers(_: argparse.Namespace) -> int:
     return 0
 
 
+def command_check_access(args: argparse.Namespace) -> int:
+    config = RuntimeConfig.from_env()
+    result = check_provider_access(args.provider, args.id, config)
+    print(result.summary())
+    return 0
+
+
 def command_content_features(args: argparse.Namespace) -> int:
     config = RuntimeConfig.from_env()
     capabilities = [get_provider(name, config).content_capabilities() for name in provider_names()]
@@ -1196,6 +1204,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_providers = sub.add_parser("providers", help="list providers and aliases")
     p_providers.set_defaults(func=command_providers)
+
+    p_check_access = sub.add_parser("check-access", help="check read access to a provider server/community")
+    p_check_access.add_argument("--provider", required=True, help="provider to check")
+    p_check_access.add_argument("--id", required=True, help="source or target server/guild/community id to read")
+    p_check_access.set_defaults(func=command_check_access)
 
     p_content = sub.add_parser("content-features", help="show optional content migration feature coverage")
     p_content.add_argument("--format", choices=("text", "json"), default="text", help="output format")

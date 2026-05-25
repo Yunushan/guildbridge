@@ -4,6 +4,7 @@ import json
 import queue
 import sys
 import threading
+import webbrowser
 from collections import Counter
 from dataclasses import dataclass
 from functools import partial
@@ -23,9 +24,20 @@ from tkinter import (
 )
 from typing import Any, cast
 
+from guildbridge.config import RuntimeConfig
+from guildbridge.gui_assistant import (
+    content_artifact_paths,
+    default_migration_artifact_dir,
+    discord_bot_invite_url,
+    discord_source_id_warning,
+    export_artifact_paths,
+    import_artifact_paths,
+    migration_artifact_paths,
+)
 from guildbridge.gui_commands import (
     CommandResult,
     apply_confirmation_error,
+    build_check_access_args,
     build_content_export_args,
     build_content_import_args,
     build_content_migrate_args,
@@ -442,12 +454,330 @@ class GuildBridgeGUI(ttk.Frame):
         if selected:
             field.variable.set(selected)
 
+    def _open_discord_invite(self, client_id: str) -> None:
+        try:
+            token = RuntimeConfig.from_env().discord_token
+            url = discord_bot_invite_url(client_id, token=token)
+        except ValueError as exc:
+            messagebox.showerror("Invite Discord Bot", str(exc), parent=self.master)
+            return
+        webbrowser.open(url)
+
+    def _check_access(self, provider: str, resource_id: str, title: str) -> None:
+        if not resource_id.strip():
+            messagebox.showerror(title, "Server/guild/community ID is required.", parent=self.master)
+            return
+        self._run(build_check_access_args(provider, resource_id))
+
+    def _check_selected_target_access(self, provider_to: Listbox, target_id: str) -> None:
+        providers = self._selected_providers(provider_to)
+        if len(providers) != 1:
+            messagebox.showerror("Check target access", "Select exactly one target provider.", parent=self.master)
+            return
+        self._check_provider_access(providers[0], target_id, "Check target access")
+
+    @staticmethod
+    def _ensure_file_parent(path_value: str) -> None:
+        cleaned = path_value.strip()
+        if cleaned and cleaned != "-":
+            Path(cleaned).expanduser().parent.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _ensure_directory(path_value: str) -> None:
+        cleaned = path_value.strip()
+        if cleaned and cleaned != "-":
+            Path(cleaned).expanduser().mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _select_only_provider(provider_to: Listbox, provider_name: str) -> None:
+        provider_to.selection_clear(0, "end")
+        for index in range(provider_to.size()):
+            if str(provider_to.get(index)) == provider_name:
+                provider_to.selection_set(index)
+                return
+        if provider_to.size():
+            provider_to.selection_set(0)
+
+    def _check_provider_access(self, provider: str, resource_id: str, title: str) -> None:
+        provider_name = provider.strip()
+        if not provider_name:
+            messagebox.showerror(title, "Provider is required.", parent=self.master)
+            return
+        if provider_name.lower() == "discord":
+            warning = discord_source_id_warning(resource_id)
+            if warning:
+                messagebox.showerror(title, warning, parent=self.master)
+                return
+        self._check_access(provider_name, resource_id, title)
+
+    def _check_source_access(self, provider: str, source_id: str) -> None:
+        self._check_provider_access(provider, source_id, "Check source access")
+
+    def _fill_export_paths(self, provider: str, out: StringVar) -> None:
+        paths = export_artifact_paths(default_migration_artifact_dir(), provider=provider)
+        self._ensure_file_parent(paths["out"])
+        out.set(paths["out"])
+
+    def _fill_import_paths(
+        self,
+        target_providers: list[str],
+        plan_out: StringVar,
+        plan_in: StringVar,
+        journal_out: StringVar,
+    ) -> None:
+        paths = import_artifact_paths(default_migration_artifact_dir(), target_providers=target_providers)
+        self._ensure_file_parent(paths["plan_out"])
+        plan_out.set(paths["plan_out"])
+        plan_in.set("")
+        journal_out.set(paths["journal_out"])
+
+    def _prepare_selected_import_target(
+        self,
+        provider_to: Listbox,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        journal_out: StringVar,
+    ) -> None:
+        self._fill_import_paths(self._selected_providers(provider_to), plan_out, plan_in, journal_out)
+
+    def _prepare_selected_migrate_route(
+        self,
+        provider_from: StringVar,
+        provider_to: Listbox,
+        template_out: StringVar,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        journal_out: StringVar,
+    ) -> None:
+        self._fill_migrate_paths(
+            provider_from.get(),
+            self._selected_providers(provider_to),
+            template_out,
+            plan_out,
+            plan_in,
+            journal_out,
+        )
+
+    def _prepare_selected_content_target(
+        self,
+        provider_to: Listbox,
+        discord_export_out: StringVar,
+        archive_file: StringVar,
+        archive_out: StringVar,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        content_journal_out: StringVar,
+        content_dead_letter_out: StringVar,
+        content_report_out: StringVar,
+        content_lock_file: StringVar,
+        content_incremental_state: StringVar,
+        content_thread_archive_dir: StringVar,
+        download_discord_chat_exporter: BooleanVar,
+        content_incremental: BooleanVar,
+        content_continue_on_error: BooleanVar,
+    ) -> None:
+        download_discord_chat_exporter.set(True)
+        content_incremental.set(True)
+        content_continue_on_error.set(True)
+        self._fill_content_paths(
+            self._selected_providers(provider_to),
+            discord_export_out,
+            archive_file,
+            archive_out,
+            plan_out,
+            plan_in,
+            content_journal_out,
+            content_dead_letter_out,
+            content_report_out,
+            content_lock_file,
+            content_incremental_state,
+            content_thread_archive_dir,
+        )
+
+    def _fill_content_paths(
+        self,
+        target_providers: list[str],
+        discord_export_out: StringVar,
+        archive_file: StringVar,
+        archive_out: StringVar,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        content_journal_out: StringVar,
+        content_dead_letter_out: StringVar,
+        content_report_out: StringVar,
+        content_lock_file: StringVar,
+        content_incremental_state: StringVar,
+        content_thread_archive_dir: StringVar,
+    ) -> None:
+        paths = content_artifact_paths(default_migration_artifact_dir(), target_providers=target_providers)
+        self._ensure_file_parent(paths["archive_out"])
+        self._ensure_directory(paths["discord_export_out"])
+        self._ensure_directory(paths["content_thread_archive_dir"])
+        discord_export_out.set(paths["discord_export_out"])
+        archive_out.set(paths["archive_out"])
+        archive_file.set(paths["archive_out"])
+        plan_out.set(paths["plan_out"])
+        plan_in.set("")
+        content_journal_out.set(paths["content_journal_out"])
+        content_dead_letter_out.set(paths["content_dead_letter_out"])
+        content_report_out.set(paths["content_report_out"])
+        content_lock_file.set(paths["content_lock_file"])
+        content_incremental_state.set(paths["content_incremental_state"])
+        content_thread_archive_dir.set(paths["content_thread_archive_dir"])
+
+    def _fill_migrate_paths(
+        self,
+        source_provider: str,
+        target_providers: list[str],
+        template_out: StringVar,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        journal_out: StringVar,
+    ) -> None:
+        paths = migration_artifact_paths(
+            default_migration_artifact_dir(),
+            source_provider=source_provider,
+            target_providers=target_providers,
+        )
+        self._ensure_file_parent(paths["template_out"])
+        template_out.set(paths["template_out"])
+        plan_out.set(paths["plan_out"])
+        plan_in.set("")
+        journal_out.set(paths["journal_out"])
+
+    def _prepare_discord_stoat_wizard(
+        self,
+        provider_from: StringVar,
+        provider_to: Listbox,
+        template_out: StringVar,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        journal_out: StringVar,
+    ) -> None:
+        provider_from.set("discord")
+        self._select_only_provider(provider_to, "stoat")
+        self._fill_migrate_paths("discord", ["stoat"], template_out, plan_out, plan_in, journal_out)
+
+    def _prepare_content_discord_stoat_wizard(
+        self,
+        provider_to: Listbox,
+        discord_export_out: StringVar,
+        archive_file: StringVar,
+        archive_out: StringVar,
+        plan_out: StringVar,
+        plan_in: StringVar,
+        content_journal_out: StringVar,
+        content_dead_letter_out: StringVar,
+        content_report_out: StringVar,
+        content_lock_file: StringVar,
+        content_incremental_state: StringVar,
+        content_thread_archive_dir: StringVar,
+        native_content: BooleanVar,
+        ferry_parity: BooleanVar,
+        download_remote_assets: BooleanVar,
+        download_discord_chat_exporter: BooleanVar,
+        content_incremental: BooleanVar,
+        content_continue_on_error: BooleanVar,
+        content_parallel_sends: StringVar,
+    ) -> None:
+        self._select_only_provider(provider_to, "stoat")
+        native_content.set(True)
+        ferry_parity.set(True)
+        download_remote_assets.set(True)
+        download_discord_chat_exporter.set(True)
+        content_incremental.set(True)
+        content_continue_on_error.set(True)
+        content_parallel_sends.set("3")
+        self._fill_content_paths(
+            ["stoat"],
+            discord_export_out,
+            archive_file,
+            archive_out,
+            plan_out,
+            plan_in,
+            content_journal_out,
+            content_dead_letter_out,
+            content_report_out,
+            content_lock_file,
+            content_incremental_state,
+            content_thread_archive_dir,
+        )
+
+    def _check_discord_access(self, source_id: str) -> None:
+        self._check_provider_access("discord", source_id, "Check Discord Access")
+
+    def _check_stoat_access(self, target_id: str) -> None:
+        self._check_provider_access("stoat", target_id, "Check Stoat Access")
+
+    def _run_export_with_source_guard(self, args: list[str], *, provider_from: str, source_id: str) -> None:
+        if provider_from.strip().lower() == "discord":
+            warning = discord_source_id_warning(source_id)
+            if warning:
+                messagebox.showerror("Run Export", warning, parent=self.master)
+                return
+        self._run(args)
+
+    def _run_migrate_with_source_guard(self, args: list[str], *, provider_from: str, source_id: str, plan_out: str) -> None:
+        if provider_from.strip().lower() == "discord":
+            warning = discord_source_id_warning(source_id)
+            if warning:
+                messagebox.showerror("Dry-run Check", warning, parent=self.master)
+                return
+        self._run_dry_run(args, plan_out=plan_out)
+
+    def _run_apply_with_source_guard(
+        self,
+        args: list[str],
+        *,
+        provider_from: str,
+        source_id: str,
+        reviewed_plan: str,
+        plan_out: str,
+        apply_prompt: ApplyPrompt,
+    ) -> None:
+        if provider_from.strip().lower() == "discord":
+            warning = discord_source_id_warning(source_id)
+            if warning:
+                messagebox.showerror("Actual run", warning, parent=self.master)
+                return
+        self._run(
+            args,
+            apply_requested=True,
+            reviewed_plan=reviewed_plan,
+            plan_out=plan_out,
+            apply_prompt=apply_prompt,
+        )
+
+    def _use_plan_as_reviewed(
+        self,
+        source_provider: str,
+        target_providers: list[str],
+        plan_out: StringVar,
+        plan_in: StringVar,
+    ) -> None:
+        reviewed_plan = plan_out.get().strip()
+        if not reviewed_plan or reviewed_plan == "-":
+            messagebox.showerror("Use Plan as Reviewed", "Plan/result JSON must contain a dry-run plan file path.", parent=self.master)
+            return
+        plan_in.set(reviewed_plan)
+        plan_path = Path(reviewed_plan)
+        if plan_path.name.endswith(".plan.json"):
+            plan_out.set(str(plan_path.with_name(plan_path.name.removesuffix(".plan.json") + ".apply-result.json")))
+            return
+        paths = migration_artifact_paths(
+            default_migration_artifact_dir(),
+            source_provider=source_provider,
+            target_providers=target_providers,
+        )
+        plan_out.set(paths["apply_result"])
+
     def _export_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         tab, frame = self._new_tab(parent)
         provider = StringVar(value="discord")
+        discord_client_id = StringVar()
         source_id = StringVar()
         template = StringVar()
-        out = StringVar(value="community.template.json")
+        out = StringVar()
         include_overwrites = BooleanVar(value=False)
         include_content = BooleanVar(value=False)
 
@@ -458,6 +788,7 @@ class GuildBridgeGUI(ttk.Frame):
             (
                 Field("Source ID", source_id),
                 Field("Template URL/code", template),
+                Field("Discord app/client ID", discord_client_id),
                 Field("Output JSON", out, "save"),
             ),
         )
@@ -467,10 +798,27 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Include content migration (experimental)", variable=include_content).grid(
             row=row + 1, column=1, sticky="w"
         )
+        assistant = ttk.LabelFrame(frame, text="Export Assistant")
+        assistant.grid(row=row + 2, column=1, sticky="ew", pady=(12, 0))
+        ttk.Button(
+            assistant,
+            text="Fill Paths",
+            command=lambda: self._fill_export_paths(provider.get(), out),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Check Source Access",
+            command=lambda: self._check_source_access(provider.get(), source_id.get()),
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Invite Discord Bot",
+            command=lambda: self._open_discord_invite(discord_client_id.get()),
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
         ttk.Button(
             frame,
             text="Run Export",
-            command=lambda: self._run(
+            command=lambda: self._run_export_with_source_guard(
                 build_export_args(
                     provider.get(),
                     source_id=source_id.get(),
@@ -478,9 +826,12 @@ class GuildBridgeGUI(ttk.Frame):
                     out=out.get(),
                     include_user_overwrites=include_overwrites.get(),
                     include_content=include_content.get(),
-                )
+                ),
+                provider_from=provider.get(),
+                source_id=source_id.get(),
             ),
-        ).grid(row=row + 2, column=1, sticky="e", pady=(12, 0))
+        ).grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
+        self._fill_export_paths(provider.get(), out)
         return tab
 
     def _import_tab(self, parent: ttk.Notebook) -> ttk.Frame:
@@ -488,7 +839,7 @@ class GuildBridgeGUI(ttk.Frame):
         file = StringVar()
         target_id = StringVar()
         target_name = StringVar()
-        plan_out = StringVar(value="-")
+        plan_out = StringVar()
         plan_in = StringVar()
         journal_out = StringVar()
         resume_journal = StringVar()
@@ -497,7 +848,7 @@ class GuildBridgeGUI(ttk.Frame):
         include_content = BooleanVar(value=False)
         force_invalid_template = BooleanVar(value=False)
 
-        provider_to = self._provider_listbox(frame, "To", 0, ("discord",))
+        provider_to = self._provider_listbox(frame, "To", 0, ("stoat",))
         row = self._fields(
             frame,
             1,
@@ -519,8 +870,35 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
             row=row + 2, column=1, sticky="w"
         )
+        assistant = ttk.LabelFrame(frame, text="Import Assistant")
+        assistant.grid(row=row + 3, column=1, sticky="ew", pady=(12, 0))
+        ttk.Button(
+            assistant,
+            text="Fill Paths",
+            command=lambda: self._prepare_selected_import_target(
+                provider_to,
+                plan_out,
+                plan_in,
+                journal_out,
+            ),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Check Target Access",
+            command=lambda: self._check_selected_target_access(provider_to, target_id.get()),
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Use Plan as Reviewed",
+            command=lambda: self._use_plan_as_reviewed(
+                "import",
+                self._selected_providers(provider_to),
+                plan_out,
+                plan_in,
+            ),
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
         actions = ttk.Frame(frame)
-        actions.grid(row=row + 3, column=1, sticky="e", pady=(12, 0))
+        actions.grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
             actions,
             text="Dry-run Check",
@@ -574,11 +952,13 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
             ),
         ).grid(row=0, column=1, sticky="e")
+        self._fill_import_paths(self._selected_providers(provider_to), plan_out, plan_in, journal_out)
         return tab
 
     def _migrate_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         tab, frame = self._new_tab(parent)
         provider_from = StringVar(value="discord")
+        discord_client_id = StringVar()
         source_id = StringVar()
         template = StringVar()
         target_id = StringVar()
@@ -595,13 +975,14 @@ class GuildBridgeGUI(ttk.Frame):
         force_invalid_template = BooleanVar(value=False)
 
         self._provider_combo(frame, "From", 0, provider_from)
-        provider_to = self._provider_listbox(frame, "To", 1, ("fluxer",))
+        provider_to = self._provider_listbox(frame, "To", 1, ("stoat",))
         row = self._fields(
             frame,
             2,
             (
                 Field("Source ID", source_id),
                 Field("Template URL/code", template),
+                Field("Discord app/client ID", discord_client_id),
                 Field("Target ID", target_id),
                 Field("Target name", target_name),
                 Field("Template output JSON", template_out, "save"),
@@ -620,12 +1001,76 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Checkbutton(frame, text="Force invalid template after review", variable=force_invalid_template).grid(
             row=row + 3, column=1, sticky="w"
         )
+        assistant = ttk.LabelFrame(frame, text="Migrate Assistant")
+        assistant.grid(row=row + 4, column=1, sticky="ew", pady=(10, 0))
+        assistant.columnconfigure(4, weight=1)
+        ttk.Button(
+            assistant,
+            text="Prepare Selected Route",
+            command=lambda: self._prepare_selected_migrate_route(
+                provider_from,
+                provider_to,
+                template_out,
+                plan_out,
+                plan_in,
+                journal_out,
+            ),
+        ).grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Discord -> Stoat Preset",
+            command=lambda: self._prepare_discord_stoat_wizard(
+                provider_from,
+                provider_to,
+                template_out,
+                plan_out,
+                plan_in,
+                journal_out,
+            ),
+        ).grid(row=0, column=1, sticky="w", padx=(0, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Invite Discord Bot",
+            command=lambda: self._open_discord_invite(discord_client_id.get()),
+        ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Check Source Access",
+            command=lambda: self._check_source_access(provider_from.get(), source_id.get()),
+        ).grid(row=0, column=3, sticky="w", padx=(0, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Check Target Access",
+            command=lambda: self._check_selected_target_access(provider_to, target_id.get()),
+        ).grid(row=0, column=4, sticky="w", padx=(0, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Fill Paths",
+            command=lambda: self._prepare_selected_migrate_route(
+                provider_from,
+                provider_to,
+                template_out,
+                plan_out,
+                plan_in,
+                journal_out,
+            ),
+        ).grid(row=1, column=0, sticky="w", padx=(8, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Use Plan as Reviewed",
+            command=lambda: self._use_plan_as_reviewed(
+                provider_from.get(),
+                self._selected_providers(provider_to),
+                plan_out,
+                plan_in,
+            ),
+        ).grid(row=1, column=1, sticky="w", padx=(0, 8), pady=8)
         actions = ttk.Frame(frame)
-        actions.grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
+        actions.grid(row=row + 5, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
             actions,
             text="Dry-run Check",
-            command=lambda: self._run_dry_run(
+            command=lambda: self._run_migrate_with_source_guard(
                 build_migrate_args(
                     provider_from.get(),
                     self._selected_providers(provider_to),
@@ -645,13 +1090,15 @@ class GuildBridgeGUI(ttk.Frame):
                     apply=False,
                     force_invalid_template=force_invalid_template.get(),
                 ),
+                provider_from=provider_from.get(),
+                source_id=source_id.get(),
                 plan_out=plan_out.get(),
             ),
         ).grid(row=0, column=0, sticky="e", padx=(0, 8))
         ttk.Button(
             actions,
             text="Actual Run",
-            command=lambda: self._run(
+            command=lambda: self._run_apply_with_source_guard(
                 build_migrate_args(
                     provider_from.get(),
                     self._selected_providers(provider_to),
@@ -671,7 +1118,8 @@ class GuildBridgeGUI(ttk.Frame):
                     apply=True,
                     force_invalid_template=force_invalid_template.get(),
                 ),
-                apply_requested=True,
+                provider_from=provider_from.get(),
+                source_id=source_id.get(),
                 reviewed_plan=plan_in.get(),
                 plan_out=plan_out.get(),
                 apply_prompt=ApplyPrompt(
@@ -683,23 +1131,25 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
             ),
         ).grid(row=0, column=1, sticky="e")
+        self._prepare_discord_stoat_wizard(provider_from, provider_to, template_out, plan_out, plan_in, journal_out)
         return tab
 
     def _content_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         tab, frame = self._new_tab(parent)
         discord_export = StringVar()
         discord_source_id = StringVar()
+        discord_client_id = StringVar()
         discord_exporter_bin = StringVar()
         discord_exporter_version = StringVar(value="latest")
         discord_exporter_install_dir = StringVar()
         discord_token_env = StringVar(value="DISCORD_TOKEN")
         discord_export_out = StringVar()
         archive_file = StringVar()
-        archive_out = StringVar(value="community.content.json")
+        archive_out = StringVar()
         target_id = StringVar()
         target_name = StringVar()
         channel_map = StringVar()
-        plan_out = StringVar(value="-")
+        plan_out = StringVar()
         plan_in = StringVar()
         content_journal_out = StringVar()
         resume_content_journal = StringVar()
@@ -739,6 +1189,7 @@ class GuildBridgeGUI(ttk.Frame):
                 Field("Managed DCE version", discord_exporter_version),
                 Field("Managed DCE install folder", discord_exporter_install_dir, "folder"),
                 Field("Discord token env var", discord_token_env),
+                Field("Discord app/client ID", discord_client_id),
                 Field("Discord export output", discord_export_out, "folder"),
                 Field("Content archive JSON", archive_file, "open"),
                 Field("Archive output JSON", archive_out, "save"),
@@ -779,8 +1230,108 @@ class GuildBridgeGUI(ttk.Frame):
             row=row + 14, column=1, sticky="w"
         )
 
+        assistant = ttk.LabelFrame(frame, text="Content Assistant")
+        assistant.grid(row=row + 15, column=1, sticky="ew", pady=(12, 0))
+        ttk.Button(
+            assistant,
+            text="Prepare Selected Target",
+            command=lambda: self._prepare_selected_content_target(
+                provider_to,
+                discord_export_out,
+                archive_file,
+                archive_out,
+                plan_out,
+                plan_in,
+                content_journal_out,
+                content_dead_letter_out,
+                content_report_out,
+                content_lock_file,
+                content_incremental_state,
+                content_thread_archive_dir,
+                download_discord_chat_exporter,
+                content_incremental,
+                content_continue_on_error,
+            ),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Discord -> Stoat Preset",
+            command=lambda: self._prepare_content_discord_stoat_wizard(
+                provider_to,
+                discord_export_out,
+                archive_file,
+                archive_out,
+                plan_out,
+                plan_in,
+                content_journal_out,
+                content_dead_letter_out,
+                content_report_out,
+                content_lock_file,
+                content_incremental_state,
+                content_thread_archive_dir,
+                native_content,
+                ferry_parity,
+                download_remote_assets,
+                download_discord_chat_exporter,
+                content_incremental,
+                content_continue_on_error,
+                content_parallel_sends,
+            ),
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Fill Paths",
+            command=lambda: self._prepare_selected_content_target(
+                provider_to,
+                discord_export_out,
+                archive_file,
+                archive_out,
+                plan_out,
+                plan_in,
+                content_journal_out,
+                content_dead_letter_out,
+                content_report_out,
+                content_lock_file,
+                content_incremental_state,
+                content_thread_archive_dir,
+                download_discord_chat_exporter,
+                content_incremental,
+                content_continue_on_error,
+            ),
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Use Archive for Import",
+            command=lambda: archive_file.set(archive_out.get()),
+        ).grid(row=0, column=3, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Use Plan as Reviewed",
+            command=lambda: self._use_plan_as_reviewed(
+                "content",
+                self._selected_providers(provider_to),
+                plan_out,
+                plan_in,
+            ),
+        ).grid(row=0, column=4, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Invite Discord Bot",
+            command=lambda: self._open_discord_invite(discord_client_id.get()),
+        ).grid(row=1, column=0, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Check Discord Access",
+            command=lambda: self._check_discord_access(discord_source_id.get()),
+        ).grid(row=1, column=1, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Check Target Access",
+            command=lambda: self._check_selected_target_access(provider_to, target_id.get()),
+        ).grid(row=1, column=2, sticky="w", padx=8, pady=8)
+
         actions = ttk.Frame(frame)
-        actions.grid(row=row + 15, column=1, sticky="e", pady=(12, 0))
+        actions.grid(row=row + 16, column=1, sticky="e", pady=(12, 0))
 
         def content_options(*, apply: bool, reviewed: bool) -> dict[str, Any]:
             return {
@@ -820,7 +1371,7 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Button(
             actions,
             text="Export Archive",
-            command=lambda: self._run(
+            command=lambda: self._run_export_with_source_guard(
                 build_content_export_args(
                     discord_chat_export=discord_export.get(),
                     source_id=discord_source_id.get(),
@@ -831,7 +1382,9 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_token_env=discord_token_env.get(),
                     discord_export_out=discord_export_out.get(),
                     out=archive_out.get(),
-                )
+                ),
+                provider_from="discord",
+                source_id=discord_source_id.get(),
             ),
         ).grid(row=0, column=0, sticky="e", padx=(0, 8), pady=(0, 8))
         ttk.Button(
@@ -849,7 +1402,7 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Button(
             actions,
             text="Dry-run Migrate",
-            command=lambda: self._run_dry_run(
+            command=lambda: self._run_migrate_with_source_guard(
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
                     discord_chat_export=discord_export.get(),
@@ -862,6 +1415,8 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_export_out=discord_export_out.get(),
                     **content_options(apply=False, reviewed=False),
                 ),
+                provider_from="discord",
+                source_id=discord_source_id.get(),
                 plan_out=plan_out.get(),
             ),
         ).grid(row=0, column=2, sticky="e", pady=(0, 8))
@@ -889,7 +1444,7 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Button(
             actions,
             text="Actual Migrate",
-            command=lambda: self._run(
+            command=lambda: self._run_apply_with_source_guard(
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
                     discord_chat_export=discord_export.get(),
@@ -902,7 +1457,8 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_export_out=discord_export_out.get(),
                     **content_options(apply=True, reviewed=True),
                 ),
-                apply_requested=True,
+                provider_from="discord",
+                source_id=discord_source_id.get(),
                 reviewed_plan=plan_in.get(),
                 plan_out=plan_out.get(),
                 apply_prompt=ApplyPrompt(
@@ -914,6 +1470,20 @@ class GuildBridgeGUI(ttk.Frame):
                 ),
             ),
         ).grid(row=1, column=2, sticky="e")
+        self._fill_content_paths(
+            self._selected_providers(provider_to),
+            discord_export_out,
+            archive_file,
+            archive_out,
+            plan_out,
+            plan_in,
+            content_journal_out,
+            content_dead_letter_out,
+            content_report_out,
+            content_lock_file,
+            content_incremental_state,
+            content_thread_archive_dir,
+        )
         return tab
 
     def _tools_tab(self, parent: ttk.Notebook) -> ttk.Frame:

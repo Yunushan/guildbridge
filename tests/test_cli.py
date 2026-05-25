@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from guildbridge.access import AccessCheckResult
 from guildbridge.cli import main, write_json
 from guildbridge.models import CommunityTemplate, Role
 from guildbridge.safety import APPLY_CONFIRMATION, validate_apply_safety
@@ -21,6 +22,18 @@ def test_providers_command(capsys) -> None:  # type: ignore[no-untyped-def]
     assert "mumble" in out
     assert "mattermost" in out
     assert "zulip" in out
+
+
+def test_check_access_command_uses_provider_adapter(monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    def fake_check_provider_access(provider: str, resource_id: str, _config: object) -> AccessCheckResult:
+        assert provider == "stoat"
+        assert resource_id == "server-id"
+        return AccessCheckResult("stoat", "server-id", "Example", 2, 1, 3, 0)
+
+    monkeypatch.setattr("guildbridge.cli.check_provider_access", fake_check_provider_access)
+
+    assert main(["check-access", "--provider", "stoat", "--id", "server-id"]) == 0
+    assert "stoat access ok: 'Example'" in capsys.readouterr().out
 
 
 def test_content_features_command_json(capsys) -> None:  # type: ignore[no-untyped-def]

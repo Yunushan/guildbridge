@@ -143,6 +143,10 @@ def build_migrate_args(
     return args
 
 
+def build_check_access_args(provider: str, resource_id: str) -> list[str]:
+    return ["check-access", "--provider", provider.strip(), "--id", resource_id.strip()]
+
+
 def build_content_export_args(
     *,
     discord_chat_export: str = "",

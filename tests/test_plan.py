@@ -190,6 +190,7 @@ def test_apply_accepts_matching_reviewed_plan(tmp_path: Path, monkeypatch) -> No
     template_path = tmp_path / "template.json"
     plan_path = tmp_path / "plan.json"
     result_path = tmp_path / "result.json"
+    journal_path = tmp_path / "journal.json"
     write_template(template_path)
     monkeypatch.setattr("guildbridge.cli.get_provider", lambda _name, _config: PlanProvider())
     assert main(["import", "--to", "fake", "--file", str(template_path), "--target-name", "Target", "--plan-out", str(plan_path)]) == 0
@@ -210,6 +211,8 @@ def test_apply_accepts_matching_reviewed_plan(tmp_path: Path, monkeypatch) -> No
             str(plan_path),
             "--plan-out",
             str(result_path),
+            "--journal-out",
+            str(journal_path),
         ]
     )
 

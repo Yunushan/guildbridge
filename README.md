@@ -248,18 +248,31 @@ guildbridge-web.exe
 3. Use the **Platforms** tab first to confirm CLI, desktop GUI, and web GUI readiness.
 4. Use **Export** to create a neutral template from a source provider. Provide either a source ID or a provider template URL/code, then choose an output JSON path.
 5. Use **Import** to import an existing template into one or more target providers, or **Migrate** to export once and import into one or more destinations in one flow.
-6. Use the **Theme** selector to switch between light and dark mode.
-7. Click **Dry-run Check** first. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
-8. Review the generated plan JSON.
-9. To perform real writes, select the reviewed plan in **Reviewed plan JSON** and click **Actual Run**. The desktop GUI shows the target platform/server and incoming changes, then asks a Yes/No confirmation before writes start.
-10. Use **Journal output JSON** for apply runs so interrupted writes can be audited. Use **Resume journal JSON** only when retrying an interrupted apply with the same command, target, template, and reviewed plan.
-11. Use **Validate / Redact** before sharing templates.
+6. In **Export**, **Import**, **Migrate**, or **Content**, use the assistant buttons to generate ignored local artifact paths under `.guildbridge/gui`.
+7. In **Migrate**, select any supported source and one or more targets, then use **Prepare Selected Route**. **Discord -> Stoat Preset** remains available as a shortcut for that route.
+8. Use **Invite Discord Bot** when a Discord source or target needs the bot installed. If **Discord app/client ID** is empty, GuildBridge tries to derive it from `DISCORD_BOT_TOKEN`.
+9. Use **Check Source Access** and **Check Target Access** to verify that the configured tokens can read the selected source and target before making a plan.
+10. Use the **Theme** selector to switch between light and dark mode.
+11. Click **Dry-run Check** first. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
+12. Review the generated plan JSON, then click **Use Plan as Reviewed** to move that plan into **Reviewed plan JSON** and switch **Plan/result JSON** to an apply-result file.
+13. To perform real writes, click **Actual Run**. The desktop GUI shows the target platform/server and incoming changes, then asks a Yes/No confirmation before writes start.
+14. Use **Journal output JSON** for apply runs so interrupted writes can be audited. Use **Resume journal JSON** only when retrying an interrupted apply with the same command, target, template, and reviewed plan.
+15. Use **Validate / Redact** before sharing templates.
 
 The output panel shows the exact `guildbridge ...` command that the GUI ran, stdout/stderr, exit code, and duration.
 
 The browser GUI starts at `http://127.0.0.1:8765` by default. It uses a responsive layout with touch-sized controls, anchored navigation, light/dark theme selection, result status panels, and scroll-safe platform tables for phone and tablet browsers. It also uses a per-server CSRF token, limits POST body size, adds basic browser security headers, and requires typing `APPLY` before browser-triggered write operations run with `--apply`.
 
 The desktop GUI exposes separate **Dry-run Check** and **Actual Run** buttons for import and migrate. Actual runs need a reviewed plan path and a Yes/No confirmation that previews the target provider, target server, action count, and incoming changes; GuildBridge still validates the reviewed plan before provider writes start. The browser GUI keeps the typed `APPLY` confirmation for web-triggered write operations.
+
+If Discord returns a raw `404 Unknown Guild`, GuildBridge reports whether the bot is missing from the server or whether the Source ID looks like a channel ID. Use the server/guild ID for **Source ID**; channel URLs and channel IDs are rejected before writing.
+
+The same access check is available from the CLI:
+
+```bash
+guildbridge check-access --provider discord --id "SOURCE_GUILD_ID"
+guildbridge check-access --provider stoat --id "TARGET_SERVER_ID"
+```
 
 Use `--host 0.0.0.0 --allow-lan --auth-token "choose-a-long-random-token"` only on trusted networks when you want phones or tablets on the same network to connect. LAN mode requires an auth token on every request; if you omit `--auth-token`, GuildBridge generates one and prints it once at startup.
 
