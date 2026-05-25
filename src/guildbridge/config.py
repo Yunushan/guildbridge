@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from .utils import env
 
@@ -8,6 +12,114 @@ try:
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover - dotenv is optional at runtime
     load_dotenv = None  # type: ignore[assignment]
+
+
+def env_file_candidates() -> tuple[Path, ...]:
+    candidates: list[Path] = [Path.cwd() / ".env"]
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve(strict=False).parent / ".env")
+    if sys.argv and sys.argv[0]:
+        candidates.append(Path(sys.argv[0]).resolve(strict=False).parent / ".env")
+    candidates.append(user_env_file())
+    candidates.append(Path.home() / ".config" / "guildbridge" / ".env")
+    return _dedupe_paths(candidates)
+
+
+def user_env_file(home: Path | None = None) -> Path:
+    root = Path.home() if home is None else Path(home)
+    return root / ".guildbridge" / ".env"
+
+
+def load_env_files(candidates: Iterable[Path] | None = None) -> tuple[Path, ...]:
+    loaded: list[Path] = []
+    for path in _dedupe_paths(candidates or env_file_candidates()):
+        if not path.is_file():
+            continue
+        if load_dotenv is not None:
+            load_dotenv(dotenv_path=path, override=False)
+        _load_simple_env_file(path)
+        loaded.append(path)
+    return tuple(loaded)
+
+
+def write_env_values(values: Mapping[str, str], *, env_file: Path | None = None) -> Path:
+    updates = {key: value.strip() for key, value in values.items() if value.strip()}
+    if not updates:
+        raise ValueError("No environment values were provided.")
+    for key in updates:
+        if not key.replace("_", "").isalnum() or key.upper() != key:
+            raise ValueError(f"Invalid environment key: {key}")
+
+    target = env_file or user_env_file()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        lines = target.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = [
+            "# GuildBridge local secrets. Do not commit this file.",
+            "# Created by the desktop GUI after confirmation.",
+        ]
+
+    seen: set[str] = set()
+    rewritten: list[str] = []
+    for line in lines:
+        line_key = _env_line_key(line)
+        if line_key in updates:
+            rewritten.append(f"{line_key}={_quote_env_value(updates[line_key])}")
+            seen.add(line_key)
+        else:
+            rewritten.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            rewritten.append(f"{key}={_quote_env_value(value)}")
+
+    target.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    for key, value in updates.items():
+        os.environ[key] = value
+    return target
+
+
+def _dedupe_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        resolved = path.expanduser().resolve(strict=False)
+        key = str(resolved).lower() if os.name == "nt" else str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(resolved)
+    return tuple(deduped)
+
+
+def _env_line_key(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    key = stripped.split("=", 1)[0].strip()
+    if key.startswith("export "):
+        key = key.removeprefix("export ").strip()
+    if not key.replace("_", "").isalnum() or key.upper() != key:
+        return None
+    return key
+
+
+def _quote_env_value(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _load_simple_env_file(path: Path) -> None:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key = _env_line_key(line)
+        if key is None or os.environ.get(key):
+            continue
+        raw_value = line.split("=", 1)[1].strip()
+        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {"'", '"'}:
+            raw_value = raw_value[1:-1]
+        if not raw_value:
+            continue
+        os.environ[key] = raw_value.replace(r"\"", '"').replace(r"\\", "\\")
 
 
 @dataclass(frozen=True)
@@ -54,8 +166,7 @@ class RuntimeConfig:
 
     @staticmethod
     def from_env() -> RuntimeConfig:
-        if load_dotenv is not None:
-            load_dotenv()
+        load_env_files()
         request_timeout = parse_positive_int(env("GUILDBRIDGE_REQUEST_TIMEOUT", "GUILDBRIDGE_TIMEOUT"), default=30)
         max_retries = parse_positive_int(env("GUILDBRIDGE_MAX_RETRIES"), default=5, allow_zero=True)
         return RuntimeConfig(

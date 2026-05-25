@@ -243,7 +243,7 @@ guildbridge-web.exe
 
 ### Desktop GUI workflow
 
-1. Configure provider tokens in `.env` before opening the GUI.
+1. Configure provider tokens in `.env`, or use **Configure Tokens** in the GUI assistant. The GUI saves tokens only to your local `~/.guildbridge/.env` file after a Yes/No confirmation; it cannot read already-open Discord or Stoat browser sessions.
 2. Open `guildbridge-gui` or `guildbridge-gui.exe`.
 3. Use the **Platforms** tab first to confirm CLI, desktop GUI, and web GUI readiness.
 4. Use **Export** to create a neutral template from a source provider. Provide either a source ID or a provider template URL/code, then choose an output JSON path.
@@ -251,7 +251,7 @@ guildbridge-web.exe
 6. In **Export**, **Import**, **Migrate**, or **Content**, use the assistant buttons to generate ignored local artifact paths under `.guildbridge/gui`.
 7. In **Migrate**, select any supported source and one or more targets, then use **Prepare Selected Route**. **Discord -> Stoat Preset** remains available as a shortcut for that route.
 8. Use **Invite Discord Bot** when a Discord source or target needs the bot installed. If **Discord app/client ID** is empty, GuildBridge tries to derive it from `DISCORD_BOT_TOKEN`.
-9. Use **Check Source Access** and **Check Target Access** to verify that the configured tokens can read the selected source and target before making a plan.
+9. Use **Check Source Access** and **Check Target Access** to verify that the configured tokens can read the selected source and target before making a plan. If access fails because a token is missing, use **Configure Tokens** and retry without restarting the app.
 10. Use the **Theme** selector to switch between light and dark mode.
 11. Click **Dry-run Check** first. This creates a dry-run plan in **Plan/result JSON** without writing to the provider.
 12. Review the generated plan JSON, then click **Use Plan as Reviewed** to move that plan into **Reviewed plan JSON** and switch **Plan/result JSON** to an apply-result file.
@@ -342,6 +342,26 @@ All providers export into the same neutral schema, so the migration path is:
 ```text
 source provider -> neutral community.template.json -> target provider
 ```
+
+Structural migration supports every registered provider as a source and every
+registered provider as one or more destinations: Discord, Fluxer, Stoat,
+Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost, and Zulip.
+That means routes such as `discord -> stoat, fluxer, matrix`,
+`stoat -> fluxer`, and `fluxer -> discord` use the same dry-run, review, and
+apply flow. Provider APIs can still require the correct token, an existing
+target ID, or an admin bridge before writes are allowed.
+
+List the current route matrix with:
+
+```bash
+guildbridge routes
+guildbridge routes --format json
+```
+
+Optional content/message migration is separate from structural migration.
+`content-migrate` currently uses a DiscordChatExporter source archive, while
+`content-import` can import a GuildBridge content archive into one or more
+targets.
 
 ### Enterprise chat and voice paths
 

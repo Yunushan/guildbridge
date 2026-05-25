@@ -46,6 +46,25 @@ def test_content_features_command_json(capsys) -> None:  # type: ignore[no-untyp
     assert {provider["provider"] for provider in data["providers"]} >= {"discord", "stoat", "zulip"}
 
 
+def test_routes_command_json(tmp_path: Path) -> None:
+    routes_path = tmp_path / "routes.json"
+
+    assert main(["routes", "--format", "json", "--out", str(routes_path)]) == 0
+    data = json.loads(routes_path.read_text(encoding="utf-8"))
+    providers = set(data["providers"])
+    route_pairs = {(route["from"], route["to"]) for route in data["routes"]}
+
+    assert data["schema"] == "guildbridge.structure-routes.v1"
+    assert providers >= {"discord", "stoat", "fluxer", "matrix"}
+    assert data["route_count"] == data["provider_count"] * data["provider_count"]
+    assert data["multi_target"]["supported"] is True
+    assert ("discord", "stoat") in route_pairs
+    assert ("discord", "fluxer") in route_pairs
+    assert ("discord", "matrix") in route_pairs
+    assert ("stoat", "fluxer") in route_pairs
+    assert ("fluxer", "discord") in route_pairs
+
+
 def test_content_export_and_import_dry_run(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     export_path = tmp_path / "general.json"
     archive_path = tmp_path / "content.json"

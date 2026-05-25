@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
-from guildbridge.config import RuntimeConfig, parse_positive_int
+from guildbridge.config import (
+    RuntimeConfig,
+    load_env_files,
+    parse_positive_int,
+    user_env_file,
+    write_env_values,
+)
 
 
 def test_parse_positive_int_defaults_and_bounds() -> None:
@@ -55,3 +64,58 @@ def test_runtime_config_reads_retry_and_user_agent(monkeypatch: pytest.MonkeyPat
     assert config.zulip_api_base == "https://zulip.example.test/api/v1"
     assert config.zulip_email == "bot@example.test"
     assert config.zulip_api_key == "zulip-token"
+
+
+def test_load_env_files_reads_explicit_local_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        'DISCORD_BOT_TOKEN="discord-from-file"\nSTOAT_BOT_TOKEN=stoat-from-file\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("STOAT_BOT_TOKEN", raising=False)
+
+    loaded = load_env_files((env_file,))
+    config = RuntimeConfig.from_env()
+
+    assert loaded == (env_file.resolve(strict=False),)
+    assert config.discord_token == "discord-from-file"
+    assert config.stoat_token == "stoat-from-file"
+
+
+def test_load_env_files_allows_user_file_to_fill_blank_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    blank_env = tmp_path / "app" / ".env"
+    user_env = tmp_path / "home" / ".guildbridge" / ".env"
+    blank_env.parent.mkdir()
+    user_env.parent.mkdir(parents=True)
+    blank_env.write_text("DISCORD_BOT_TOKEN=\n", encoding="utf-8")
+    user_env.write_text("DISCORD_BOT_TOKEN=user-file-token\n", encoding="utf-8")
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+
+    load_env_files((blank_env, user_env))
+
+    assert os.environ["DISCORD_BOT_TOKEN"] == "user-file-token"
+
+
+def test_write_env_values_updates_private_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = user_env_file(home=tmp_path)
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text("# local\nDISCORD_BOT_TOKEN=old\nSTOAT_API_BASE=https://api.stoat.chat\n", encoding="utf-8")
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("STOAT_BOT_TOKEN", raising=False)
+
+    saved = write_env_values(
+        {
+            "DISCORD_BOT_TOKEN": "new-discord-token",
+            "STOAT_BOT_TOKEN": "new stoat token",
+        },
+        env_file=env_file,
+    )
+
+    text = saved.read_text(encoding="utf-8")
+    assert saved == env_file
+    assert 'DISCORD_BOT_TOKEN="new-discord-token"' in text
+    assert "STOAT_API_BASE=https://api.stoat.chat" in text
+    assert 'STOAT_BOT_TOKEN="new stoat token"' in text
+    assert os.environ["DISCORD_BOT_TOKEN"] == "new-discord-token"
+    assert os.environ["STOAT_BOT_TOKEN"] == "new stoat token"

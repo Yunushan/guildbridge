@@ -52,6 +52,7 @@ from guildbridge.platforms import CHECK_TARGETS, SUPPORTED_PLATFORMS, evaluate_r
 from guildbridge.privacy import redact_template
 from guildbridge.providers import get_provider, provider_names
 from guildbridge.providers.base import ExportOptions, ImportOptions, Provider
+from guildbridge.routes import structure_route_document, structure_routes_table
 from guildbridge.safety import APPLY_CONFIRMATION, validate_apply_safety
 
 BATCH_RESULT_SCHEMA = "guildbridge.batch-result.v1"
@@ -669,6 +670,14 @@ def command_content_features(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_routes(args: argparse.Namespace) -> int:
+    if args.format == "json":
+        write_json(structure_route_document(), args.out)
+    else:
+        print(structure_routes_table())
+    return 0
+
+
 def _content_options_from_args(
     args: argparse.Namespace,
     *,
@@ -1214,6 +1223,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_content.add_argument("--format", choices=("text", "json"), default="text", help="output format")
     p_content.add_argument("--out", default="-", help="JSON output path when --format json is used")
     p_content.set_defaults(func=command_content_features)
+
+    p_routes = sub.add_parser("routes", help="show supported structural provider migration routes")
+    p_routes.add_argument("--format", choices=("text", "json"), default="text", help="output format")
+    p_routes.add_argument("--out", default="-", help="JSON output path when --format json is used")
+    p_routes.set_defaults(func=command_routes)
 
     p_content_export = sub.add_parser(
         "content-export",

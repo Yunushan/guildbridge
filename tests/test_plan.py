@@ -175,6 +175,40 @@ def test_multi_target_migrate_writes_batch_plan(tmp_path: Path, monkeypatch) -> 
     assert [result["plan"]["context"]["source_provider"] for result in data["results"]] == ["discord", "discord"]
 
 
+def test_migrate_accepts_any_registered_source_shape(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("guildbridge.cli.get_provider", lambda name, _config: PlanProvider(str(name)))
+    routes = [
+        ("discord", ["stoat", "fluxer", "matrix"]),
+        ("stoat", ["fluxer", "matrix"]),
+        ("fluxer", ["discord"]),
+    ]
+
+    for source, targets in routes:
+        plan_path = tmp_path / f"{source}-plan.json"
+        args = [
+            "migrate",
+            "--from",
+            source,
+            "--source-id",
+            "source-server",
+            "--plan-out",
+            str(plan_path),
+        ]
+        for target in targets:
+            args.extend(["--to", target])
+
+        assert main(args) == 0
+        data = json.loads(plan_path.read_text(encoding="utf-8"))
+        if len(targets) > 1:
+            assert data["schema"] == "guildbridge.batch-result.v1"
+            assert data["source_provider"] == source
+            assert data["target_providers"] == targets
+            assert [result["plan"]["context"]["source_provider"] for result in data["results"]] == [source] * len(targets)
+        else:
+            assert data["provider"] == targets[0]
+            assert data["plan"]["context"]["source_provider"] == source
+
+
 def test_apply_requires_reviewed_plan(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
     template_path = tmp_path / "template.json"
     write_template(template_path)

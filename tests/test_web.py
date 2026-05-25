@@ -84,6 +84,20 @@ def test_build_web_migrate_args() -> None:
     assert "--force-invalid-template" in args
 
 
+def test_build_web_migrate_args_accepts_non_discord_multi_target_routes() -> None:
+    args = build_web_args(
+        {
+            "action": ["migrate"],
+            "provider_from": ["stoat"],
+            "provider_to": ["fluxer", "matrix"],
+            "source_id": ["server-id"],
+        }
+    )
+
+    assert args[:7] == ["migrate", "--from", "stoat", "--to", "fluxer", "--to", "matrix"]
+    assert args[args.index("--source-id") + 1] == "server-id"
+
+
 def test_build_web_platform_args() -> None:
     assert build_web_args({"action": ["platforms"]}) == ["platforms", "--check"]
 

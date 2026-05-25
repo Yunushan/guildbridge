@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sys
 import threading
@@ -17,6 +18,7 @@ from tkinter import (
     PhotoImage,
     StringVar,
     Tk,
+    Toplevel,
     filedialog,
     messagebox,
     scrolledtext,
@@ -24,7 +26,7 @@ from tkinter import (
 )
 from typing import Any, cast
 
-from guildbridge.config import RuntimeConfig
+from guildbridge.config import RuntimeConfig, load_env_files, user_env_file, write_env_values
 from guildbridge.gui_assistant import (
     content_artifact_paths,
     default_migration_artifact_dir,
@@ -68,6 +70,36 @@ class ApplyPrompt:
     target_providers: tuple[str, ...]
     target_id: str
     target_name: str
+
+
+@dataclass(frozen=True)
+class TokenField:
+    provider: str
+    label: str
+    env_key: str
+
+
+TOKEN_FIELDS_BY_PROVIDER: dict[str, tuple[TokenField, ...]] = {
+    "discord": (TokenField("Discord", "Bot token", "DISCORD_BOT_TOKEN"),),
+    "fluxer": (TokenField("Fluxer", "Bot token", "FLUXER_BOT_TOKEN"),),
+    "stoat": (
+        TokenField("Stoat", "Bot token", "STOAT_BOT_TOKEN"),
+        TokenField("Stoat", "Session token (optional)", "STOAT_SESSION_TOKEN"),
+    ),
+    "spacebar": (TokenField("Spacebar", "Bot token", "SPACEBAR_BOT_TOKEN"),),
+    "daccord": (TokenField("Daccord", "Bot token", "DACCORD_BOT_TOKEN"),),
+    "matrix": (TokenField("Matrix", "Access token", "MATRIX_ACCESS_TOKEN"),),
+    "rocket.chat": (
+        TokenField("Rocket.Chat", "Auth token", "ROCKET_CHAT_AUTH_TOKEN"),
+        TokenField("Rocket.Chat", "User ID", "ROCKET_CHAT_USER_ID"),
+    ),
+    "mumble": (TokenField("Mumble", "Admin API token", "MUMBLE_API_TOKEN"),),
+    "mattermost": (TokenField("Mattermost", "Personal access token", "MATTERMOST_TOKEN"),),
+    "zulip": (
+        TokenField("Zulip", "Bot email", "ZULIP_EMAIL"),
+        TokenField("Zulip", "Bot API key", "ZULIP_API_KEY"),
+    ),
+}
 
 
 GUI_THEMES: dict[str, dict[str, str]] = {
@@ -454,6 +486,94 @@ class GuildBridgeGUI(ttk.Frame):
         if selected:
             field.variable.set(selected)
 
+    def _configure_tokens(self, providers: list[str] | tuple[str, ...] | None = None) -> None:
+        load_env_files()
+        provider_keys = providers or self.providers
+        fields: list[TokenField] = []
+        seen_keys: set[str] = set()
+        for provider in provider_keys:
+            for field in TOKEN_FIELDS_BY_PROVIDER.get(provider.strip().lower(), ()):
+                if field.env_key in seen_keys:
+                    continue
+                seen_keys.add(field.env_key)
+                fields.append(field)
+        if not fields:
+            messagebox.showinfo("Configure Tokens", "No token fields are known for the selected provider.", parent=self.master)
+            return
+
+        target = user_env_file()
+        dialog = Toplevel(self.master)
+        dialog.title("Configure Tokens")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        if self.icon_image is not None:
+            try:
+                dialog.iconphoto(False, self.icon_image)
+            except Exception:
+                pass
+        try:
+            dialog.configure(background=GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])["bg"])
+        except Exception:
+            pass
+
+        body = ttk.Frame(dialog, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(1, weight=1)
+        ttk.Label(
+            body,
+            text=(
+                "Paste provider tokens here to save them in a local GuildBridge .env file. "
+                "GuildBridge cannot read Discord or Stoat browser sessions directly."
+            ),
+            wraplength=620,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(body, text=f"Save location: {target}").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
+
+        entries: list[tuple[TokenField, StringVar]] = []
+        row = 2
+        for field in fields:
+            status = "configured" if os.environ.get(field.env_key) else "missing"
+            ttk.Label(body, text=f"{field.provider} {field.label}").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+            variable = StringVar()
+            ttk.Entry(body, textvariable=variable, show="*", width=48).grid(row=row, column=1, sticky="ew", pady=4)
+            ttk.Label(body, text=f"{field.env_key} ({status})").grid(row=row, column=2, sticky="w", padx=(8, 0), pady=4)
+            entries.append((field, variable))
+            row += 1
+
+        actions = ttk.Frame(body)
+        actions.grid(row=row, column=0, columnspan=3, sticky="e", pady=(12, 0))
+
+        def save_tokens() -> None:
+            updates = {field.env_key: variable.get() for field, variable in entries if variable.get().strip()}
+            if not updates:
+                messagebox.showinfo(
+                    "Configure Tokens",
+                    "No token values were entered. Existing configured tokens were left unchanged.",
+                    parent=dialog,
+                )
+                return
+            if not messagebox.askyesno(
+                "Save tokens",
+                f"Save {len(updates)} value(s) to this local file?\n\n{target}\n\nToken values will not be shown in output.",
+                icon="warning",
+                parent=dialog,
+            ):
+                return
+            try:
+                saved = write_env_values(updates, env_file=target)
+                load_env_files((saved,))
+            except Exception as exc:
+                messagebox.showerror("Configure Tokens", f"Could not save token configuration:\n{exc}", parent=dialog)
+                return
+            self._append_output(f"Token configuration saved to {saved}. Values are hidden.\n")
+            messagebox.showinfo("Configure Tokens", "Token configuration saved. Restart is not required.", parent=dialog)
+            dialog.destroy()
+
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(actions, text="Save Tokens", command=save_tokens).grid(row=0, column=1)
+        dialog.grab_set()
+        self.master.wait_window(dialog)
+
     def _open_discord_invite(self, client_id: str) -> None:
         try:
             token = RuntimeConfig.from_env().discord_token
@@ -816,6 +936,11 @@ class GuildBridgeGUI(ttk.Frame):
             command=lambda: self._open_discord_invite(discord_client_id.get()),
         ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
         ttk.Button(
+            assistant,
+            text="Configure Tokens",
+            command=lambda: self._configure_tokens((provider.get(),)),
+        ).grid(row=0, column=3, sticky="w", padx=8, pady=8)
+        ttk.Button(
             frame,
             text="Run Export",
             command=lambda: self._run_export_with_source_guard(
@@ -897,6 +1022,11 @@ class GuildBridgeGUI(ttk.Frame):
                 plan_in,
             ),
         ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Configure Tokens",
+            command=lambda: self._configure_tokens(tuple(self._selected_providers(provider_to))),
+        ).grid(row=0, column=3, sticky="w", padx=8, pady=8)
         actions = ttk.Frame(frame)
         actions.grid(row=row + 4, column=1, sticky="e", pady=(12, 0))
         ttk.Button(
@@ -1003,7 +1133,7 @@ class GuildBridgeGUI(ttk.Frame):
         )
         assistant = ttk.LabelFrame(frame, text="Migrate Assistant")
         assistant.grid(row=row + 4, column=1, sticky="ew", pady=(10, 0))
-        assistant.columnconfigure(4, weight=1)
+        assistant.columnconfigure(5, weight=1)
         ttk.Button(
             assistant,
             text="Prepare Selected Route",
@@ -1043,6 +1173,11 @@ class GuildBridgeGUI(ttk.Frame):
             text="Check Target Access",
             command=lambda: self._check_selected_target_access(provider_to, target_id.get()),
         ).grid(row=0, column=4, sticky="w", padx=(0, 8), pady=8)
+        ttk.Button(
+            assistant,
+            text="Configure Tokens",
+            command=lambda: self._configure_tokens((provider_from.get(), *self._selected_providers(provider_to))),
+        ).grid(row=0, column=5, sticky="w", padx=(0, 8), pady=8)
         ttk.Button(
             assistant,
             text="Fill Paths",
@@ -1329,6 +1464,11 @@ class GuildBridgeGUI(ttk.Frame):
             text="Check Target Access",
             command=lambda: self._check_selected_target_access(provider_to, target_id.get()),
         ).grid(row=1, column=2, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            assistant,
+            text="Configure Tokens",
+            command=lambda: self._configure_tokens(("discord", *self._selected_providers(provider_to))),
+        ).grid(row=1, column=3, sticky="w", padx=8, pady=8)
 
         actions = ttk.Frame(frame)
         actions.grid(row=row + 16, column=1, sticky="e", pady=(12, 0))
