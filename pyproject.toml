@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "guildbridge"
-version = "1.0.5"
+version = "1.0.7"
 description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost, and Zulip."
 readme = "README.md"
 requires-python = ">=3.10"
