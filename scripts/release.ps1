@@ -152,7 +152,7 @@ function Invoke-ReleaseChecks {
         return
     }
 
-    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "src", "tests", "scripts/check-platform.py", "scripts/verify-dist.py")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "src", "tests", "scripts/check-platform.py", "scripts/check-release-version.py", "scripts/verify-dist.py")
     Invoke-Checked -FilePath $Python -Arguments @("-m", "mypy", "src")
     Invoke-Checked -FilePath $Python -Arguments @("-m", "pytest", "-q")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-platform.py", "--require", "cli", "--format", "json")

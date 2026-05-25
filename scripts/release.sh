@@ -213,7 +213,7 @@ PY
 if [ "$SKIP_CHECKS" -eq 1 ]; then
   printf '%s\n' "Warning: skipping lint, type checks, tests, and platform check." >&2
 else
-  run "$PYTHON" -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+  run "$PYTHON" -m ruff check src tests scripts/check-platform.py scripts/check-release-version.py scripts/verify-dist.py
   run "$PYTHON" -m mypy src
   run "$PYTHON" -m pytest -q
   run "$PYTHON" scripts/check-platform.py --require cli --format json
