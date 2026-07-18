@@ -110,8 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if errors:
         print("check-github-production-settings: error:", file=sys.stderr)
-        for error in errors:
-            print(f"- {error}", file=sys.stderr)
+        for index, error in enumerate(errors, start=1):
+            print(f"- {_error_category(error)} (requirement {index})", file=sys.stderr)
         return 1
     if args.receipt_out is not None:
         receipt = build_receipt(
@@ -315,6 +315,21 @@ def _validate_release_tag_protection(rulesets: Iterable[dict[str, Any]], errors:
         errors.append(
             "release tag ruleset for refs/tags/v* is missing protections: " + ", ".join(missing_rules)
         )
+
+
+def _error_category(error: str) -> str:
+    """Return a stable, non-sensitive category for hosted audit diagnostics."""
+    if error.startswith("repository security"):
+        return "repository security control"
+    if error.startswith("main branch"):
+        return "branch protection control"
+    if error.startswith("release tag ruleset") or error.startswith("repository must have an active tag ruleset"):
+        return "release tag protection control"
+    if error.startswith("current default-branch") or error.startswith("could not determine the current default-branch"):
+        return "CodeQL freshness control"
+    if error.startswith("repository has open CodeQL alerts"):
+        return "open CodeQL alert control"
+    return "production environment control"
 
 
 def _gh_api(endpoint: str) -> dict[str, Any]:

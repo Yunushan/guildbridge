@@ -41,10 +41,12 @@ def main() -> int:
     _require(ci, "python -m coverage run -m pytest -q", "ci.yml must measure source coverage.", errors)
     _require(ci, "python -m coverage report", "ci.yml must enforce the source coverage threshold.", errors)
     _require(ci, "--require-hashes -r requirements/release.txt", "ci.yml package job must use the release lock.", errors)
-    if ci.count("--require-hashes -r requirements/release.txt") < 4:
-        errors.append("ci.yml must install the hash-locked release dependency graph in every job that installs Python tools.")
-    if ci.count("--no-deps -e \".[dev]\"") < 4:
-        errors.append("ci.yml must install the project without resolving unpinned development dependencies in every install job.")
+    if ci.count("--require-hashes -r requirements/release.txt") != 1:
+        errors.append("ci.yml must reserve the hash-locked release dependency graph for the package job.")
+    if ci.count('--no-deps -e ".[dev]"') != 1:
+        errors.append("ci.yml package job must install the project without resolving additional dependencies.")
+    if ci.count('python -m pip install -e ".[dev]"') < 3:
+        errors.append("ci.yml compatibility and GUI smoke jobs must resolve interpreter-compatible development dependencies.")
     _require(
         self_hosted,
         "--require-hashes -r requirements/release.txt",

@@ -306,8 +306,9 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "python scripts/verify-dist.py" in github_ci
     assert "python scripts/pip-audit-truststore.py --strict" in github_ci
     assert "--require-hashes -r requirements/release.txt" in github_ci
-    assert github_ci.count("--require-hashes -r requirements/release.txt") >= 4
-    assert github_ci.count('--no-deps -e ".[dev]"') >= 4
+    assert github_ci.count("--require-hashes -r requirements/release.txt") == 1
+    assert github_ci.count('python -m pip install -e ".[dev]"') >= 3
+    assert github_ci.count('--no-deps -e ".[dev]"') == 1
     assert "--require-hashes -r requirements/release.txt" in self_hosted
     assert '--no-deps -e ".[dev]"' in self_hosted
     assert "fetch-depth: 0" in self_hosted

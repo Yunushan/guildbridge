@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.cookiejar import CookieJar
@@ -19,6 +20,7 @@ from guildbridge.web import (
     AUTH_HEADER,
     CSRF_FIELD,
     GuildBridgeWebHandler,
+    _create_tls_server_context,
     build_web_args,
     main,
     render_page,
@@ -204,6 +206,34 @@ def test_render_page_defaults_unknown_theme_to_light() -> None:
 
     assert '<html lang="en" data-theme="light">' in page
     assert '<option value="light" selected>Light</option>' in page
+
+
+def test_authenticated_redirect_restricts_theme_to_known_values() -> None:
+    class RedirectCapture:
+        auth_token = "session-token"
+        secure_cookies = True
+
+        def __init__(self) -> None:
+            self.headers: list[tuple[str, str]] = []
+
+        def send_response(self, _status: int) -> None:
+            pass
+
+        def send_header(self, name: str, value: str) -> None:
+            self.headers.append((name, value))
+
+        def end_headers(self) -> None:
+            pass
+
+    handler = RedirectCapture()
+    GuildBridgeWebHandler._start_authenticated_session(handler, "dark\r\nX-Injected: true")
+
+    assert ("Location", "/?theme=light") in handler.headers
+    assert not any(name == "X-Injected" for name, _value in handler.headers)
+
+
+def test_tls_server_context_requires_tls_1_2_or_newer() -> None:
+    assert _create_tls_server_context().minimum_version >= ssl.TLSVersion.TLSv1_2
 
 
 def test_render_page_has_mobile_layout_contracts() -> None:

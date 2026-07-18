@@ -119,6 +119,13 @@ def test_validate_settings_reports_missing_protection_and_secret_names() -> None
     assert "repository has open CodeQL alerts: 42" in errors
 
 
+def test_error_category_does_not_echo_hosted_setting_values() -> None:
+    module = _module()
+
+    assert module._error_category("production-release environment is missing required secret names: SECRET_VALUE") == "production environment control"
+    assert module._error_category("repository has open CodeQL alerts: 42") == "open CodeQL alert control"
+
+
 def test_validate_settings_requires_the_v_tag_environment_policy() -> None:
     module = _module()
     repository, protection, environment, secrets, _deployment_policies = _valid_settings()

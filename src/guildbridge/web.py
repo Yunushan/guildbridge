@@ -62,6 +62,13 @@ def _theme(value: str) -> str:
     return normalized if normalized in THEMES else "light"
 
 
+def _create_tls_server_context() -> ssl.SSLContext:
+    """Create a server context that rejects obsolete TLS protocol versions."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def _is_loopback_address(value: str) -> bool:
     try:
         return ipaddress.ip_address(value).is_loopback
@@ -1043,7 +1050,7 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         if self.secure_cookies:
             cookie += "; Secure"
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", f"/?theme={html.escape(theme)}")
+        self.send_header("Location", f"/?theme={_theme(theme)}")
         self.send_header("Set-Cookie", cookie)
         self.end_headers()
 
@@ -1078,7 +1085,7 @@ def serve(
     GuildBridgeWebHandler.max_body_bytes = max_body_bytes
     server = ThreadingHTTPServer((host, port), GuildBridgeWebHandler)
     if tls_cert and tls_key:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context = _create_tls_server_context()
         context.load_cert_chain(tls_cert, tls_key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
     scope = "LAN-enabled" if allow_lan else "local-only"
