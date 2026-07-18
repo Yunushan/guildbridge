@@ -277,6 +277,7 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
 
     assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" in github_ci
     assert 'PIP_NO_CACHE_DIR: "1"' in github_ci
+    assert github_ci.count("permissions:\n      contents: read") >= 5
     assert "ubuntu-24.04" in github_ci
     assert "windows-2025-vs2026" in github_ci
     assert "macos-15" in github_ci
