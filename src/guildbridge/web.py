@@ -37,6 +37,7 @@ AUTH_HEADER = "X-GuildBridge-Auth"
 AUTH_COOKIE = "guildbridge_session"
 DEFAULT_MAX_BODY_BYTES = 64 * 1024
 THEMES = ("light", "dark")
+THEME_VALUES = {"light": "light", "dark": "dark"}
 
 
 def _first(form: Mapping[str, list[str]], key: str, default: str = "") -> str:
@@ -58,8 +59,7 @@ def _checked(form: Mapping[str, list[str]], key: str) -> bool:
 
 
 def _theme(value: str) -> str:
-    normalized = value.strip().lower()
-    return normalized if normalized in THEMES else "light"
+    return THEME_VALUES.get(value.strip().lower(), "light")
 
 
 def _create_tls_server_context() -> ssl.SSLContext:

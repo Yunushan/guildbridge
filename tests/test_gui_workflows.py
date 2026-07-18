@@ -143,6 +143,7 @@ def test_gui_builds_full_tk_surface_when_a_desktop_session_is_available() -> Non
         root = tk.Tk()
     except tk.TclError as exc:
         pytest.skip(f"Tk desktop session is unavailable: {exc}")
+        return
 
     try:
         root.withdraw()

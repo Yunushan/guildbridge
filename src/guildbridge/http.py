@@ -294,6 +294,7 @@ def retry_delay_seconds(attempt: int, response: requests.Response | None = None)
             if retry_after is not None:
                 return min(float(retry_after), MAX_RETRY_DELAY_SECONDS)
         except ValueError:
+            # Error responses may not contain JSON; use the bounded exponential fallback below.
             pass
     base = min(2.0 ** attempt, MAX_RETRY_DELAY_SECONDS)
     # This jitter only avoids synchronized retries; it is not used for security.

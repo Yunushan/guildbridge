@@ -514,10 +514,12 @@ class GuildBridgeGUI(ttk.Frame):
             try:
                 dialog.iconphoto(False, self.icon_image)
             except TclError:
+                # Some window managers reject icon updates for transient dialogs.
                 pass
         try:
             dialog.configure(background=GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])["bg"])
         except TclError:
+            # The dialog can be destroyed while a theme update is in progress.
             pass
 
         body = ttk.Frame(dialog, padding=12)
