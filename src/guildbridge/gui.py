@@ -692,6 +692,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _prepare_selected_content_target(
         self,
+        source_provider: StringVar,
         provider_to: Listbox,
         discord_export_out: StringVar,
         archive_file: StringVar,
@@ -712,6 +713,7 @@ class GuildBridgeGUI(ttk.Frame):
         content_incremental.set(True)
         content_continue_on_error.set(True)
         self._fill_content_paths(
+            source_provider.get(),
             self._selected_providers(provider_to),
             discord_export_out,
             archive_file,
@@ -728,6 +730,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _fill_content_paths(
         self,
+        source_provider: str,
         target_providers: list[str],
         discord_export_out: StringVar,
         archive_file: StringVar,
@@ -741,13 +744,19 @@ class GuildBridgeGUI(ttk.Frame):
         content_incremental_state: StringVar,
         content_thread_archive_dir: StringVar,
     ) -> None:
-        paths = content_artifact_paths(default_migration_artifact_dir(), target_providers=target_providers)
+        source_name = source_provider.strip().lower() or "discord"
+        paths = content_artifact_paths(
+            default_migration_artifact_dir(), source_provider=source_name, target_providers=target_providers
+        )
         self._ensure_file_parent(paths["archive_out"])
-        self._ensure_directory(paths["discord_export_out"])
         self._ensure_directory(paths["content_thread_archive_dir"])
-        discord_export_out.set(paths["discord_export_out"])
+        if source_name == "discord":
+            self._ensure_directory(paths["discord_export_out"])
+            discord_export_out.set(paths["discord_export_out"])
+            archive_file.set(paths["archive_out"])
+        else:
+            discord_export_out.set("")
         archive_out.set(paths["archive_out"])
-        archive_file.set(paths["archive_out"])
         plan_out.set(paths["plan_out"])
         plan_in.set("")
         content_journal_out.set(paths["content_journal_out"])
@@ -792,6 +801,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _prepare_content_discord_stoat_wizard(
         self,
+        source_provider: StringVar,
         provider_to: Listbox,
         discord_export_out: StringVar,
         archive_file: StringVar,
@@ -812,6 +822,7 @@ class GuildBridgeGUI(ttk.Frame):
         content_continue_on_error: BooleanVar,
         content_parallel_sends: StringVar,
     ) -> None:
+        source_provider.set("discord")
         self._select_only_provider(provider_to, "stoat")
         native_content.set(True)
         ferry_parity.set(True)
@@ -821,6 +832,7 @@ class GuildBridgeGUI(ttk.Frame):
         content_continue_on_error.set(True)
         content_parallel_sends.set("3")
         self._fill_content_paths(
+            "discord",
             ["stoat"],
             discord_export_out,
             archive_file,
@@ -1385,6 +1397,7 @@ class GuildBridgeGUI(ttk.Frame):
             assistant,
             text="Prepare Selected Target",
             command=lambda: self._prepare_selected_content_target(
+                content_source_provider,
                 provider_to,
                 discord_export_out,
                 archive_file,
@@ -1406,6 +1419,7 @@ class GuildBridgeGUI(ttk.Frame):
             assistant,
             text="Discord -> Stoat Preset",
             command=lambda: self._prepare_content_discord_stoat_wizard(
+                content_source_provider,
                 provider_to,
                 discord_export_out,
                 archive_file,
@@ -1431,6 +1445,7 @@ class GuildBridgeGUI(ttk.Frame):
             assistant,
             text="Fill Paths",
             command=lambda: self._prepare_selected_content_target(
+                content_source_provider,
                 provider_to,
                 discord_export_out,
                 archive_file,
@@ -1470,8 +1485,10 @@ class GuildBridgeGUI(ttk.Frame):
         ).grid(row=1, column=0, sticky="w", padx=8, pady=8)
         ttk.Button(
             assistant,
-            text="Check Discord Access",
-            command=lambda: self._check_discord_access(discord_source_id.get()),
+            text="Check Source Access",
+            command=lambda: self._check_provider_access(
+                content_source_provider.get(), discord_source_id.get(), "Check source access"
+            ),
         ).grid(row=1, column=1, sticky="w", padx=8, pady=8)
         ttk.Button(
             assistant,
@@ -1524,7 +1541,7 @@ class GuildBridgeGUI(ttk.Frame):
 
         ttk.Button(
             actions,
-            text="Export Archive",
+            text="Export Discord Archive",
             command=lambda: self._run_export_with_source_guard(
                 build_content_export_args(
                     discord_chat_export=discord_export.get(),
@@ -1629,6 +1646,7 @@ class GuildBridgeGUI(ttk.Frame):
             ),
         ).grid(row=1, column=2, sticky="e")
         self._fill_content_paths(
+            content_source_provider.get(),
             self._selected_providers(provider_to),
             discord_export_out,
             archive_file,

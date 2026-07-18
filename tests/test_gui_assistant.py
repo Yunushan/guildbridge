@@ -66,20 +66,23 @@ def test_import_artifact_paths_are_target_named(tmp_path: Path) -> None:
 def test_content_artifact_paths_are_target_named(tmp_path: Path) -> None:
     paths = content_artifact_paths(tmp_path, target_providers=["Stoat"])
 
-    assert paths["discord_export_out"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.discord-export")
-    assert paths["archive_out"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.content.json")
-    assert paths["plan_out"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.plan.json")
-    assert paths["apply_result"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.apply-result.json")
-    assert paths["content_journal_out"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.journal.json")
+    assert paths["discord_export_out"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.discord-export")
+    assert paths["archive_out"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.content.json")
+    assert paths["plan_out"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.plan.json")
+    assert paths["apply_result"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.apply-result.json")
+    assert paths["content_journal_out"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.journal.json")
     assert paths["content_dead_letter_out"] == str(
-        tmp_path / "content" / "guildbridge-content-to-stoat.dead-letter.json"
+        tmp_path / "content" / "guildbridge-content-discord-to-stoat.dead-letter.json"
     )
-    assert paths["content_report_out"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.report.json")
-    assert paths["content_lock_file"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.lock")
+    assert paths["content_report_out"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.report.json")
+    assert paths["content_lock_file"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.lock")
     assert paths["content_incremental_state"] == str(
-        tmp_path / "content" / "guildbridge-content-to-stoat.incremental-state.json"
+        tmp_path / "content" / "guildbridge-content-discord-to-stoat.incremental-state.json"
     )
-    assert paths["content_thread_archive_dir"] == str(tmp_path / "content" / "guildbridge-content-to-stoat.threads")
+    assert paths["content_thread_archive_dir"] == str(tmp_path / "content" / "guildbridge-content-discord-to-stoat.threads")
+
+    stoat_paths = content_artifact_paths(tmp_path, source_provider="stoat", target_providers=["Fluxer"])
+    assert stoat_paths["archive_out"].endswith("guildbridge-content-stoat-to-fluxer.content.json")
 
 
 def test_default_migration_artifact_dir_uses_ignored_guildbridge_folder(tmp_path: Path) -> None:

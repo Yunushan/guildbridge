@@ -243,7 +243,7 @@ def test_fill_content_paths_creates_all_non_secret_artifact_locations(monkeypatc
         },
     )
 
-    gui.GuildBridgeGUI._fill_content_paths(harness, ["stoat"], *vars_)
+    gui.GuildBridgeGUI._fill_content_paths(harness, "discord", ["stoat"], *vars_)
 
     discord_export_out, archive_file, archive_out, plan_out, reviewed, journal, dead_letter, report, lock, state, threads = vars_
     assert archive_file.get() == archive_out.get()
@@ -251,11 +251,41 @@ def test_fill_content_paths_creates_all_non_secret_artifact_locations(monkeypatc
     assert reviewed.get() == ""
     assert journal.get().endswith(".journal.json")
     assert harness.created_files == [archive_out.get()]
-    assert harness.created_dirs == [discord_export_out.get(), threads.get()]
+    assert harness.created_dirs == [threads.get(), discord_export_out.get()]
     assert dead_letter.get().endswith(".json")
     assert report.get().endswith(".json")
     assert lock.get().endswith(".lock")
     assert state.get().endswith(".json")
+
+
+def test_fill_content_paths_preserves_non_discord_archive_input(monkeypatch) -> None:
+    harness = PathHarness()
+    vars_ = [FakeVar() for _ in range(11)]
+    vars_[1].set("private/stoat.content.json")
+    monkeypatch.setattr(gui, "default_migration_artifact_dir", lambda: Path("artifacts"))
+    monkeypatch.setattr(
+        gui,
+        "content_artifact_paths",
+        lambda *_args, **_kwargs: {
+            "discord_export_out": "artifacts/unused-discord-export",
+            "archive_out": "artifacts/stoat-to-fluxer.content.json",
+            "plan_out": "artifacts/stoat-to-fluxer.plan.json",
+            "content_journal_out": "artifacts/stoat-to-fluxer.journal.json",
+            "content_dead_letter_out": "artifacts/stoat-to-fluxer.dead-letter.json",
+            "content_report_out": "artifacts/stoat-to-fluxer.report.json",
+            "content_lock_file": "artifacts/stoat-to-fluxer.lock",
+            "content_incremental_state": "artifacts/stoat-to-fluxer.state.json",
+            "content_thread_archive_dir": "artifacts/threads",
+        },
+    )
+
+    gui.GuildBridgeGUI._fill_content_paths(harness, "stoat", ["fluxer"], *vars_)
+
+    discord_export_out, archive_file, archive_out, *_rest = vars_
+    assert discord_export_out.get() == ""
+    assert archive_file.get() == "private/stoat.content.json"
+    assert archive_out.get() == "artifacts/stoat-to-fluxer.content.json"
+    assert harness.created_dirs == ["artifacts/threads"]
 
 
 def test_migrate_guard_blocks_discord_channel_id(monkeypatch) -> None:
@@ -384,6 +414,7 @@ def test_prepare_content_target_enables_safe_recovery_defaults(monkeypatch) -> N
     monkeypatch.setattr(harness, "_fill_content_paths", fill, raising=False)
     gui.GuildBridgeGUI._prepare_selected_content_target(
         harness,
+        FakeVar("discord"),
         provider_to,
         *text_vars,
         download_exporter,
@@ -394,7 +425,7 @@ def test_prepare_content_target_enables_safe_recovery_defaults(monkeypatch) -> N
     assert download_exporter.get() is True
     assert incremental.get() is True
     assert continue_on_error.get() is True
-    assert calls[0][0] == ["stoat"]
+    assert calls[0][:2] == ("discord", ["stoat"])
 
 
 def test_access_helpers_validate_provider_and_target_selection(monkeypatch) -> None:

@@ -91,10 +91,11 @@ def import_artifact_paths(
 def content_artifact_paths(
     base_dir: str | Path,
     *,
+    source_provider: str = "discord",
     target_providers: list[str] | tuple[str, ...],
 ) -> dict[str, str]:
     base = Path(base_dir).expanduser() / "content"
-    name = f"guildbridge-content-to-{_target_path_part(target_providers)}"
+    name = f"guildbridge-content-{_safe_path_part(source_provider)}-to-{_target_path_part(target_providers)}"
     return {
         "discord_export_out": str(base / f"{name}.discord-export"),
         "archive_out": str(base / f"{name}.content.json"),
