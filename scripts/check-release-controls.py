@@ -249,7 +249,16 @@ def main() -> int:
     _require(pyproject, "fail_under = 80", "pyproject.toml must define the source coverage baseline.", errors)
 
     release_lock = _read(ROOT / "requirements" / "release.txt", errors)
-    for required in ("--hash=sha256:", "pip==", "setuptools==", "pyinstaller==", "pip-audit==", "truststore=="):
+    for required in (
+        "--hash=sha256:",
+        "pip==",
+        "setuptools==",
+        "pyinstaller==",
+        "pip-audit==",
+        "truststore==",
+        "secretstorage==",
+        "jeepney==",
+    ):
         _require(
             release_lock,
             required,

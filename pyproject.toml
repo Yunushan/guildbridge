@@ -32,6 +32,9 @@ classifiers = [
 ]
 dependencies = [
   "keyring>=25.6.0",
+  # Keep the Linux Keyring backend closure in the cross-platform release lock.
+  "SecretStorage>=3.2",
+  "jeepney>=0.4.2",
   "requests>=2.31.0",
   "python-dotenv>=1.0.0",
 ]
