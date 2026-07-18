@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,3 +44,19 @@ def test_secret_hygiene_detects_discord_bot_tokens() -> None:
     findings = module._findings_for_bytes(b"DISCORD_BOT_TOKEN=" + token, "example.env")
 
     assert findings == ["example.env contains a likely Discord bot token"]
+
+
+def test_history_pattern_is_a_valid_git_ere() -> None:
+    module = _module()
+    git = shutil.which("git")
+    assert git is not None
+
+    completed = subprocess.run(
+        [git, "grep", "-I", "-l", "-E", module.GIT_GREP_PATTERN, "HEAD"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode in (0, 1), completed.stderr

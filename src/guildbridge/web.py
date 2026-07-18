@@ -91,6 +91,19 @@ def _auth_input(_auth_token: str) -> str:
     return ""
 
 
+def _session_cookie(auth_token: str, *, secure: bool) -> str:
+    cookie = SimpleCookie()
+    cookie[AUTH_COOKIE] = auth_token
+    session = cookie[AUTH_COOKIE]
+    session["httponly"] = True
+    session["samesite"] = "Strict"
+    session["path"] = "/"
+    session["max-age"] = 3600
+    if secure:
+        session["secure"] = True
+    return session.OutputString()
+
+
 def _theme_input(theme: str) -> str:
     return f'<input type="hidden" name="theme" value="{html.escape(_theme(theme))}">'
 
@@ -1046,12 +1059,9 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         return cookie is not None and _auth_token_valid(cookie.value, self.auth_token)
 
     def _start_authenticated_session(self, theme: str) -> None:
-        cookie = f"{AUTH_COOKIE}={self.auth_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600"
-        if self.secure_cookies:
-            cookie += "; Secure"
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", f"/?theme={_theme(theme)}")
-        self.send_header("Set-Cookie", cookie)
+        self.send_header("Set-Cookie", _session_cookie(self.auth_token, secure=self.secure_cookies))
         self.end_headers()
 
 

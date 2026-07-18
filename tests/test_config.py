@@ -6,14 +6,13 @@ from pathlib import Path
 
 import pytest
 
-import guildbridge.config as config_module
-from guildbridge.config import (
-    RuntimeConfig,
-    load_env_files,
-    parse_positive_int,
-    user_env_file,
-    write_env_values,
-)
+from guildbridge import config as config_module
+
+RuntimeConfig = config_module.RuntimeConfig
+load_env_files = config_module.load_env_files
+parse_positive_int = config_module.parse_positive_int
+user_env_file = config_module.user_env_file
+write_env_values = config_module.write_env_values
 
 
 def test_parse_positive_int_defaults_and_bounds() -> None:

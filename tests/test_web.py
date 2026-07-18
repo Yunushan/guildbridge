@@ -4,6 +4,7 @@ import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
@@ -16,6 +17,7 @@ from guildbridge import __version__
 from guildbridge.gui_commands import CommandResult
 from guildbridge.web import (
     APPLY_CONFIRMATION,
+    AUTH_COOKIE,
     AUTH_FIELD,
     AUTH_HEADER,
     CSRF_FIELD,
@@ -230,6 +232,31 @@ def test_authenticated_redirect_restricts_theme_to_known_values() -> None:
 
     assert ("Location", "/?theme=light") in handler.headers
     assert not any(name == "X-Injected" for name, _value in handler.headers)
+
+
+def test_authenticated_redirect_encodes_session_cookie_value() -> None:
+    class RedirectCapture:
+        auth_token = "token with; separators"
+        secure_cookies = True
+
+        def __init__(self) -> None:
+            self.headers: list[tuple[str, str]] = []
+
+        def send_response(self, _status: int) -> None:
+            pass
+
+        def send_header(self, name: str, value: str) -> None:
+            self.headers.append((name, value))
+
+        def end_headers(self) -> None:
+            pass
+
+    handler = RedirectCapture()
+    GuildBridgeWebHandler._start_authenticated_session(handler, "dark")
+
+    cookie = SimpleCookie()
+    cookie.load(dict(handler.headers)["Set-Cookie"])
+    assert cookie[AUTH_COOKIE].value == handler.auth_token
 
 
 def test_tls_server_context_requires_tls_1_2_or_newer() -> None:

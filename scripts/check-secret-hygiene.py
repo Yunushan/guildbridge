@@ -27,7 +27,7 @@ GIT_GREP_PATTERN = "(" + "|".join(
         "[A-Za-z0-9_-]{24}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}",
         "mfa\\.[A-Za-z0-9_-]{20,}",
     )
-)
+) + ")"
 
 
 def main(argv: list[str] | None = None) -> int:
