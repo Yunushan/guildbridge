@@ -44,10 +44,14 @@ jobs:
         run: python -m ruff check --select BLE src scripts
       - name: Type check
         run: python -m mypy src
-      - name: Test with source coverage
-        run: |
-          python -m coverage run -m pytest -q
-          python -m coverage report
+      - name: Test with source coverage on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m coverage run -m pytest -q
+      - name: Test with source coverage on other platforms
+        if: runner.os != 'Linux'
+        run: python -m coverage run -m pytest -q
+      - name: Enforce source coverage
+        run: python -m coverage report
       - name: Platform check
         run: python scripts/check-platform.py --require cli --format json
       - name: Verify live-content capability scope

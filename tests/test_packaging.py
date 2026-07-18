@@ -320,6 +320,8 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "python -m ruff check --select BLE src scripts" in self_hosted
     assert "python -m coverage run -m pytest -q" in github_ci
     assert "python -m coverage report" in github_ci
+    assert "Test with source coverage on Linux" in github_ci
+    assert "xvfb-run -a python -m coverage run -m pytest -q" in github_ci
     assert "python scripts/check-release-controls.py" in github_ci
     assert "python scripts/check-secret-hygiene.py" in github_ci
     assert "python scripts/check-security-baseline.py" in github_ci
