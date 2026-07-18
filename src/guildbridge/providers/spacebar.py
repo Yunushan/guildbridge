@@ -10,7 +10,7 @@ class SpacebarProvider(DiscordProvider):
     name = "spacebar"
     aliases = ("spacebar.chat", "fosscord")
     provider_label = "Spacebar"
-    token_env_hint = "SPACEBAR_BOT_TOKEN or SPACEBAR_TOKEN"
+    token_env_hint = "SPACEBAR_BOT_TOKEN or SPACEBAR_TOKEN"  # noqa: S105 - public environment-variable names.
 
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)

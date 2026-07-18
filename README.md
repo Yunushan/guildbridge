@@ -58,6 +58,8 @@ guildbridge content-import --file community.content.json --to stoat,fluxer --pla
 
 The first supported source is DiscordChatExporter JSON. GuildBridge can convert an existing offline export, or run a locally installed DiscordChatExporter CLI for you when you provide a Discord guild/server ID and a token environment variable:
 
+Live content migration currently exports from Discord archives only. Structural template export/import remains the cross-provider migration path. Mumble does not currently support live content import.
+
 ```bash
 set DISCORD_TOKEN=your-discord-token
 guildbridge content-export \
@@ -79,6 +81,8 @@ guildbridge content-export \
 ```
 
 GuildBridge only downloads remote exporter binaries when `--download-discord-chat-exporter` is set and does not store Discord tokens in templates, archives, plans, journals, or reports. It converts DiscordChatExporter output into `guildbridge.content.v1`, hashes raw source IDs, and preserves message text, authors, timestamps, attachment URLs/local paths, embeds, replies, pins, reactions, custom emoji markers, stickers, polls, thread/forum metadata, server banner/icon URLs, role-color metadata, channel permission metadata, and NSFW channel flags in the private archive or companion structure flow. It can dry-run a content import plan for every target provider from the CLI, desktop GUI Content tab, or web GUI Content panel. Live formatted-message writes are supported for Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost, and Zulip when you provide a reviewed plan, a target channel map, and provider tokens. `--content-parallel-sends N` sends multiple source channels concurrently while preserving message order within each channel. `--content-thread-mode reference|merge|channel|markdown` controls whether thread/forum messages stay as references, merge into parent-channel history, route to mapped thread channels, or write local markdown thread archives. Mumble remains structure/voice-channel only because it has no native text-history import surface.
+
+The default `community.content.json` archive name and common content journals, reports, incremental-state files, dead letters, and thread archives are excluded from Git and Docker build contexts. Keep every content archive in approved private storage.
 
 Apply-side content imports can write journals, reports, lock files, incremental state, and dead-letter files:
 
@@ -243,7 +247,7 @@ guildbridge-web.exe
 
 ### Desktop GUI workflow
 
-1. Configure provider tokens in `.env`, or use **Configure Tokens** in the GUI assistant. The GUI saves tokens only to your local `~/.guildbridge/.env` file after a Yes/No confirmation; it cannot read already-open Discord or Stoat browser sessions.
+1. Configure provider tokens through injected environment variables, or use **Configure Tokens** in the GUI assistant. The GUI saves confirmed credentials in the operating-system credential store after a Yes/No confirmation; it cannot read already-open Discord or Stoat browser sessions.
 2. Open `guildbridge-gui` or `guildbridge-gui.exe`.
 3. Use the **Platforms** tab first to confirm CLI, desktop GUI, and web GUI readiness.
 4. Use **Export** to create a neutral template from a source provider. Provide either a source ID or a provider template URL/code, then choose an output JSON path.
@@ -274,7 +278,7 @@ guildbridge check-access --provider discord --id "SOURCE_GUILD_ID"
 guildbridge check-access --provider stoat --id "TARGET_SERVER_ID"
 ```
 
-Use `--host 0.0.0.0 --allow-lan --auth-token "choose-a-long-random-token"` only on trusted networks when you want phones or tablets on the same network to connect. LAN mode requires an auth token on every request; if you omit `--auth-token`, GuildBridge generates one and prints it once at startup.
+Use `--host 0.0.0.0 --allow-lan --auth-token "choose-a-long-random-token"` only on trusted networks when you want phones or tablets on the same network to connect. LAN mode requires a configured auth token and a TLS certificate/key; it creates an HttpOnly, Secure, same-site session cookie after the one-time authenticated URL is opened. The token is never rendered into forms or pages.
 
 ### Browser and mobile workflow
 
@@ -289,10 +293,10 @@ guildbridge-web
 4. For phone or tablet access on the same trusted network, start the server with LAN mode:
 
 ```bash
-guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "choose-a-long-random-token"
+guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "choose-a-long-random-token" --tls-cert /secure/guildbridge-cert.pem --tls-key /secure/guildbridge-key.pem
 ```
 
-5. Open the printed LAN URL from the mobile browser and include the auth token. Keep this token private because the web GUI can run provider write operations after confirmation.
+5. Open the HTTPS URL with `?auth_token=<token>` once from the mobile browser. GuildBridge immediately redirects to a token-free URL and retains only a secure browser session. Keep this token private because the web GUI can run provider write operations after confirmation.
 
 Alternative launch commands:
 
@@ -609,7 +613,7 @@ GuildBridge is designed so public template files are safe to publish.
 1. **No messages.** Message history is not part of the schema.
 2. **No members.** Member lists and user profiles are not part of the schema.
 3. **No DMs.** Direct/private conversations are never exported.
-4. **No secrets.** Tokens and session values are read from environment variables only.
+4. **No secrets in migration artifacts.** Templates, archives, plans, journals, and reports never store tokens or session values. CLI and headless runs read credentials from injected environment variables or a local `.env`; confirmed desktop-GUI credentials are stored in the operating-system credential store after explicit user confirmation.
 5. **Stable reviewed plans.** Imports do nothing unless `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>` is set. GuildBridge refuses writes if the current candidate plan differs from the reviewed dry-run plan.
 6. **Apply journals.** Confirmed apply runs write a local journal with started, succeeded, and failed action records so interrupted writes can be audited before retrying.
 7. **Redaction available.** `guildbridge redact` removes unsafe metadata keys, token-like values, raw source IDs, and unsafe overwrite placeholders from hand-edited templates.
@@ -728,11 +732,13 @@ Windows artifact build details are documented in [docs/WINDOWS_RELEASE.md](docs/
 ```bash
 python -m pip install -e ".[dev]"
 python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+python -m ruff check --select S src scripts
+python -m ruff check --select BLE src scripts
 python -m mypy src
 python -m pytest -q
 python scripts/check-platform.py --require cli --format json
 python -m build
-python -m twine check dist/*
+python -m twine check dist/*.whl dist/*.tar.gz
 python scripts/verify-dist.py
 ```
 

@@ -413,7 +413,7 @@ class DiscordChatExporterOptions:
     exporter_bin: str | Path
     guild_id: str
     output_path: str | Path | None = None
-    token_env: str = "DISCORD_TOKEN"
+    token_env: str = "DISCORD_TOKEN"  # noqa: S105 - environment-variable name, never a credential value.
     export_format: str = "Json"
     timeout_seconds: int = 60 * 60
 
@@ -423,6 +423,7 @@ class DiscordChatExporterBootstrapOptions:
     version: str = "latest"
     install_dir: str | Path | None = None
     timeout_seconds: int = 120
+    sha256: str | None = None
 
 
 def validate_content_features(features: list[str]) -> list[str]:
@@ -584,7 +585,15 @@ class ContentMigrationLock:
 
 
 class ContentApplyJournal:
-    def __init__(self, path: str | Path, *, provider: str, target_id: str | None, target_name: str | None):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        provider: str,
+        target_id: str | None,
+        target_name: str | None,
+        resumed_from: str | Path | None = None,
+    ):
         self.path = Path(path)
         self._data: dict[str, Any] = {
             "schema": CONTENT_APPLY_JOURNAL_SCHEMA,
@@ -592,6 +601,7 @@ class ContentApplyJournal:
             "provider": provider,
             "target_id": target_id,
             "target_name": target_name,
+            "resumed_from": str(resumed_from) if resumed_from else None,
             "started_at": _utc_now(),
             "finished_at": None,
             "events": [],
@@ -737,7 +747,13 @@ def apply_content_actions(
         default_content_apply_path(provider, "locks", target_id=options.target_id or options.target_name)
     )
 
-    journal = ContentApplyJournal(journal_path, provider=provider, target_id=options.target_id, target_name=options.target_name)
+    journal = ContentApplyJournal(
+        journal_path,
+        provider=provider,
+        target_id=options.target_id,
+        target_name=options.target_name,
+        resumed_from=options.resume_journal,
+    )
     completed = load_completed_content_actions(options.resume_journal)
     if options.incremental and options.incremental_state_path:
         completed.update(load_completed_content_actions(options.incremental_state_path) if Path(options.incremental_state_path).exists() else set())
@@ -768,7 +784,7 @@ def apply_content_actions(
                         journal_index = journal.record_action(action)
                     try:
                         response = _apply_local_content_action(action) if action.method == "WRITE_MARKDOWN" else send_action(action)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - provider callbacks are isolated into durable journal entries.
                         with state_lock:
                             failures.append(_dead_letter_entry(action, exc, action_key=action_key))
                             journal.action_failed(journal_index, exc)
@@ -1247,19 +1263,34 @@ def download_discord_chat_exporter(options: DiscordChatExporterBootstrapOptions 
     install_dir = install_root / _safe_path_part(version) / runtime
     executable_name = _dce_executable_name()
     existing = _find_dce_executable(install_dir, executable_name)
-    if existing:
-        return existing
 
     asset = _select_dce_asset(release, runtime)
     download_url = str(asset.get("browser_download_url") or "")
     if not download_url:
         raise ValueError(f"DiscordChatExporter release asset {asset.get('name')!r} has no download URL.")
+    expected_sha256 = _dce_asset_sha256(asset, options.sha256)
+    marker = install_dir / ".guildbridge-asset.sha256"
+    if existing:
+        if marker.is_file() and marker.read_text(encoding="utf-8").strip() == expected_sha256:
+            return existing
+        raise ValueError(
+            "Refusing to execute an unmanaged DiscordChatExporter cache. Remove the install directory or use a local "
+            "--discord-chat-exporter-bin after verifying it independently."
+        )
+    if install_dir.exists() and any(install_dir.iterdir()):
+        raise ValueError(
+            "DiscordChatExporter install directory already contains unverified files. Remove it before using a managed download."
+        )
     install_dir.mkdir(parents=True, exist_ok=True)
     archive_path = install_dir / str(asset.get("name") or f"{DCE_EXECUTABLE}.zip")
     response = requests.get(download_url, timeout=max(1, options.timeout_seconds))
     if response.status_code >= 400:
         raise ValueError(f"Could not download DiscordChatExporter asset: HTTP {response.status_code}.")
-    archive_path.write_bytes(response.content)
+    archive_bytes = response.content
+    actual_sha256 = hashlib.sha256(archive_bytes).hexdigest()
+    if not secrets.compare_digest(actual_sha256, expected_sha256):
+        raise ValueError("DiscordChatExporter asset checksum did not match the trusted SHA-256 digest.")
+    archive_path.write_bytes(archive_bytes)
     if zipfile.is_zipfile(archive_path):
         _extract_zip_safely(archive_path, install_dir)
     else:
@@ -1271,7 +1302,20 @@ def download_discord_chat_exporter(options: DiscordChatExporterBootstrapOptions 
         raise ValueError(f"DiscordChatExporter asset did not contain {executable_name!r}.")
     if sys.platform != "win32":
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    marker.write_text(expected_sha256 + "\n", encoding="utf-8")
     return executable
+
+
+def _dce_asset_sha256(asset: Mapping[str, Any], configured: str | None) -> str:
+    raw = (configured or str(asset.get("digest") or "")).strip().lower()
+    if raw.startswith("sha256:"):
+        raw = raw.removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", raw):
+        raise ValueError(
+            "Managed DiscordChatExporter download requires a SHA-256 digest from the release metadata or "
+            "--discord-chat-exporter-sha256. Use a locally verified exporter when no digest is available."
+        )
+    return raw
 
 
 def _dce_release_metadata(options: DiscordChatExporterBootstrapOptions) -> dict[str, Any]:
@@ -1386,7 +1430,8 @@ def run_discord_chat_exporter(options: DiscordChatExporterOptions) -> Path:
         "-f",
         options.export_format,
     ]
-    completed = subprocess.run(
+    # The exporter executable and all arguments remain an explicit, shell-free vector.
+    completed = subprocess.run(  # noqa: S603
         command,
         capture_output=True,
         text=True,

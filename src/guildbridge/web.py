@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import html
 import ipaddress
+import os
 import secrets
+import ssl
 from collections.abc import Mapping, Sequence
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from guildbridge import __version__
 from guildbridge.diagnostics import format_error_report
 from guildbridge.gui_commands import (
     CommandResult,
@@ -30,6 +34,7 @@ from guildbridge.safety import APPLY_CONFIRMATION
 CSRF_FIELD = "csrf_token"
 AUTH_FIELD = "auth_token"
 AUTH_HEADER = "X-GuildBridge-Auth"
+AUTH_COOKIE = "guildbridge_session"
 DEFAULT_MAX_BODY_BYTES = 64 * 1024
 THEMES = ("light", "dark")
 
@@ -74,10 +79,9 @@ def _auth_token_valid(provided: str, expected: str) -> bool:
     return bool(expected) and secrets.compare_digest(provided, expected)
 
 
-def _auth_input(auth_token: str) -> str:
-    if not auth_token:
-        return ""
-    return f'<input type="hidden" name="{AUTH_FIELD}" value="{html.escape(auth_token)}">'
+def _auth_input(_auth_token: str) -> str:
+    # LAN authentication is stored in an HttpOnly session cookie, never in HTML.
+    return ""
 
 
 def _theme_input(theme: str) -> str:
@@ -945,6 +949,7 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
     auth_token = ""
     require_auth = False
     allow_lan = False
+    secure_cookies = False
     max_body_bytes = DEFAULT_MAX_BODY_BYTES
 
     def do_GET(self) -> None:
@@ -952,12 +957,15 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         if parsed.path not in {"/", "/index.html"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        if self.require_auth and not self._query_auth_ok(parsed.query):
+        query_form = parse_qs(parsed.query, keep_blank_values=True)
+        if self.require_auth and not self._request_auth_ok():
+            if _auth_token_valid(_first(query_form, AUTH_FIELD).strip(), self.auth_token):
+                self._start_authenticated_session(_theme(_first(query_form, "theme", "light")))
+                return
             self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing auth token")
             return
-        query_form = parse_qs(parsed.query, keep_blank_values=True)
         theme = _theme(_first(query_form, "theme", "light"))
-        self._send_html(render_page(csrf_token=self.csrf_token, auth_token=self.auth_token if self.require_auth else "", theme=theme))
+        self._send_html(render_page(csrf_token=self.csrf_token, theme=theme))
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -978,9 +986,7 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8")
         form = parse_qs(raw, keep_blank_values=True)
         if self.require_auth:
-            query_form = parse_qs(parsed.query, keep_blank_values=True)
-            provided = _first(form, AUTH_FIELD) or _first(query_form, AUTH_FIELD) or self.headers.get(AUTH_HEADER, "")
-            if not _auth_token_valid(provided.strip(), self.auth_token):
+            if not self._request_auth_ok():
                 self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid or missing auth token")
                 return
         if _first(form, CSRF_FIELD) != self.csrf_token:
@@ -989,13 +995,12 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         try:
             args = build_web_args(form)
             result = run_cli_args(args)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - request boundary returns a sanitized error page instead of dropping the session.
             result = CommandResult((), (), 1, "", format_error_report(exc), 0.0)
         self._send_html(
             render_page(
                 result,
                 csrf_token=self.csrf_token,
-                auth_token=self.auth_token if self.require_auth else "",
                 theme=_first(form, "theme", "light"),
             )
         )
@@ -1022,10 +1027,25 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
 
-    def _query_auth_ok(self, query: str) -> bool:
-        form = parse_qs(query, keep_blank_values=True)
-        provided = _first(form, AUTH_FIELD) or self.headers.get(AUTH_HEADER, "")
-        return _auth_token_valid(provided.strip(), self.auth_token)
+    def _request_auth_ok(self) -> bool:
+        provided = self.headers.get(AUTH_HEADER, "").strip()
+        if _auth_token_valid(provided, self.auth_token):
+            return True
+        try:
+            cookies = SimpleCookie(self.headers.get("Cookie", ""))
+            cookie = cookies.get(AUTH_COOKIE)
+        except (CookieError, ValueError):
+            return False
+        return cookie is not None and _auth_token_valid(cookie.value, self.auth_token)
+
+    def _start_authenticated_session(self, theme: str) -> None:
+        cookie = f"{AUTH_COOKIE}={self.auth_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600"
+        if self.secure_cookies:
+            cookie += "; Secure"
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", f"/?theme={html.escape(theme)}")
+        self.send_header("Set-Cookie", cookie)
+        self.end_headers()
 
 
 def serve(
@@ -1035,42 +1055,52 @@ def serve(
     allow_lan: bool = False,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     auth_token: str | None = None,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
 ) -> None:
     if max_body_bytes < 1024:
         raise ValueError("max_body_bytes must be at least 1024")
     if not allow_lan and not _is_loopback_host(host):
         raise ValueError("Refusing to bind web GUI to a non-loopback host without --allow-lan.")
+    if bool(tls_cert) != bool(tls_key):
+        raise ValueError("--tls-cert and --tls-key must be supplied together.")
+    if allow_lan and not (tls_cert and tls_key):
+        raise ValueError("LAN web GUI requires --tls-cert and --tls-key to protect migration credentials in transit.")
     require_auth = allow_lan
-    configured_auth_token = auth_token is not None and bool(auth_token.strip())
     token = (auth_token or "").strip()
     if require_auth and not token:
-        token = secrets.token_urlsafe(24)
+        raise ValueError("LAN web GUI requires --auth-token or GUILDBRIDGE_WEB_AUTH_TOKEN.")
     GuildBridgeWebHandler.csrf_token = secrets.token_urlsafe(32)
     GuildBridgeWebHandler.auth_token = token
     GuildBridgeWebHandler.require_auth = require_auth
     GuildBridgeWebHandler.allow_lan = allow_lan
+    GuildBridgeWebHandler.secure_cookies = bool(tls_cert)
     GuildBridgeWebHandler.max_body_bytes = max_body_bytes
     server = ThreadingHTTPServer((host, port), GuildBridgeWebHandler)
+    if tls_cert and tls_key:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(tls_cert, tls_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     scope = "LAN-enabled" if allow_lan else "local-only"
-    print(f"GuildBridge web GUI ({scope}): http://{host}:{port}")
+    scheme = "https" if tls_cert else "http"
+    print(f"GuildBridge web GUI ({scope}): {scheme}://{host}:{port}")
     if require_auth:
-        if configured_auth_token:
-            print(f"LAN auth is enabled. Open http://{host}:{port}/?{AUTH_FIELD}=<token> with your configured token.")
-        else:
-            print(f"Generated LAN auth token: {token}")
-            print(f"Open http://{host}:{port}/?{AUTH_FIELD}=<token>. Request logs do not include the token.")
+        print(f"LAN auth is enabled. Open {scheme}://{host}:{port}/?{AUTH_FIELD}=<token> once to start a secure session.")
     server.serve_forever()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the GuildBridge browser-based GUI.")
+    parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--host", default="127.0.0.1", help="host/interface to bind")
     parser.add_argument("--port", type=int, default=8765, help="port to bind")
     parser.add_argument("--allow-lan", action="store_true", help="allow binding to non-loopback interfaces and serving LAN clients")
     parser.add_argument("--max-body-bytes", type=int, default=DEFAULT_MAX_BODY_BYTES, help="maximum accepted POST body size")
-    parser.add_argument("--auth-token", help="LAN auth token; generated automatically when --allow-lan is used and this is omitted")
+    parser.add_argument("--auth-token", default=os.environ.get("GUILDBRIDGE_WEB_AUTH_TOKEN"), help="LAN auth token; may be supplied through GUILDBRIDGE_WEB_AUTH_TOKEN")
+    parser.add_argument("--tls-cert", help="PEM certificate required for --allow-lan")
+    parser.add_argument("--tls-key", help="PEM private key required for --allow-lan")
     args = parser.parse_args(argv)
-    serve(args.host, args.port, allow_lan=args.allow_lan, max_body_bytes=args.max_body_bytes, auth_token=args.auth_token)
+    serve(args.host, args.port, allow_lan=args.allow_lan, max_body_bytes=args.max_body_bytes, auth_token=args.auth_token, tls_cert=args.tls_cert, tls_key=args.tls_key)
     return 0
 
 

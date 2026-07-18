@@ -17,6 +17,7 @@ from tkinter import (
     Listbox,
     PhotoImage,
     StringVar,
+    TclError,
     Tk,
     Toplevel,
     filedialog,
@@ -174,7 +175,7 @@ class GuildBridgeGUI(ttk.Frame):
             with resources.as_file(png_resource) as png_path:
                 self.icon_image = PhotoImage(file=str(png_path))
             self.root.iconphoto(True, self.icon_image)
-        except Exception:
+        except (FileNotFoundError, ModuleNotFoundError, OSError, TclError):
             self.icon_image = None
         if sys.platform == "win32":
             try:
@@ -182,7 +183,8 @@ class GuildBridgeGUI(ttk.Frame):
                 with resources.as_file(ico_resource) as ico_path:
                     self.root.iconbitmap(str(ico_path))
                     self.root.iconbitmap(default=str(ico_path))
-            except Exception:
+            except (FileNotFoundError, ModuleNotFoundError, OSError, TclError):
+                # The PNG icon remains available when a Windows ICO cannot be loaded.
                 pass
 
     def _build(self) -> None:
@@ -221,7 +223,8 @@ class GuildBridgeGUI(ttk.Frame):
         palette = GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])
         try:
             self.style.theme_use("clam")
-        except Exception:
+        except TclError:
+            # Keep the platform default ttk theme when clam is unavailable.
             pass
 
         self.master["background"] = palette["bg"]
@@ -361,7 +364,8 @@ class GuildBridgeGUI(ttk.Frame):
                     colorref = ctypes.c_int(self._windows_colorref(color))
                     dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(colorref), ctypes.sizeof(colorref))
             ctypes.windll.user32.RedrawWindow(hwnds[-1], None, None, 0x0400 | 0x0100 | 0x0001)
-        except Exception:
+        except (AttributeError, OSError, ValueError):
+            # Older Windows builds can reject DWM title-bar attributes.
             pass
 
     def _refresh_windows_titlebar(self) -> None:
@@ -509,11 +513,11 @@ class GuildBridgeGUI(ttk.Frame):
         if self.icon_image is not None:
             try:
                 dialog.iconphoto(False, self.icon_image)
-            except Exception:
+            except TclError:
                 pass
         try:
             dialog.configure(background=GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])["bg"])
-        except Exception:
+        except TclError:
             pass
 
         body = ttk.Frame(dialog, padding=12)
@@ -522,12 +526,15 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Label(
             body,
             text=(
-                "Paste provider tokens here to save them in a local GuildBridge .env file. "
+                "Paste provider tokens here to save them in your system credential store. "
                 "GuildBridge cannot read Discord or Stoat browser sessions directly."
             ),
             wraplength=620,
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Label(body, text=f"Save location: {target}").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
+        ttk.Label(
+            body,
+            text=f"Credential store: system keychain. Legacy non-secret settings remain in {target}",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
 
         entries: list[tuple[TokenField, StringVar]] = []
         row = 2
@@ -554,7 +561,8 @@ class GuildBridgeGUI(ttk.Frame):
                 return
             if not messagebox.askyesno(
                 "Save tokens",
-                f"Save {len(updates)} value(s) to this local file?\n\n{target}\n\nToken values will not be shown in output.",
+                f"Save {len(updates)} credential(s) to your system credential store?\n\n"
+                "Token values will not be shown in output or written to the GUI .env file.",
                 icon="warning",
                 parent=dialog,
             ):
@@ -562,11 +570,13 @@ class GuildBridgeGUI(ttk.Frame):
             try:
                 saved = write_env_values(updates, env_file=target)
                 load_env_files((saved,))
-            except Exception as exc:
+            except (OSError, UnicodeError, ValueError) as exc:
                 messagebox.showerror("Configure Tokens", f"Could not save token configuration:\n{exc}", parent=dialog)
                 return
-            self._append_output(f"Token configuration saved to {saved}. Values are hidden.\n")
-            messagebox.showinfo("Configure Tokens", "Token configuration saved. Restart is not required.", parent=dialog)
+            self._append_output(f"Credentials saved to the system credential store. Legacy file: {saved}.\n")
+            messagebox.showinfo(
+                "Configure Tokens", "Credentials saved to the system credential store. Restart is not required.", parent=dialog
+            )
             dialog.destroy()
 
         ttk.Button(actions, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
@@ -1863,7 +1873,7 @@ class GuildBridgeGUI(ttk.Frame):
 def main() -> int:
     try:
         root = Tk()
-    except Exception as exc:
+    except TclError as exc:
         print(f"guildbridge-gui: unable to start Tkinter GUI: {exc}")
         return 1
     GuildBridgeGUI(root)

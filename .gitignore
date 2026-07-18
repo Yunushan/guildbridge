@@ -31,10 +31,22 @@ htmlcov/
 *.result.json
 *.apply-result.json
 *.journal.json
+*.content.json
+*.dead-letter.json
+*.migration-report.json
+*.incremental-state.json
+*.content.lock
+thread-archives/
 guildbridge-*.template.json
 community.template.json
 redacted.template.json
 exported.template.json
+
+# Private production-release evidence
+production-evidence*.json
+github-production-settings-audit*.json
+*.receipt.json
+!examples/production-evidence.example.json
 
 # OS/editor
 .DS_Store

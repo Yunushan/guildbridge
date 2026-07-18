@@ -24,6 +24,8 @@ def test_windows_build_extra_and_assets_are_declared() -> None:
     assert "packaging/windows/guildbridge.ico" in verifier
     assert "packaging/windows/guildbridge-cli.py" in verifier
     assert "scripts/build-windows-dist.ps1" in verifier
+    assert "scripts/sign-windows-release.ps1" in verifier
+    assert "scripts/verify-windows-release.ps1" in verifier
 
 
 def test_windows_launchers_point_to_console_gui_and_web_entrypoints() -> None:
@@ -43,8 +45,12 @@ def test_windows_build_script_creates_zip_exe_and_optional_msi() -> None:
     assert "guildbridge.exe" in script
     assert "guildbridge-gui.exe" in script
     assert "guildbridge-web.exe" in script
+    assert '(Join-Path $BundleRoot "guildbridge-web.exe") -Arguments @("--version")' in script
     assert "Compress-Archive" in script
     assert "wix" in script
+    assert "Get-WixMajorVersion" in script
+    assert "WiX Toolset v$wixMajor requires an explicit EULA identifier" in script
+    assert "WiX Toolset v$wixMajor does not require -acceptEula" in script
     assert "GuildBridge-$Version-windows-x64.msi" in script
     assert "GuildBridge-$Version-windows-x64.zip" in script
     assert "Refusing to remove path outside repository" in script
@@ -72,12 +78,44 @@ def test_release_workflow_uploads_windows_zip_and_msi() -> None:
 
     assert "windows-artifacts:" in release
     assert "runs-on: windows-2025-vs2026" in release
-    assert 'python -m pip install -e ".[dev,windows-build]"' in release
+    assert "python -m pip install --require-hashes -r requirements/release.txt" in release
+    assert 'python -m pip install --no-deps -e ".[dev,windows-build]"' in release
     assert "dotnet tool install --global wix" in release
     assert ".\\scripts\\build-windows-dist.ps1" in release
+    assert "sign-windows-artifacts:" in release
+    assert "environment: production-release" in release
+    assert ".\\scripts\\sign-windows-release.ps1" in release
+    assert "guildbridge-windows-unsigned" in release
     assert "name: guildbridge-windows" in release
     assert "dist/GuildBridge-*-windows-x64.zip" in release
     assert "dist/GuildBridge-*-windows-x64.msi" in release
+    assert "signed-windows/SHA256SUMS-windows.txt" in release
+
+
+def test_windows_signing_script_only_signs_release_artifacts() -> None:
+    script = _text("scripts/sign-windows-release.ps1")
+
+    assert "GUILDBRIDGE_CODESIGN_PFX_PASSWORD" in script
+    assert "signtool.exe" in script
+    assert '"verify", "/pa", "/v", $Path' in script
+    assert "GuildBridge-*-windows-x64.zip" in script
+    assert "GuildBridge-*-windows-x64.msi" in script
+    assert "SHA256SUMS-windows.txt" in script
+    assert "Windows ZIP must contain exactly the expected executable launchers." in script
+    assert '"guildbridge.exe", "guildbridge-gui.exe", "guildbridge-web.exe"' in script
+
+
+def test_windows_release_verifier_checks_downloaded_checksums_and_signatures() -> None:
+    script = _text("scripts/verify-windows-release.ps1")
+
+    assert "SHA256SUMS-windows.txt" in script
+    assert "Get-FileHash" in script
+    assert "signtool.exe" in script
+    assert '"verify", "/pa", "/v"' in script
+    assert "Assert-SafeZipEntries" in script
+    assert "Windows ZIP contains an unsafe archive path" in script
+    assert "Windows ZIP must contain exactly the expected executable launchers." in script
+    assert '"guildbridge.exe", "guildbridge-gui.exe", "guildbridge-web.exe"' in script
 
 
 def test_windows_release_docs_explain_zip_msi_and_signing() -> None:
@@ -89,6 +127,11 @@ def test_windows_release_docs_explain_zip_msi_and_signing() -> None:
     assert "GuildBridge-<version>-windows-x64.msi" in docs
     assert "Code Signing" in docs
     assert "SmartScreen" in docs
+    assert "Public `v*` tag-push releases fail closed" in docs
+    assert "Verify A Downloaded Release" in docs
+    assert ".\\scripts\\verify-windows-release.ps1" in docs
+    assert "verify-windows-release.ps1" in _text("docs/PRODUCTION_READINESS.md")
+    assert "verify-windows-release.ps1" in _text("docs/RELEASE.md")
     assert "Normal push/PR CI does not upload downloadable artifacts" in docs
     assert "portable ZIP" in readme
     assert "MSI installer" in readme

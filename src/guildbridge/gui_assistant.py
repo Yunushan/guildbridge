@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import re
 from pathlib import Path
 from urllib.parse import urlencode
@@ -32,7 +33,7 @@ def discord_client_id_from_token(token: str) -> str:
     padded = first_segment + "=" * (-len(first_segment) % 4)
     try:
         decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii")
-    except Exception:
+    except (ValueError, UnicodeDecodeError, binascii.Error):
         return ""
     return decoded if decoded.isdigit() else ""
 

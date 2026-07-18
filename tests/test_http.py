@@ -13,6 +13,7 @@ from guildbridge.http import (
     retry_delay_seconds,
     sanitize_response_text,
     sanitize_text,
+    sanitize_url,
 )
 
 
@@ -49,6 +50,23 @@ class FakeSession:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+def test_http_rejects_remote_plain_http_by_default() -> None:
+    with pytest.raises(ValueError, match="non-loopback HTTP"):
+        HttpClient("http://api.example.test")
+
+
+def test_http_allows_loopback_or_explicit_legacy_http() -> None:
+    HttpClient("http://127.0.0.1:3000")
+    HttpClient("http://api.example.test", allow_insecure_http=True)
+
+
+def test_http_rejects_remote_plain_http_absolute_request() -> None:
+    client = HttpClient("https://api.example.test")
+
+    with pytest.raises(ValueError, match="non-loopback HTTP"):
+        client.get("http://other.example.test/endpoint")
 
 
 def test_http_retries_retryable_status_and_returns_json() -> None:
@@ -157,3 +175,28 @@ def test_sanitize_text_redacts_common_secret_shapes() -> None:
     assert "xyz" not in sanitized
     assert "qqq" not in sanitized
     assert sanitized.count("[redacted]") == 3
+
+
+def test_sanitize_url_redacts_query_credentials_but_preserves_safe_parameters() -> None:
+    url = "https://provider.example/migrate?server=target&access_token=secret-token&code=oauth-code&limit=25"
+
+    sanitized = sanitize_url(url)
+
+    assert "secret-token" not in sanitized
+    assert "oauth-code" not in sanitized
+    assert "server=target" in sanitized
+    assert "limit=25" in sanitized
+    assert sanitized.count("[redacted]") == 2
+
+
+def test_http_errors_redact_url_query_credentials() -> None:
+    url = "https://provider.example/migrate?api_key=secret-key&server=target"
+
+    rendered_http = str(HttpError("GET", url, 401, "Authorization: Bearer response-secret"))
+    rendered_transport = str(HttpTransportError("POST", url, "token=transport-secret", 1))
+
+    assert "secret-key" not in rendered_http
+    assert "response-secret" not in rendered_http
+    assert "secret-key" not in rendered_transport
+    assert "transport-secret" not in rendered_transport
+    assert "server=target" in rendered_http

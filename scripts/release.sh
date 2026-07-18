@@ -143,6 +143,24 @@ assert_tag_available() {
   fi
 }
 
+github_repository() {
+  remote=$(checked_output git remote get-url origin)
+  GITHUB_REMOTE="$remote" "$PYTHON" - <<'PY'
+from __future__ import annotations
+
+import os
+import re
+import sys
+
+remote = os.environ["GITHUB_REMOTE"]
+match = re.search(r"github\.com[:/]([^/\s:]+)/([^/\s]+?)(?:\.git)?$", remote)
+if not match:
+    print(f"release.sh: error: release prep requires an origin remote hosted on github.com; found: {remote}", file=sys.stderr)
+    raise SystemExit(1)
+print(f"{match.group(1)}/{match.group(2)}")
+PY
+}
+
 remove_repo_path() {
   target=$1
   case "$target" in
@@ -164,6 +182,10 @@ if [ -n "$RELEASE_BRANCH" ] && [ "$current_branch" != "$RELEASE_BRANCH" ]; then
 fi
 
 assert_tag_available
+
+if [ "$SKIP_CHECKS" -eq 1 ] && [ "$SKIP_TAG" -eq 0 ]; then
+  die "--skip-checks may only be used with --skip-tag; a releasable tag requires every production gate."
+fi
 
 VERSION="$VERSION" PYPROJECT_PATH="$PYPROJECT_PATH" INIT_PATH="$INIT_PATH" "$PYTHON" - <<'PY'
 from __future__ import annotations
@@ -213,9 +235,19 @@ PY
 if [ "$SKIP_CHECKS" -eq 1 ]; then
   printf '%s\n' "Warning: skipping lint, type checks, tests, and platform check." >&2
 else
-  run "$PYTHON" -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py
+  run "$PYTHON" -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-release-controls.py scripts/check-secret-hygiene.py scripts/check-security-baseline.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/pip-audit-truststore.py
+  run "$PYTHON" -m ruff check --select S src scripts
+  run "$PYTHON" -m ruff check --select BLE src scripts
+  run "$PYTHON" scripts/check-release-controls.py
+  run "$PYTHON" scripts/check-secret-hygiene.py --history
+  run "$PYTHON" scripts/check-security-baseline.py
+  run "$PYTHON" scripts/check-content-capability-scope.py
+  run "$PYTHON" scripts/pip-audit-truststore.py --strict
+  require_command gh
+  run "$PYTHON" scripts/check-github-production-settings.py --repo "$(github_repository)"
   run "$PYTHON" -m mypy src
-  run "$PYTHON" -m pytest -q
+  run "$PYTHON" -m coverage run -m pytest -q
+  run "$PYTHON" -m coverage report
   run "$PYTHON" scripts/check-platform.py --require cli --format json
 fi
 
@@ -241,7 +273,7 @@ else
   [ "$wheel_count" -eq 1 ] && [ "$sdist_count" -eq 1 ] \
     || die "Expected exactly one wheel and one source archive in dist/."
 
-  run "$PYTHON" -m twine check dist/*
+  run "$PYTHON" -m twine check dist/*.whl dist/*.tar.gz
   run "$PYTHON" scripts/verify-dist.py
 fi
 

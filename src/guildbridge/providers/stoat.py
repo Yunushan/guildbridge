@@ -17,7 +17,7 @@ from guildbridge.content import (
     dry_run_content_import,
     resolve_content_asset_path,
 )
-from guildbridge.http import HttpClient, HttpError, sanitize_text
+from guildbridge.http import HttpClient, HttpError, HttpTransportError, sanitize_text
 from guildbridge.models import (
     Action,
     Category,
@@ -582,7 +582,7 @@ class StoatProvider(Provider):
             else:
                 try:
                     output.append(self.http.get(f"/channels/{item}", headers=self._headers()))
-                except Exception as exc:
+                except (HttpError, HttpTransportError) as exc:
                     output.append({"_id": str(item), "name": f"unfetched-{item}", "channel_type": "Unknown", "_warning": str(exc)})
         return output
 

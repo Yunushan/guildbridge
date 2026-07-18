@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
 
+import guildbridge.config as config_module
 from guildbridge.config import (
     RuntimeConfig,
     load_env_files,
@@ -97,7 +99,22 @@ def test_load_env_files_allows_user_file_to_fill_blank_values(tmp_path: Path, mo
     assert os.environ["DISCORD_BOT_TOKEN"] == "user-file-token"
 
 
-def test_write_env_values_updates_private_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+class _FakeKeyring:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, key: str) -> str | None:
+        return self.values.get((service, key))
+
+    def set_password(self, service: str, key: str, value: str) -> None:
+        self.values[(service, key)] = value
+
+
+def test_write_env_values_moves_gui_tokens_to_system_credential_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keyring = _FakeKeyring()
+    monkeypatch.setattr(config_module, "_keyring_module", lambda: keyring)
     env_file = user_env_file(home=tmp_path)
     env_file.parent.mkdir(parents=True)
     env_file.write_text("# local\nDISCORD_BOT_TOKEN=old\nSTOAT_API_BASE=https://api.stoat.chat\n", encoding="utf-8")
@@ -114,8 +131,39 @@ def test_write_env_values_updates_private_env_file(tmp_path: Path, monkeypatch: 
 
     text = saved.read_text(encoding="utf-8")
     assert saved == env_file
-    assert 'DISCORD_BOT_TOKEN="new-discord-token"' in text
+    assert "DISCORD_BOT_TOKEN" not in text
     assert "STOAT_API_BASE=https://api.stoat.chat" in text
-    assert 'STOAT_BOT_TOKEN="new stoat token"' in text
+    assert "STOAT_BOT_TOKEN" not in text
+    assert keyring.values[(config_module.CREDENTIAL_SERVICE, "DISCORD_BOT_TOKEN")] == "new-discord-token"
+    assert keyring.values[(config_module.CREDENTIAL_SERVICE, "STOAT_BOT_TOKEN")] == "new stoat token"
     assert os.environ["DISCORD_BOT_TOKEN"] == "new-discord-token"
     assert os.environ["STOAT_BOT_TOKEN"] == "new stoat token"
+    if os.name != "nt":
+        assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+
+
+def test_system_credential_store_overrides_legacy_token_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    keyring = _FakeKeyring()
+    keyring.set_password(config_module.CREDENTIAL_SERVICE, "DISCORD_BOT_TOKEN", "system-token")
+    monkeypatch.setattr(config_module, "_keyring_module", lambda: keyring)
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("DISCORD_BOT_TOKEN=legacy-file-token\n", encoding="utf-8")
+
+    load_env_files((env_file,))
+
+    assert os.environ["DISCORD_BOT_TOKEN"] == "system-token"
+
+
+def test_system_credential_store_does_not_override_process_provided_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keyring = _FakeKeyring()
+    keyring.set_password(config_module.CREDENTIAL_SERVICE, "DISCORD_BOT_TOKEN", "system-token")
+    monkeypatch.setattr(config_module, "_keyring_module", lambda: keyring)
+    monkeypatch.setattr(config_module, "INITIAL_ENV_KEYS", frozenset({"DISCORD_BOT_TOKEN"}))
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "process-token")
+
+    config_module._load_system_secret_values()
+
+    assert os.environ["DISCORD_BOT_TOKEN"] == "process-token"

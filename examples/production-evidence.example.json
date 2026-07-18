@@ -1,0 +1,350 @@
+{
+  "release_tag": "v1.0.9",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
+  "reviewed_by": "release manager",
+  "reviewed_at": "2026-07-18T12:00:00Z",
+  "workflow_run_url": "https://github.com/Yunushan/guildbridge/actions/runs/1234567890",
+  "github_settings_evidence_ref": "private://release-evidence/v1.0.9/github-production-settings-audit",
+  "tls_evidence_ref": "private://release-evidence/v1.0.9/tls-review",
+  "operations_evidence_ref": "private://release-evidence/v1.0.9/operations-review",
+  "signing_evidence_ref": "private://release-evidence/v1.0.9/windows-signing",
+  "branch_protection_verified": true,
+  "environment_protection_verified": true,
+  "artifact_sha256_verified": true,
+  "sbom_reviewed": true,
+  "provenance_verified": true,
+  "windows_signature_verified": true,
+  "tls_reviewed": true,
+  "operations_reviewed": true,
+  "artifact_checksums": {
+    "wheel": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sdist": "0000000000000000000000000000000000000000000000000000000000000000",
+    "windows_zip": "0000000000000000000000000000000000000000000000000000000000000000",
+    "windows_msi": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sha256s": "0000000000000000000000000000000000000000000000000000000000000000",
+    "windows_sha256s": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sbom": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "provider_drills": [
+    {
+      "source": "daccord",
+      "targets": [
+        "discord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/daccord-routes",
+      "route_evidence_refs": {
+        "discord": "private://release-evidence/v1.0.9/routes/daccord-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/daccord-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/daccord-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/daccord-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/daccord-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/daccord-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/daccord-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/daccord-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/daccord-to-zulip"
+      }
+    },
+    {
+      "source": "discord",
+      "targets": [
+        "daccord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/discord-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/discord-to-daccord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/discord-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/discord-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/discord-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/discord-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/discord-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/discord-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/discord-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/discord-to-zulip"
+      }
+    },
+    {
+      "source": "fluxer",
+      "targets": [
+        "daccord",
+        "discord",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/fluxer-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/fluxer-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/fluxer-to-discord",
+        "matrix": "private://release-evidence/v1.0.9/routes/fluxer-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/fluxer-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/fluxer-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/fluxer-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/fluxer-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/fluxer-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/fluxer-to-zulip"
+      }
+    },
+    {
+      "source": "matrix",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/matrix-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/matrix-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/matrix-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/matrix-to-fluxer",
+        "mattermost": "private://release-evidence/v1.0.9/routes/matrix-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/matrix-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/matrix-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/matrix-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/matrix-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/matrix-to-zulip"
+      }
+    },
+    {
+      "source": "mattermost",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "matrix",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/mattermost-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/mattermost-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/mattermost-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/mattermost-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/mattermost-to-matrix",
+        "mumble": "private://release-evidence/v1.0.9/routes/mattermost-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/mattermost-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/mattermost-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/mattermost-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/mattermost-to-zulip"
+      }
+    },
+    {
+      "source": "mumble",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/mumble-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/mumble-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/mumble-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/mumble-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/mumble-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/mumble-to-mattermost",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/mumble-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/mumble-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/mumble-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/mumble-to-zulip"
+      }
+    },
+    {
+      "source": "rocket.chat",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/rocket-chat-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/rocket.chat-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/rocket.chat-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/rocket.chat-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/rocket.chat-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/rocket.chat-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/rocket.chat-to-mumble",
+        "spacebar": "private://release-evidence/v1.0.9/routes/rocket.chat-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/rocket.chat-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/rocket.chat-to-zulip"
+      }
+    },
+    {
+      "source": "spacebar",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "stoat",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/spacebar-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/spacebar-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/spacebar-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/spacebar-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/spacebar-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/spacebar-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/spacebar-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/spacebar-to-rocket.chat",
+        "stoat": "private://release-evidence/v1.0.9/routes/spacebar-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/routes/spacebar-to-zulip"
+      }
+    },
+    {
+      "source": "stoat",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "zulip"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/stoat-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/stoat-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/stoat-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/stoat-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/stoat-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/stoat-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/stoat-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/stoat-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/stoat-to-spacebar",
+        "zulip": "private://release-evidence/v1.0.9/routes/stoat-to-zulip"
+      }
+    },
+    {
+      "source": "zulip",
+      "targets": [
+        "daccord",
+        "discord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "mumble",
+        "rocket.chat",
+        "spacebar",
+        "stoat"
+      ],
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/zulip-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/routes/zulip-to-daccord",
+        "discord": "private://release-evidence/v1.0.9/routes/zulip-to-discord",
+        "fluxer": "private://release-evidence/v1.0.9/routes/zulip-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/routes/zulip-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/routes/zulip-to-mattermost",
+        "mumble": "private://release-evidence/v1.0.9/routes/zulip-to-mumble",
+        "rocket.chat": "private://release-evidence/v1.0.9/routes/zulip-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/routes/zulip-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/routes/zulip-to-stoat"
+      }
+    }
+  ],
+  "content_provider_drills": [
+    {
+      "source": "discord",
+      "targets": [
+        "daccord",
+        "fluxer",
+        "matrix",
+        "mattermost",
+        "rocket.chat",
+        "spacebar",
+        "stoat",
+        "zulip"
+      ],
+      "archive_export_verified": true,
+      "dry_run": true,
+      "apply_recovery": true,
+      "least_privilege_reviewed": true,
+      "evidence_bundle_ref": "private://release-evidence/v1.0.9/discord-content-routes",
+      "route_evidence_refs": {
+        "daccord": "private://release-evidence/v1.0.9/content-routes/discord-to-daccord",
+        "fluxer": "private://release-evidence/v1.0.9/content-routes/discord-to-fluxer",
+        "matrix": "private://release-evidence/v1.0.9/content-routes/discord-to-matrix",
+        "mattermost": "private://release-evidence/v1.0.9/content-routes/discord-to-mattermost",
+        "rocket.chat": "private://release-evidence/v1.0.9/content-routes/discord-to-rocket.chat",
+        "spacebar": "private://release-evidence/v1.0.9/content-routes/discord-to-spacebar",
+        "stoat": "private://release-evidence/v1.0.9/content-routes/discord-to-stoat",
+        "zulip": "private://release-evidence/v1.0.9/content-routes/discord-to-zulip"
+      }
+    }
+  ]
+}

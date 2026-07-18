@@ -105,8 +105,9 @@ def configure_stdio_utf8() -> None:
             continue
         try:
             reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            # Some redirected or embedded consoles do not support reconfigure().
+            continue
 
 
 def prepare_apply_journal(
@@ -446,7 +447,7 @@ def _import_to_target(
                 journal=journal,
             ),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI boundary converts unexpected command failures into sanitized diagnostics.
         if journal:
             journal.fail(exc)
         raise
@@ -855,6 +856,7 @@ def _resolve_discord_chat_export_path(args: argparse.Namespace) -> str | Path:
                 version=getattr(args, "discord_chat_exporter_version", "latest") or "latest",
                 install_dir=getattr(args, "discord_chat_exporter_install_dir", None),
                 timeout_seconds=int(getattr(args, "discord_export_timeout", 3600) or 3600),
+                sha256=getattr(args, "discord_chat_exporter_sha256", None),
             )
         )
     if not exporter_bin:
@@ -1084,6 +1086,10 @@ def _add_discord_content_export_args(parser: argparse.ArgumentParser) -> None:
         help="directory used for managed DiscordChatExporter downloads; default: .guildbridge/tools/discord-chat-exporter",
     )
     parser.add_argument(
+        "--discord-chat-exporter-sha256",
+        help="expected SHA-256 for the managed DiscordChatExporter asset; required when release metadata has no digest",
+    )
+    parser.add_argument(
         "--discord-token-env",
         default="DISCORD_TOKEN",
         help="environment variable containing the Discord token for DiscordChatExporter; default: DISCORD_TOKEN",
@@ -1287,6 +1293,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return int(args.func(args))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - top-level CLI boundary converts unexpected errors into sanitized diagnostics.
         print(format_error_report(exc), file=sys.stderr)
         return 1

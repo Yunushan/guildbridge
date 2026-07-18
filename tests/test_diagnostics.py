@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from guildbridge.diagnostics import format_error_report, recovery_hints
 from guildbridge.http import HttpError, HttpTransportError
 
@@ -61,3 +63,58 @@ def test_token_recovery_hints_name_environment_variables() -> None:
 
     assert "Set DISCORD_BOT_TOKEN or DISCORD_TOKEN" in report
     assert "Do not paste tokens" in report
+
+
+def test_permission_error_report_explains_safe_output_paths() -> None:
+    report = format_error_report(PermissionError("plan.json"))
+
+    assert "filesystem permissions" in report
+    assert "directory your user account owns" in report
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (404, "Check the source or target ID"),
+        (429, "rate limiting requests"),
+        (503, "server-side error"),
+        (418, "Retry as a dry run first"),
+    ],
+)
+def test_http_error_reports_have_status_specific_recovery(status: int, expected: str) -> None:
+    report = format_error_report(HttpError("GET", "https://provider.example", status, "failure", 1))
+
+    assert expected in report
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Refusing --apply without typing APPLY in --confirm-apply", "Run without --apply first"),
+        ("--plan-in is only used with --apply", "Create a dry-run plan first"),
+        ("Template failed validation", "force-invalid-template"),
+        ("resume journal required", "Inspect the apply journal"),
+        ("optional content migration is not implemented", "guildbridge content-features --format json"),
+        ("unsupported schema", "examples/template.example.json"),
+        ("unknown provider", "guildbridge providers"),
+        ("Discord live export requires DISCORD_BOT_TOKEN.", "Set DISCORD_BOT_TOKEN"),
+        ("provider requires --source-id", "Pass the source server"),
+        ("provider requires --target-id", "Pass an existing target ID"),
+        ("Bot is not in this Discord server", "Invite Discord Bot"),
+        ("Discord source looks like a channel ID", "Replace the Discord Source ID"),
+        ("response did not contain an id", "expected API contract"),
+        ("expected an integer", "GUILDBRIDGE_REQUEST_TIMEOUT"),
+        ("unable to start command", "python -m guildbridge"),
+    ],
+)
+def test_value_error_reports_have_actionable_recovery(message: str, expected: str) -> None:
+    report = format_error_report(ValueError(message))
+
+    assert expected in report
+
+
+def test_error_report_redacts_token_values() -> None:
+    report = format_error_report(ValueError("DISCORD_BOT_TOKEN=super-secret-token requires attention"))
+
+    assert "super-secret-token" not in report
+    assert "[redacted]" in report

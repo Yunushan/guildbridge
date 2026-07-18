@@ -545,7 +545,8 @@ def run_cli_args(
     command = subprocess_command(args)
     started = time.monotonic()
     try:
-        completed = subprocess.run(
+        # Commands are generated from the bundled CLI and passed without a shell.
+        completed = subprocess.run(  # noqa: S603
             command,
             cwd=str(cwd) if cwd is not None else None,
             capture_output=True,

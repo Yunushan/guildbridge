@@ -1,0 +1,10 @@
+# Production runtime dependencies only. This is compiled to runtime-linux.txt
+# for the pinned Linux container image.
+keyring>=25.6.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Keyring selects these backends by platform. Keep both in the lock so that
+# generated requirements remain reproducible when compiled on another OS.
+SecretStorage>=3.2
+jeepney>=0.4.2
