@@ -14,11 +14,11 @@ EXPECTED_EXPORTERS = {"discord"}
 EXPECTED_IMPORTERS = set(provider_names()) - {"mumble"}
 REQUIRED_DOCUMENTATION = {
     "README.md": (
-        "Live content migration currently exports from Discord archives only.",
+        "`content-migrate` can use a private GuildBridge content archive for any",
         "Mumble does not currently support live content import.",
     ),
     "docs/PLATFORMS.md": (
-        "Discord is the only supported live-content export source",
+        "Live message-content migration accepts a private GuildBridge content archive tagged with any registered source provider",
         "Mumble live-content import is not implemented.",
     ),
 }

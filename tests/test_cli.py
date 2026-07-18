@@ -239,6 +239,44 @@ def test_content_migrate_dry_run_supports_multiple_targets(tmp_path: Path) -> No
     assert plan["action_count"] == 2
 
 
+def test_content_migrate_accepts_a_neutral_archive_for_non_discord_sources(tmp_path: Path) -> None:
+    archive_path = tmp_path / "stoat.content.json"
+    plan_path = tmp_path / "batch.plan.json"
+    archive_path.write_text(
+        json.dumps(
+            {
+                "schema": "guildbridge.content.v1",
+                "version": "1.0",
+                "name": "Stoat archive",
+                "source": {"platform": "stoat", "id_hash": "source-server-hash"},
+                "channels": [{"id": "source-channel", "name": "general"}],
+                "messages": [{"id": "message-1", "channel_id": "source-channel", "content": "Hello"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "content-migrate",
+                "--from",
+                "stoat",
+                "--content-archive",
+                str(archive_path),
+                "--to",
+                "fluxer,discord",
+                "--plan-out",
+                str(plan_path),
+            ]
+        )
+        == 0
+    )
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["source_provider"] == "stoat"
+    assert plan["target_providers"] == ["fluxer", "discord"]
+
+
 def test_include_content_is_explicitly_gated(capsys) -> None:  # type: ignore[no-untyped-def]
     rc = main(
         [

@@ -1283,6 +1283,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _content_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         tab, frame = self._new_tab(parent)
+        content_source_provider = StringVar(value="discord")
         discord_export = StringVar()
         discord_source_id = StringVar()
         discord_client_id = StringVar()
@@ -1325,10 +1326,11 @@ class GuildBridgeGUI(ttk.Frame):
         content_incremental = BooleanVar(value=False)
         content_continue_on_error = BooleanVar(value=False)
 
-        provider_to = self._provider_listbox(frame, "To", 0, ("stoat",))
+        self._option_combo(frame, "Content source", 0, content_source_provider, tuple(self.providers))
+        provider_to = self._provider_listbox(frame, "To", 1, ("stoat",))
         row = self._fields(
             frame,
-            1,
+            2,
             (
                 Field("DiscordChatExporter file/folder", discord_export, "folder"),
                 Field("Discord guild/server ID", discord_source_id),
@@ -1557,6 +1559,8 @@ class GuildBridgeGUI(ttk.Frame):
             command=lambda: self._run_migrate_with_source_guard(
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
+                    provider_from=content_source_provider.get(),
+                    content_archive=archive_file.get(),
                     discord_chat_export=discord_export.get(),
                     source_id=discord_source_id.get(),
                     discord_chat_exporter_bin=discord_exporter_bin.get(),
@@ -1567,7 +1571,7 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_export_out=discord_export_out.get(),
                     **content_options(apply=False, reviewed=False),
                 ),
-                provider_from="discord",
+                provider_from=content_source_provider.get(),
                 source_id=discord_source_id.get(),
                 plan_out=plan_out.get(),
             ),
@@ -1599,6 +1603,8 @@ class GuildBridgeGUI(ttk.Frame):
             command=lambda: self._run_apply_with_source_guard(
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
+                    provider_from=content_source_provider.get(),
+                    content_archive=archive_file.get(),
                     discord_chat_export=discord_export.get(),
                     source_id=discord_source_id.get(),
                     discord_chat_exporter_bin=discord_exporter_bin.get(),
@@ -1609,13 +1615,13 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_export_out=discord_export_out.get(),
                     **content_options(apply=True, reviewed=True),
                 ),
-                provider_from="discord",
+                provider_from=content_source_provider.get(),
                 source_id=discord_source_id.get(),
                 reviewed_plan=plan_in.get(),
                 plan_out=plan_out.get(),
                 apply_prompt=ApplyPrompt(
                     operation="Content migrate",
-                    source_provider="discord",
+                    source_provider=content_source_provider.get(),
                     target_providers=tuple(self._selected_providers(provider_to)),
                     target_id=target_id.get(),
                     target_name=target_name.get(),

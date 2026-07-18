@@ -912,10 +912,23 @@ def command_content_import(args: argparse.Namespace) -> int:
 
 
 def command_content_migrate(args: argparse.Namespace) -> int:
-    if getattr(args, "provider_from", "discord") != "discord":
-        raise ValueError("Content migrate currently supports --from discord through DiscordChatExporter JSON.")
+    source_provider = getattr(args, "provider_from", "discord")
     config = RuntimeConfig.from_env()
-    archive = load_discord_chat_export(_resolve_discord_chat_export_path(args))
+    content_archive = getattr(args, "content_archive", None)
+    if content_archive:
+        archive = load_content_archive(content_archive)
+        archive_source = archive.source.platform.strip().lower()
+        if archive_source and archive_source != "unknown" and archive_source != source_provider:
+            raise ValueError(
+                f"Content archive source is {archive.source.platform!r}, which does not match --from {source_provider!r}."
+            )
+    elif source_provider == "discord":
+        archive = load_discord_chat_export(_resolve_discord_chat_export_path(args))
+    else:
+        raise ValueError(
+            f"Content migrate from {source_provider!r} requires --content-archive with a GuildBridge content archive. "
+            "Direct offline export conversion is currently available only for DiscordChatExporter."
+        )
     problems = archive.validate()
     if problems:
         print("Content archive validation problems:", file=sys.stderr)
@@ -927,7 +940,7 @@ def command_content_migrate(args: argparse.Namespace) -> int:
         archive=archive,
         targets=targets,
         command="content-migrate",
-        source_provider="discord",
+        source_provider=source_provider,
         validation_problems=problems,
     )
     write_json(result, args.plan_out)
@@ -1258,9 +1271,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_content_migrate.add_argument(
         "--from",
         dest="provider_from",
-        choices=("discord",),
+        choices=tuple(provider_names()),
         default="discord",
-        help="offline content source provider; currently discord through DiscordChatExporter JSON",
+        help="content archive source provider; Discord can also be converted directly from DiscordChatExporter JSON",
+    )
+    p_content_migrate.add_argument(
+        "--content-archive",
+        help="existing GuildBridge content archive JSON; required for non-Discord source providers",
     )
     _add_discord_content_export_args(p_content_migrate)
     _add_content_target_args(p_content_migrate)

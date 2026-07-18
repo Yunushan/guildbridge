@@ -363,9 +363,12 @@ guildbridge routes --format json
 ```
 
 Optional content/message migration is separate from structural migration.
-`content-migrate` currently uses a DiscordChatExporter source archive, while
-`content-import` can import a GuildBridge content archive into one or more
-targets.
+`content-migrate` can use a private GuildBridge content archive for any
+registered source provider and send it to one or more targets. Discord is also
+the only provider with built-in direct offline export conversion through
+DiscordChatExporter JSON; other sources must first be supplied as a validated
+`guildbridge.content.v1` archive. `content-import` imports that archive when
+source provenance does not need to be recorded in the migration plan.
 
 ### Enterprise chat and voice paths
 

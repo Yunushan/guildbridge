@@ -120,7 +120,7 @@ Android and iOS are browser-client targets first. iOS does not provide Tkinter f
 
 ## Live Content Migration Scope
 
-Structural template migration supports every documented provider direction. Live message-content migration is deliberately narrower: Discord is the only supported live-content export source, through an existing DiscordChatExporter archive or a locally executed DiscordChatExporter CLI. Live imports are supported for Discord, Fluxer, Stoat, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mattermost, and Zulip. Mumble live-content import is not implemented.
+Structural template migration supports every documented provider direction. Live message-content migration accepts a private GuildBridge content archive tagged with any registered source provider, then plans or applies it to the supported content-import targets. Discord is the only provider with built-in direct offline export conversion, through an existing DiscordChatExporter archive or a locally executed DiscordChatExporter CLI. Live imports are supported for Discord, Fluxer, Stoat, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mattermost, and Zulip. Mumble live-content import is not implemented.
 
 Run the guard below before a release when content capabilities change:
 
