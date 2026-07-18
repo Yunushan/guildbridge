@@ -126,6 +126,28 @@ def test_error_category_does_not_echo_hosted_setting_values() -> None:
     assert module._error_category("repository has open CodeQL alerts: 42") == "open CodeQL alert control"
 
 
+def test_remediation_steps_are_ordered_and_do_not_include_secret_values() -> None:
+    module = _module()
+
+    steps = module.remediation_steps(
+        [
+            "main branch must require verified or signed commits",
+            "production-release environment is missing required secret names: SECRET_VALUE",
+            "repository has open CodeQL alerts: 42",
+        ],
+        environment_name="production-release",
+    )
+
+    assert steps == [
+        "Update main branch protection to require current branches, one approving review, last-push approval, signed commits, "
+        "linear history, resolved conversations, and the package plus both CodeQL checks.",
+        "Configure the production-release environment with a v* protected-tag policy, administrator-bypass disabled, and an independent required reviewer.",
+        "Add the required signing and evidence secret values to production-release in GitHub; do not place them in source control or command history.",
+        "Resolve the open CodeQL alerts through reviewed fixes, then wait for fresh Python and Actions analyses on main.",
+    ]
+    assert "SECRET_VALUE" not in "\n".join(steps)
+
+
 def test_validate_settings_requires_the_v_tag_environment_policy() -> None:
     module = _module()
     repository, protection, environment, secrets, _deployment_policies = _valid_settings()
@@ -303,3 +325,34 @@ def test_main_does_not_write_a_receipt_when_hosted_controls_fail(
 
     assert module.main(["--repo", "example/guildbridge", "--receipt-out", str(receipt_path)]) == 1
     assert not receipt_path.exists()
+
+
+def test_main_prints_remediation_only_when_requested(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+    protection["required_signatures"] = {"enabled": False}
+
+    def fake_api(endpoint: str) -> dict[str, Any]:
+        values = {
+            "repos/example/guildbridge": {**repository, "default_branch": "main"},
+            "repos/example/guildbridge/commits/main": {"sha": "a" * 40},
+            "user": {"id": 2},
+            "repos/example/guildbridge/branches/main/protection": protection,
+            "repos/example/guildbridge/environments/production-release": environment,
+            "repos/example/guildbridge/environments/production-release/deployment-branch-policies": deployment_policies,
+            "repos/example/guildbridge/environments/production-release/secrets": secrets,
+        }
+        return values[endpoint]
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "gh")
+    monkeypatch.setattr(module, "_gh_api", fake_api)
+    monkeypatch.setattr(
+        module,
+        "_gh_list",
+        lambda endpoint: _valid_tag_rulesets() if "rulesets" in endpoint else _valid_codeql_analyses() if "analyses" in endpoint else [],
+    )
+
+    assert module.main(["--repo", "example/guildbridge", "--remediation"]) == 1
+    captured = capsys.readouterr()
+    assert "Remediation:" in captured.err
+    assert "signed commits" in captured.err

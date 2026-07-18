@@ -8,6 +8,8 @@ After configuring them, verify the effective hosted state with an administrator-
 python scripts/check-github-production-settings.py --repo Yunushan/guildbridge --receipt-out <private-directory>/github-production-settings-audit-vX.Y.Z.json
 ```
 
+For a credential-free, ordered explanation of a failed audit, add `--remediation`. This mode is read-only: it does not change branch rules, environments, rulesets, or secrets.
+
 The receipt is written only after every hosted control passes. It contains no token values, secret values, server IDs, or fetched GitHub settings payloads. Keep it in approved private storage and record an opaque `private://` reference to it in the matching production-evidence file.
 
 ## Protect the release branch

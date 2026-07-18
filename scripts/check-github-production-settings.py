@@ -60,6 +60,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="replace an existing --receipt-out file",
     )
+    parser.add_argument(
+        "--remediation",
+        action="store_true",
+        help="print ordered, credential-free remediation steps when hosted controls are incomplete",
+    )
     args = parser.parse_args(argv)
 
     if not _valid_repo(args.repo):
@@ -112,6 +117,10 @@ def main(argv: list[str] | None = None) -> int:
         print("check-github-production-settings: error:", file=sys.stderr)
         for index, error in enumerate(errors, start=1):
             print(f"- {_error_category(error)} (requirement {index})", file=sys.stderr)
+        if args.remediation:
+            print("Remediation:", file=sys.stderr)
+            for index, step in enumerate(remediation_steps(errors, environment_name=args.environment), start=1):
+                print(f"{index}. {step}", file=sys.stderr)
         return 1
     if args.receipt_out is not None:
         receipt = build_receipt(
@@ -330,6 +339,49 @@ def _error_category(error: str) -> str:
     if error.startswith("repository has open CodeQL alerts"):
         return "open CodeQL alert control"
     return "production environment control"
+
+
+def remediation_steps(errors: Iterable[str], *, environment_name: str) -> list[str]:
+    """Return ordered, non-secret corrective actions for hosted-control failures."""
+    findings = list(errors)
+    steps: list[str] = []
+    if any(error.startswith("repository security") for error in findings):
+        steps.append(
+            "Enable Dependabot security updates, secret scanning, and secret-scanning push protection in the repository security settings."
+        )
+    if any(error.startswith("main branch") for error in findings):
+        steps.append(
+            "Update main branch protection to require current branches, one approving review, last-push approval, signed commits, "
+            "linear history, resolved conversations, and the package plus both CodeQL checks."
+        )
+    if any(
+        error.startswith("release tag ruleset")
+        or error.startswith("repository must have an active tag ruleset")
+        for error in findings
+    ):
+        steps.append(
+            "Create an active tag ruleset for refs/tags/v* that restricts creation, updates, and deletion to the authorized release identity."
+        )
+    environment_prefix = f"{environment_name} environment"
+    if any(error.startswith(environment_prefix) for error in findings):
+        steps.append(
+            f"Configure the {environment_name} environment with a v* protected-tag policy, administrator-bypass disabled, and an independent required reviewer."
+        )
+        if any("required secret names" in error for error in findings):
+            steps.append(
+                f"Add the required signing and evidence secret values to {environment_name} in GitHub; do not place them in source control or command history."
+            )
+    if any(error.startswith("repository has open CodeQL alerts") for error in findings):
+        steps.append(
+            "Resolve the open CodeQL alerts through reviewed fixes, then wait for fresh Python and Actions analyses on main."
+        )
+    if any(
+        error.startswith("current default-branch commit is missing CodeQL analyses")
+        or error.startswith("could not determine the current default-branch")
+        for error in findings
+    ):
+        steps.append("Wait for fresh Python and Actions CodeQL analyses for the current main commit, then rerun this audit.")
+    return steps
 
 
 def _gh_api(endpoint: str) -> dict[str, Any]:
