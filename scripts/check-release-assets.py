@@ -19,8 +19,9 @@ ASSET_PATTERNS = {
     "sha256s": "SHA256SUMS",
     "windows_sha256s": "SHA256SUMS-windows.txt",
     "sbom": "guildbridge-*.spdx.json",
+    "dependency_audit": "guildbridge-*.dependency-audit.json",
 }
-PYTHON_MANIFEST_KEYS = ("wheel", "sdist", "sbom")
+PYTHON_MANIFEST_KEYS = ("wheel", "sdist", "sbom", "dependency_audit")
 WINDOWS_MANIFEST_KEYS = ("windows_zip", "windows_msi")
 
 

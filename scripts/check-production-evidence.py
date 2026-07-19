@@ -37,6 +37,7 @@ REQUIRED_ARTIFACTS = (
     "sha256s",
     "windows_sha256s",
     "sbom",
+    "dependency_audit",
 )
 
 

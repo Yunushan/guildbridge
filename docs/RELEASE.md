@@ -108,7 +108,7 @@ After downloading a signed tag release, verify the ZIP, MSI, and `SHA256SUMS-win
 
 This requires the Windows SDK signing tools but does not require the private code-signing certificate.
 
-When creating the protected production evidence record, record the seven downloaded release-asset checksums without manually copying digests:
+When creating the protected production evidence record, record the eight downloaded release-asset checksums without manually copying digests:
 
 ```powershell
 python scripts/record-release-asset-checksums.py --assets-dir C:\Downloads\GuildBridge-v1.0.0 --evidence C:\Private\guildbridge-v1.0.0-evidence.json

@@ -74,6 +74,7 @@ def build_template(tag: str, commit: str) -> dict[str, Any]:
             "sha256s": PLACEHOLDER_SHA256,
             "windows_sha256s": PLACEHOLDER_SHA256,
             "sbom": PLACEHOLDER_SHA256,
+            "dependency_audit": PLACEHOLDER_SHA256,
         },
         "provider_drills": provider_drills,
         "content_provider_drills": [

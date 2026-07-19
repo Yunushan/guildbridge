@@ -41,13 +41,18 @@ def _release_bundle(tmp_path: Path) -> tuple[Path, Path]:
         "windows_zip": assets / "GuildBridge-1.0.9-windows-x64.zip",
         "windows_msi": assets / "GuildBridge-1.0.9-windows-x64.msi",
         "sbom": assets / "guildbridge-v1.0.9.spdx.json",
+        "dependency_audit": assets / "guildbridge-v1.0.9.dependency-audit.json",
     }
     for key, path in files.items():
         path.write_bytes(key.encode("ascii"))
 
     python_manifest = assets / "SHA256SUMS"
     python_manifest.write_text(
-        "\n".join(f"{_sha256(files[key])}  {files[key].name}" for key in ("wheel", "sdist", "sbom")) + "\n",
+        "\n".join(
+            f"{_sha256(files[key])}  {files[key].name}"
+            for key in ("wheel", "sdist", "sbom", "dependency_audit")
+        )
+        + "\n",
         encoding="utf-8",
     )
     windows_manifest = assets / "SHA256SUMS-windows.txt"

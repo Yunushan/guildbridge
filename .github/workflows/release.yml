@@ -80,7 +80,9 @@ jobs:
           rm -rf dist
           python -m build
       - name: Audit installed dependencies
-        run: python scripts/pip-audit-truststore.py --strict
+        run: >
+          python scripts/pip-audit-truststore.py --strict --format json
+          --output "dist/guildbridge-${{ github.ref_name }}.dependency-audit.json"
       - name: Check distributions
         run: python -m twine check dist/*.whl dist/*.tar.gz
       - name: Verify wheel install and generate SPDX SBOM
@@ -251,6 +253,7 @@ jobs:
             release-assets/guildbridge-*.whl \
             release-assets/guildbridge-*.tar.gz \
             release-assets/guildbridge-*.spdx.json \
+            release-assets/guildbridge-*.dependency-audit.json \
             release-assets/GuildBridge-*-windows-x64.zip \
             release-assets/GuildBridge-*-windows-x64.msi \
             release-assets/SHA256SUMS \

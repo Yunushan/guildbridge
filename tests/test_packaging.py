@@ -354,6 +354,8 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "--deny-self-hosted-runners" in release
     assert "SHA256SUMS" in release
     assert "scripts/pip-audit-truststore.py --strict" in release
+    assert "guildbridge-${{ github.ref_name }}.dependency-audit.json" in release
+    assert "release-assets/guildbridge-*.dependency-audit.json" in release
     assert "--require-hashes -r requirements/release.txt" in release
     assert "--no-deps -e \".[dev]\"" in release
     assert "--no-deps -e \".[dev,windows-build]\"" in release

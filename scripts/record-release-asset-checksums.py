@@ -18,9 +18,10 @@ ASSET_PATTERNS = {
     "sha256s": "SHA256SUMS",
     "windows_sha256s": "SHA256SUMS-windows.txt",
     "sbom": "guildbridge-*.spdx.json",
+    "dependency_audit": "guildbridge-*.dependency-audit.json",
 }
 MANIFESTS = {
-    "sha256s": ("wheel", "sdist", "sbom"),
+    "sha256s": ("wheel", "sdist", "sbom", "dependency_audit"),
     "windows_sha256s": ("windows_zip", "windows_msi"),
 }
 
