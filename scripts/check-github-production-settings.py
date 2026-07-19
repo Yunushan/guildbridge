@@ -65,6 +65,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print ordered, credential-free remediation steps when hosted controls are incomplete",
     )
+    parser.add_argument(
+        "--remediation-plan-out",
+        type=Path,
+        help="write a credential-free JSON remediation plan when hosted controls are incomplete",
+    )
+    parser.add_argument(
+        "--overwrite-remediation-plan",
+        action="store_true",
+        help="replace an existing --remediation-plan-out file",
+    )
     args = parser.parse_args(argv)
 
     if not _valid_repo(args.repo):
@@ -121,6 +131,27 @@ def main(argv: list[str] | None = None) -> int:
             print("Remediation:", file=sys.stderr)
             for index, step in enumerate(remediation_steps(errors, environment_name=args.environment), start=1):
                 print(f"{index}. {step}", file=sys.stderr)
+        if args.remediation_plan_out is not None:
+            plan = build_remediation_plan(
+                repo=args.repo,
+                environment=args.environment,
+                required_release_tag_pattern=args.required_release_tag_pattern,
+                required_secrets=args.require_release_secret,
+                errors=errors,
+            )
+            try:
+                write_remediation_plan(
+                    args.remediation_plan_out,
+                    plan,
+                    overwrite=args.overwrite_remediation_plan,
+                )
+            except OSError as exc:
+                print(
+                    f"check-github-production-settings: error: could not write remediation plan: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"Wrote credential-free remediation plan to {args.remediation_plan_out}.", file=sys.stderr)
         return 1
     if args.receipt_out is not None:
         receipt = build_receipt(
@@ -178,6 +209,60 @@ def write_receipt(path: Path, receipt: dict[str, object], *, overwrite: bool) ->
         raise OSError(f"{path} already exists; use --overwrite-receipt to replace it")
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def build_remediation_plan(
+    *,
+    repo: str,
+    environment: str,
+    required_release_tag_pattern: str,
+    required_secrets: Iterable[str],
+    errors: Iterable[str],
+) -> dict[str, object]:
+    """Create a credential-free, declarative hosted-controls remediation plan."""
+    return {
+        "schema": "guildbridge.github-production-settings-remediation-plan.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "repository": repo,
+        "findings": [_error_category(error) for error in errors],
+        "steps": remediation_steps(errors, environment_name=environment),
+        "desired_controls": {
+            "main_branch": {
+                "required_checks": sorted(REQUIRED_CHECKS),
+                "require_up_to_date": True,
+                "required_approvals": 1,
+                "require_last_push_approval": True,
+                "require_signed_commits": True,
+                "enforce_administrators": True,
+                "require_linear_history": True,
+                "allow_force_pushes": False,
+                "allow_deletions": False,
+                "require_resolved_conversations": True,
+            },
+            "release_tag_ruleset": {
+                "target": "tag",
+                "ref_pattern": REQUIRED_RELEASE_TAG_REF_PATTERN,
+                "enforcement": "active",
+                "required_rules": sorted(REQUIRED_RELEASE_TAG_RULE_TYPES),
+            },
+            "environment": {
+                "name": environment,
+                "tag_policy": required_release_tag_pattern,
+                "allow_administrator_bypass": False,
+                "requires_independent_reviewer": True,
+                "required_secret_names": sorted(set(required_secrets)),
+            },
+        },
+    }
+
+
+def write_remediation_plan(path: Path, plan: dict[str, object], *, overwrite: bool) -> None:
+    """Atomically write a remediation plan without serializing hosted payloads or secrets."""
+    if path.exists() and not overwrite:
+        raise OSError(f"{path} already exists; use --overwrite-remediation-plan to replace it")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(path)
 
 

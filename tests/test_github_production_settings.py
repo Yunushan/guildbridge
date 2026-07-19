@@ -148,6 +148,25 @@ def test_remediation_steps_are_ordered_and_do_not_include_secret_values() -> Non
     assert "SECRET_VALUE" not in "\n".join(steps)
 
 
+def test_remediation_plan_is_declarative_and_excludes_error_values() -> None:
+    module = _module()
+
+    plan = module.build_remediation_plan(
+        repo="example/guildbridge",
+        environment="production-release",
+        required_release_tag_pattern="v*",
+        required_secrets=["SIGNING_SECRET", "EVIDENCE_SECRET"],
+        errors=["production-release environment is missing required secret names: SECRET_VALUE"],
+    )
+
+    assert plan["schema"] == "guildbridge.github-production-settings-remediation-plan.v1"
+    assert plan["findings"] == ["production environment control"]
+    assert plan["desired_controls"]["main_branch"]["required_approvals"] == 1
+    assert plan["desired_controls"]["release_tag_ruleset"]["ref_pattern"] == "refs/tags/v*"
+    assert plan["desired_controls"]["environment"]["required_secret_names"] == ["EVIDENCE_SECRET", "SIGNING_SECRET"]
+    assert "SECRET_VALUE" not in json.dumps(plan)
+
+
 def test_validate_settings_requires_the_v_tag_environment_policy() -> None:
     module = _module()
     repository, protection, environment, secrets, _deployment_policies = _valid_settings()
@@ -356,3 +375,37 @@ def test_main_prints_remediation_only_when_requested(monkeypatch: pytest.MonkeyP
     captured = capsys.readouterr()
     assert "Remediation:" in captured.err
     assert "signed commits" in captured.err
+
+
+def test_main_writes_remediation_plan_only_after_a_failed_audit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+    protection["required_signatures"] = {"enabled": False}
+
+    def fake_api(endpoint: str) -> dict[str, Any]:
+        values = {
+            "repos/example/guildbridge": {**repository, "default_branch": "main"},
+            "repos/example/guildbridge/commits/main": {"sha": "a" * 40},
+            "user": {"id": 2},
+            "repos/example/guildbridge/branches/main/protection": protection,
+            "repos/example/guildbridge/environments/production-release": environment,
+            "repos/example/guildbridge/environments/production-release/deployment-branch-policies": deployment_policies,
+            "repos/example/guildbridge/environments/production-release/secrets": secrets,
+        }
+        return values[endpoint]
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "gh")
+    monkeypatch.setattr(module, "_gh_api", fake_api)
+    monkeypatch.setattr(
+        module,
+        "_gh_list",
+        lambda endpoint: _valid_tag_rulesets() if "rulesets" in endpoint else _valid_codeql_analyses() if "analyses" in endpoint else [],
+    )
+    plan_path = tmp_path / "remediation-plan.json"
+
+    assert module.main(["--repo", "example/guildbridge", "--remediation-plan-out", str(plan_path)]) == 1
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["repository"] == "example/guildbridge"
+    assert plan["desired_controls"]["main_branch"]["require_signed_commits"] is True

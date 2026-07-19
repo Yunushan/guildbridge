@@ -10,6 +10,16 @@ python scripts/check-github-production-settings.py --repo Yunushan/guildbridge -
 
 For a credential-free, ordered explanation of a failed audit, add `--remediation`. This mode is read-only: it does not change branch rules, environments, rulesets, or secrets.
 
+To hand the required state to a repository administrator without exposing credentials, write a declarative plan locally:
+
+```bash
+python scripts/check-github-production-settings.py \
+  --repo Yunushan/guildbridge \
+  --remediation-plan-out <private-directory>/github-production-remediation-plan.json
+```
+
+The plan contains intended control names and policy values only. It does not contain GitHub tokens, signing material, environment-secret values, server identifiers, or fetched settings payloads.
+
 The receipt is written only after every hosted control passes. It contains no token values, secret values, server IDs, or fetched GitHub settings payloads. Keep it in approved private storage and record an opaque `private://` reference to it in the matching production-evidence file.
 
 ## Protect the release branch
