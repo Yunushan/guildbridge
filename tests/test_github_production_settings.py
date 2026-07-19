@@ -139,8 +139,10 @@ def test_remediation_steps_are_ordered_and_do_not_include_secret_values() -> Non
     )
 
     assert steps == [
-        "Update main branch protection to require current branches, one approving review, last-push approval, signed commits, "
-        "linear history, resolved conversations, and the package plus both CodeQL checks.",
+        (
+            "Update main branch protection to require current branches, one approving review, last-push approval, signed commits, "
+            "linear history, resolved conversations, and the package plus both CodeQL checks."
+        ),
         "Configure the production-release environment with a v* protected-tag policy, administrator-bypass disabled, and an independent required reviewer.",
         "Add the required signing and evidence secret values to production-release in GitHub; do not place them in source control or command history.",
         "Resolve the open CodeQL alerts through reviewed fixes, then wait for fresh Python and Actions analyses on main.",
