@@ -79,6 +79,15 @@ def test_release_asset_verifier_accepts_matching_manifests_and_evidence(tmp_path
     assert module.validate_release_assets(assets, evidence) == []
 
 
+def test_release_asset_tools_share_one_public_asset_contract() -> None:
+    verifier = _module()
+    recorder = _recorder_module()
+
+    assert verifier.ASSET_PATTERNS == recorder.ASSET_PATTERNS
+    assert verifier.PYTHON_MANIFEST_KEYS == recorder.MANIFESTS["sha256s"]
+    assert verifier.WINDOWS_MANIFEST_KEYS == recorder.MANIFESTS["windows_sha256s"]
+
+
 def test_release_asset_verifier_rejects_tampered_download(tmp_path: Path) -> None:
     module = _module()
     assets, evidence = _release_bundle(tmp_path)

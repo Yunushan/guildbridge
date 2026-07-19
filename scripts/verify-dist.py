@@ -68,6 +68,7 @@ REQUIRED_WHEEL_SUFFIXES = (
     "guildbridge/assets/guildbridge-icon.svg",
     "guildbridge/providers/mumble.py",
     "guildbridge/providers/rocket_chat.py",
+    "guildbridge/release_assets.py",
     "guildbridge/providers/spacebar.py",
     "guildbridge/providers/zulip.py",
     "guildbridge/web.py",

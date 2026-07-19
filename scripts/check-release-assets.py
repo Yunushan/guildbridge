@@ -10,19 +10,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from guildbridge.release_assets import ASSET_PATTERNS, PYTHON_MANIFEST_KEYS, WINDOWS_MANIFEST_KEYS
+
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-ASSET_PATTERNS = {
-    "wheel": "guildbridge-*.whl",
-    "sdist": "guildbridge-*.tar.gz",
-    "windows_zip": "GuildBridge-*-windows-x64.zip",
-    "windows_msi": "GuildBridge-*-windows-x64.msi",
-    "sha256s": "SHA256SUMS",
-    "windows_sha256s": "SHA256SUMS-windows.txt",
-    "sbom": "guildbridge-*.spdx.json",
-    "dependency_audit": "guildbridge-*.dependency-audit.json",
-}
-PYTHON_MANIFEST_KEYS = ("wheel", "sdist", "sbom", "dependency_audit")
-WINDOWS_MANIFEST_KEYS = ("windows_zip", "windows_msi")
 
 
 def main(argv: list[str] | None = None) -> int:
