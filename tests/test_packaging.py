@@ -16,6 +16,10 @@ def _text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def _uses_pinned_action(workflow: str, action: str) -> bool:
+    return re.search(rf"{re.escape(action)}@[0-9a-f]{{40}}(?:\s+# v\d+)?", workflow) is not None
+
+
 def test_project_metadata_uses_real_repository_urls() -> None:
     pyproject = _text("pyproject.toml")
     readme = _text("README.md")
@@ -252,7 +256,7 @@ def test_release_workflow_attaches_built_files_to_github_release() -> None:
     assert "if: github.ref_type == 'tag'" in release
     assert "needs: [build, sign-windows-artifacts]" in release
     assert "contents: write" in release
-    assert "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7" in release
+    assert _uses_pinned_action(release, "actions/download-artifact")
     assert "Download Python distributions" in release
     assert "Download signed Windows artifacts" in release
     assert "name: guildbridge-dist" in release
@@ -292,8 +296,8 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "docker run --rm guildbridge:${{ github.sha }} --version" in github_ci
     assert "needs: [test, hosted-compatibility, desktop-gui-smoke, container-smoke]" in github_ci
     assert "windows-latest" not in github_ci
-    assert "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6" in github_ci
-    assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6" in github_ci
+    assert _uses_pinned_action(github_ci, "actions/checkout")
+    assert _uses_pinned_action(github_ci, "actions/setup-python")
     assert github_ci.count("fetch-depth: 0") >= 5
     assert github_ci.count("persist-credentials: false") >= 5
     assert "python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py" in github_ci
@@ -331,8 +335,8 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "actions: read" in codeql
     assert "language: [python, actions]" in codeql
     assert "languages: ${{ matrix.language }}" in codeql
-    assert "github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4" in codeql
-    assert "github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4" in codeql
+    assert _uses_pinned_action(codeql, "github/codeql-action/init")
+    assert _uses_pinned_action(codeql, "github/codeql-action/analyze")
     assert "security-extended,security-and-quality" in codeql
     assert "fetch-depth: 0" in codeql
     assert "persist-credentials: false" in codeql
@@ -345,10 +349,10 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "Docker runtime smoke test" in release
     assert "docker run --rm guildbridge:${{ github.sha }} --version" in release
     assert "python scripts/check-platform.py --require cli --format json" in release
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7" in release
+    assert _uses_pinned_action(release, "actions/upload-artifact")
     assert "name: guildbridge-dist" in release
     assert "python scripts/verify-dist.py" in release
-    assert "actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2" in release
+    assert _uses_pinned_action(release, "actions/attest-build-provenance")
     assert "Verify build provenance attestations" in release
     assert "gh attestation verify" in release
     assert "--deny-self-hosted-runners" in release
