@@ -1,16 +1,50 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
+import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .utils import env
 
+CREDENTIAL_SERVICE = "GuildBridge"
+INITIAL_ENV_KEYS = frozenset(os.environ)
+MANAGED_SECRET_KEYS = frozenset(
+    {
+        "DISCORD_BOT_TOKEN",
+        "DISCORD_TOKEN",
+        "FLUXER_BOT_TOKEN",
+        "FLUXER_TOKEN",
+        "STOAT_BOT_TOKEN",
+        "STOAT_TOKEN",
+        "STOAT_SESSION_TOKEN",
+        "REVOLT_TOKEN",
+        "REVOLT_SESSION_TOKEN",
+        "SPACEBAR_BOT_TOKEN",
+        "SPACEBAR_TOKEN",
+        "FOSSCORD_BOT_TOKEN",
+        "FOSSCORD_TOKEN",
+        "DACCORD_BOT_TOKEN",
+        "DACCORD_TOKEN",
+        "MATRIX_ACCESS_TOKEN",
+        "ELEMENT_ACCESS_TOKEN",
+        "ROCKET_CHAT_AUTH_TOKEN",
+        "ROCKETCHAT_AUTH_TOKEN",
+        "MUMBLE_API_TOKEN",
+        "MATTERMOST_TOKEN",
+        "MATTERMOST_PERSONAL_ACCESS_TOKEN",
+        "ZULIP_API_KEY",
+        "ZULIP_BOT_API_KEY",
+    }
+)
+
 try:
     from dotenv import load_dotenv
-except Exception:  # pragma: no cover - dotenv is optional at runtime
+except ImportError:  # pragma: no cover - dotenv is optional at runtime
     load_dotenv = None  # type: ignore[assignment]
 
 
@@ -39,6 +73,7 @@ def load_env_files(candidates: Iterable[Path] | None = None) -> tuple[Path, ...]
             load_dotenv(dotenv_path=path, override=False)
         _load_simple_env_file(path)
         loaded.append(path)
+    _load_system_secret_values()
     return tuple(loaded)
 
 
@@ -56,27 +91,68 @@ def write_env_values(values: Mapping[str, str], *, env_file: Path | None = None)
         lines = target.read_text(encoding="utf-8").splitlines()
     else:
         lines = [
-            "# GuildBridge local secrets. Do not commit this file.",
-            "# Created by the desktop GUI after confirmation.",
+            "# GuildBridge local non-secret settings. Do not commit this file.",
+            "# Provider credentials entered through the desktop GUI are stored in the system credential store.",
         ]
+
+    secret_updates = {key: value for key, value in updates.items() if key in MANAGED_SECRET_KEYS}
+    if secret_updates:
+        _store_system_secret_values(secret_updates)
 
     seen: set[str] = set()
     rewritten: list[str] = []
     for line in lines:
         line_key = _env_line_key(line)
+        if line_key in secret_updates:
+            # Move GUI-entered credentials out of the legacy plaintext file.
+            continue
         if line_key in updates:
             rewritten.append(f"{line_key}={_quote_env_value(updates[line_key])}")
             seen.add(line_key)
         else:
             rewritten.append(line)
     for key, value in updates.items():
-        if key not in seen:
+        if key not in seen and key not in secret_updates:
             rewritten.append(f"{key}={_quote_env_value(value)}")
 
-    target.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    if rewritten or target.exists():
+        _write_private_text(target, "\n".join(rewritten) + "\n")
     for key, value in updates.items():
         os.environ[key] = value
     return target
+
+
+def _load_system_secret_values() -> None:
+    """Prefer GUI-managed native secrets over legacy values loaded from `.env`."""
+    try:
+        keyring = _keyring_module()
+        for key in MANAGED_SECRET_KEYS:
+            value = keyring.get_password(CREDENTIAL_SERVICE, key)
+            if value and key not in INITIAL_ENV_KEYS:
+                os.environ[key] = value
+    except Exception:  # noqa: BLE001 - unavailable native keyrings must not break CLI or headless configuration.
+        # CLI and headless use remain compatible with explicitly supplied env values.
+        return
+
+
+def _store_system_secret_values(values: Mapping[str, str]) -> None:
+    try:
+        keyring = _keyring_module()
+        for key, value in values.items():
+            keyring.set_password(CREDENTIAL_SERVICE, key, value)
+    except Exception as exc:  # noqa: BLE001 - normalize third-party keyring backend failures for GUI callers.
+        raise ValueError(
+            "Could not save credentials to the system credential store. Configure a supported "
+            "keyring backend, or supply credentials through environment variables for this run."
+        ) from exc
+
+
+def _keyring_module() -> Any:
+    try:
+        import keyring
+    except ImportError as exc:  # pragma: no cover - packaging guarantees this dependency
+        raise RuntimeError("The optional system credential-store dependency is unavailable.") from exc
+    return keyring
 
 
 def _dedupe_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
@@ -107,6 +183,34 @@ def _env_line_key(line: str) -> str | None:
 def _quote_env_value(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _write_private_text(target: Path, content: str) -> None:
+    """Atomically replace a GUI-managed secret file with restrictive permissions.
+
+    Windows ACLs are administered by the installing user or endpoint-management
+    policy. On POSIX systems the mode is enforced directly; on Windows the
+    atomic replacement still prevents partially written token files.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent, text=True)
+    temporary = Path(temporary_name)
+    try:
+        if os.name != "nt":
+            os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        try:
+            os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            # Some Windows filesystems expose only a read-only attribute.
+            pass
+    except Exception:  # noqa: BLE001 - remove the temporary replacement before propagating the original write failure.
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _load_simple_env_file(path: Path) -> None:

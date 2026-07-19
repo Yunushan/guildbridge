@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import re
 from pathlib import Path
 from urllib.parse import urlencode
@@ -32,7 +33,7 @@ def discord_client_id_from_token(token: str) -> str:
     padded = first_segment + "=" * (-len(first_segment) % 4)
     try:
         decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii")
-    except Exception:
+    except (ValueError, UnicodeDecodeError, binascii.Error):
         return ""
     return decoded if decoded.isdigit() else ""
 
@@ -90,10 +91,11 @@ def import_artifact_paths(
 def content_artifact_paths(
     base_dir: str | Path,
     *,
+    source_provider: str = "discord",
     target_providers: list[str] | tuple[str, ...],
 ) -> dict[str, str]:
     base = Path(base_dir).expanduser() / "content"
-    name = f"guildbridge-content-to-{_target_path_part(target_providers)}"
+    name = f"guildbridge-content-{_safe_path_part(source_provider)}-to-{_target_path_part(target_providers)}"
     return {
         "discord_export_out": str(base / f"{name}.discord-export"),
         "archive_out": str(base / f"{name}.content.json"),

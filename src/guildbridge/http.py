@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
+import os
 import random
 import re
 import time
@@ -10,7 +12,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -19,7 +21,11 @@ DEFAULT_USER_AGENT = "GuildBridge/0.1 (+https://github.com/Yunushan/guildbridge)
 MAX_RETRY_DELAY_SECONDS = 30.0
 TOKEN_PATTERNS = (
     re.compile(r"(Authorization:\s*(?:Bot|Bearer)?\s*)[^\s,;]+", re.IGNORECASE),
-    re.compile(r"((?:token|access_token|bot_token|session|secret)[\"'=:\s]+)[^\"'\s,;}]+", re.IGNORECASE),
+    re.compile(r"((?:token|access_token|bot_token|session|secret)[\"'=:\s]+)[^\"'\s,;}&]+", re.IGNORECASE),
+)
+QUERY_SECRET_PATTERN = re.compile(
+    r"(?P<prefix>[?&;](?:access(?:[_-]?token)?|api[_-]?key|auth(?:orization)?|bot[_-]?token|code|key|password|secret|session(?:[_-]?token)?|token)=)[^&#;\s]*",
+    re.IGNORECASE,
 )
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 WHITESPACE_PATTERN = re.compile(r"\s+")
@@ -34,7 +40,10 @@ class HttpError(RuntimeError):
     attempts: int = 1
 
     def __str__(self) -> str:
-        return f"{self.method} {self.url} failed with {self.status_code} after {self.attempts} attempt(s): {self.text[:500]}"
+        return (
+            f"{self.method} {sanitize_url(self.url)} failed with {self.status_code} after {self.attempts} attempt(s): "
+            f"{sanitize_text(self.text)[:500]}"
+        )
 
 
 @dataclass
@@ -45,7 +54,7 @@ class HttpTransportError(RuntimeError):
     attempts: int
 
     def __str__(self) -> str:
-        return f"{self.method} {self.url} failed after {self.attempts} attempt(s): {self.message}"
+        return f"{self.method} {sanitize_url(self.url)} failed after {self.attempts} attempt(s): {sanitize_text(self.message)}"
 
 
 class HttpClient:
@@ -58,9 +67,16 @@ class HttpClient:
         timeout: int = 30,
         max_retries: int = 5,
         user_agent: str = DEFAULT_USER_AGENT,
+        allow_insecure_http: bool | None = None,
         retry_sleep: Any = time.sleep,
     ):
         self.base_url = base_url.rstrip("/") + "/"
+        self.allow_insecure_http = (
+            allow_insecure_http
+            if allow_insecure_http is not None
+            else os.environ.get("GUILDBRIDGE_ALLOW_INSECURE_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        self._assert_secure_url(self.base_url)
         self.token = token
         self.auth_scheme = auth_scheme
         self.timeout = timeout
@@ -98,6 +114,7 @@ class HttpClient:
         if data_body is not None and (form_body is not None or files is not None):
             raise ValueError("Use either data_body or form_body/files, not both.")
         url = path if path.startswith("http://") or path.startswith("https://") else urljoin(self.base_url, path.lstrip("/"))
+        self._assert_secure_url(url)
         method_upper = method.upper()
         max_retries = self.max_retries if retries is None else max(0, retries)
         attempts = max_retries + 1
@@ -148,6 +165,16 @@ class HttpClient:
     def _sleep_before_retry(self, attempt: int, response: requests.Response | None) -> None:
         delay = retry_delay_seconds(attempt, response)
         self.retry_sleep(delay)
+
+    def _assert_secure_url(self, url: str) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(f"Provider API URL must be an absolute HTTP(S) URL: {sanitize_url(url)!r}")
+        if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname) and not self.allow_insecure_http:
+            raise ValueError(
+                "Refusing a non-loopback HTTP provider API endpoint because credentials could be exposed. "
+                "Use HTTPS, or set GUILDBRIDGE_ALLOW_INSECURE_HTTP=1 only for a controlled legacy deployment."
+            )
 
     def get(self, path: str, **kwargs: Any) -> Any:
         return self.request("GET", path, **kwargs)
@@ -230,6 +257,21 @@ def sanitize_text(text: str) -> str:
     return sanitized
 
 
+def sanitize_url(url: str) -> str:
+    """Redact credential-shaped query values without changing a safe URL's structure."""
+    return sanitize_text(QUERY_SECRET_PATTERN.sub(r"\g<prefix>[redacted]", url))
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    normalized = hostname.strip("[]").lower().rstrip(".")
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def sanitize_response_text(text: str) -> str:
     sanitized = sanitize_text(text)
     if "<html" not in sanitized.lower() and "<!doctype" not in sanitized.lower():
@@ -251,8 +293,10 @@ def retry_delay_seconds(attempt: int, response: requests.Response | None = None)
             retry_after = body.get("retry_after")
             if retry_after is not None:
                 return min(float(retry_after), MAX_RETRY_DELAY_SECONDS)
-        except Exception:
+        except ValueError:
+            # Error responses may not contain JSON; use the bounded exponential fallback below.
             pass
     base = min(2.0 ** attempt, MAX_RETRY_DELAY_SECONDS)
-    jitter = random.uniform(0, min(0.25, base / 4))
+    # This jitter only avoids synchronized retries; it is not used for security.
+    jitter = random.uniform(0, min(0.25, base / 4))  # noqa: S311
     return min(base + jitter, MAX_RETRY_DELAY_SECONDS)

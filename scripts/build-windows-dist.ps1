@@ -4,6 +4,9 @@ param(
     [string]$OutputDir = "dist",
     [string]$Version = "",
     [string]$WixEulaId = "wix7",
+    [string]$CodeSigningCertificatePath = "",
+    [string]$CodeSigningCertificatePasswordEnv = "GUILDBRIDGE_CODESIGN_PFX_PASSWORD",
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
     [switch]$SkipMsi,
     [switch]$SkipZip,
     [switch]$Clean
@@ -62,6 +65,46 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code ${LASTEXITCODE}: $FilePath"
     }
+}
+
+function Invoke-CodeSign {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($CodeSigningCertificatePath)) {
+        return
+    }
+    $signTool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($null -eq $signTool) {
+        throw "Code signing certificate was supplied but signtool.exe was not found. Install the Windows SDK signing tools."
+    }
+    if (-not (Test-Path -LiteralPath $CodeSigningCertificatePath)) {
+        throw "Code signing certificate was not found: $CodeSigningCertificatePath"
+    }
+    $password = [Environment]::GetEnvironmentVariable($CodeSigningCertificatePasswordEnv)
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        throw "Code signing certificate password is missing from environment variable $CodeSigningCertificatePasswordEnv."
+    }
+    Write-Host "> signtool sign $Path (certificate password hidden)"
+    & $signTool.Source sign /fd SHA256 /f $CodeSigningCertificatePath /p $password /tr $TimestampUrl /td SHA256 $Path
+    if ($LASTEXITCODE -ne 0) {
+        throw "Code signing failed with exit code ${LASTEXITCODE}: $Path"
+    }
+    Invoke-Checked -FilePath $signTool.Source -Arguments @("verify", "/pa", "/v", $Path)
+}
+
+function Get-WixMajorVersion {
+    param([string]$WixPath)
+
+    $versionOutput = & $WixPath "--version"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not determine the WiX Toolset version: $WixPath"
+    }
+    $versionText = ($versionOutput -join "`n").Trim()
+    $match = [regex]::Match($versionText, '^(\d+)\.')
+    if (-not $match.Success) {
+        throw "Could not parse the WiX Toolset version '$versionText'."
+    }
+    return [int]$match.Groups[1].Value
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -123,6 +166,11 @@ foreach ($exe in $expectedExecutables) {
 }
 
 Invoke-Checked -FilePath (Join-Path $BundleRoot "guildbridge.exe") -Arguments @("--version")
+Invoke-Checked -FilePath (Join-Path $BundleRoot "guildbridge-web.exe") -Arguments @("--version")
+
+foreach ($exe in $expectedExecutables) {
+    Invoke-CodeSign -Path (Join-Path $BundleRoot $exe)
+}
 
 if (-not $SkipZip) {
     if (Test-Path -LiteralPath $ZipPath) {
@@ -137,12 +185,21 @@ if (-not $SkipMsi) {
     if ($null -eq $wix) {
         Write-Warning "WiX Toolset command 'wix' was not found. Skipping MSI. Install it with: dotnet tool install --global wix"
     } else {
+        $wixMajor = Get-WixMajorVersion -WixPath $wix.Source
+        if ($wixMajor -lt 5) {
+            throw "WiX Toolset v$wixMajor is unsupported. Install WiX Toolset v5 or later."
+        }
         if (Test-Path -LiteralPath $MsiPath) {
             Remove-Item -LiteralPath $MsiPath -Force
         }
         $wixArguments = @("build")
-        if (-not [string]::IsNullOrWhiteSpace($WixEulaId)) {
+        if ($wixMajor -ge 7) {
+            if ([string]::IsNullOrWhiteSpace($WixEulaId)) {
+                throw "WiX Toolset v$wixMajor requires an explicit EULA identifier. Pass -WixEulaId wix7."
+            }
             $wixArguments += @("-acceptEula", $WixEulaId)
+        } elseif (-not [string]::IsNullOrWhiteSpace($WixEulaId)) {
+            Write-Verbose "WiX Toolset v$wixMajor does not require -acceptEula; omitting it for this local build."
         }
         $wixArguments += @(
             (Join-Path $RepoRootPath "packaging\windows\GuildBridge.wxs"),
@@ -152,6 +209,7 @@ if (-not $SkipMsi) {
             "-out", $MsiPath
         )
         Invoke-Checked -FilePath $wix.Source -Arguments $wixArguments
+        Invoke-CodeSign -Path $MsiPath
         Write-Host "Created $MsiPath"
     }
 }

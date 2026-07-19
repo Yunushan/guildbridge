@@ -356,6 +356,8 @@ def build_content_import_args(
 def build_content_migrate_args(
     provider_to: str | Sequence[str],
     *,
+    provider_from: str = "discord",
+    content_archive: str = "",
     discord_chat_export: str = "",
     source_id: str = "",
     discord_chat_exporter_bin: str = "",
@@ -406,7 +408,8 @@ def build_content_migrate_args(
     content_thread_mode: str = "",
     content_thread_archive_dir: str = "",
 ) -> list[str]:
-    args = ["content-migrate", "--from", "discord"]
+    args = ["content-migrate", "--from", provider_from.strip().lower() or "discord"]
+    _add_value(args, "--content-archive", content_archive)
     _add_value(args, "--discord-chat-export", discord_chat_export)
     _add_value(args, "--source-id", source_id)
     _add_value(args, "--discord-chat-exporter-bin", discord_chat_exporter_bin)
@@ -545,7 +548,8 @@ def run_cli_args(
     command = subprocess_command(args)
     started = time.monotonic()
     try:
-        completed = subprocess.run(
+        # Commands are generated from the bundled CLI and passed without a shell.
+        completed = subprocess.run(  # noqa: S603
             command,
             cwd=str(cwd) if cwd is not None else None,
             capture_output=True,

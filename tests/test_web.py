@@ -1,23 +1,30 @@
 from __future__ import annotations
 
+import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
+from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 import pytest
 
+from guildbridge import __version__
 from guildbridge.gui_commands import CommandResult
 from guildbridge.web import (
     APPLY_CONFIRMATION,
+    AUTH_COOKIE,
     AUTH_FIELD,
     AUTH_HEADER,
     CSRF_FIELD,
     GuildBridgeWebHandler,
+    _create_tls_server_context,
     build_web_args,
+    main,
     render_page,
     serve,
     validate_lan_auth_token,
@@ -102,6 +109,14 @@ def test_build_web_platform_args() -> None:
     assert build_web_args({"action": ["platforms"]}) == ["platforms", "--check"]
 
 
+def test_web_entrypoint_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--version"])
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.strip() == __version__
+
+
 def test_build_web_content_args() -> None:
     export_args = build_web_args(
         {
@@ -179,7 +194,7 @@ def test_render_page_includes_mobile_platforms() -> None:
     assert "Run Content Migrate" in page
     assert "Thread mode" in page
     assert f'name="{CSRF_FIELD}" value="test-token"' in page
-    assert f'name="{AUTH_FIELD}" value="lan-token"' in page
+    assert f'name="{AUTH_FIELD}" value="lan-token"' not in page
     assert f"Type {APPLY_CONFIRMATION}" in page
     assert 'select name="provider_to" multiple' in page
     assert '<html lang="en" data-theme="dark">' in page
@@ -193,6 +208,59 @@ def test_render_page_defaults_unknown_theme_to_light() -> None:
 
     assert '<html lang="en" data-theme="light">' in page
     assert '<option value="light" selected>Light</option>' in page
+
+
+def test_authenticated_redirect_restricts_theme_to_known_values() -> None:
+    class RedirectCapture:
+        auth_token = "session-token"
+        secure_cookies = True
+
+        def __init__(self) -> None:
+            self.headers: list[tuple[str, str]] = []
+
+        def send_response(self, _status: int) -> None:
+            pass
+
+        def send_header(self, name: str, value: str) -> None:
+            self.headers.append((name, value))
+
+        def end_headers(self) -> None:
+            pass
+
+    handler = RedirectCapture()
+    GuildBridgeWebHandler._start_authenticated_session(handler, "dark\r\nX-Injected: true")
+
+    assert ("Location", "/?theme=light") in handler.headers
+    assert not any(name == "X-Injected" for name, _value in handler.headers)
+
+
+def test_authenticated_redirect_encodes_session_cookie_value() -> None:
+    class RedirectCapture:
+        auth_token = "token with; separators"
+        secure_cookies = True
+
+        def __init__(self) -> None:
+            self.headers: list[tuple[str, str]] = []
+
+        def send_response(self, _status: int) -> None:
+            pass
+
+        def send_header(self, name: str, value: str) -> None:
+            self.headers.append((name, value))
+
+        def end_headers(self) -> None:
+            pass
+
+    handler = RedirectCapture()
+    GuildBridgeWebHandler._start_authenticated_session(handler, "dark")
+
+    cookie = SimpleCookie()
+    cookie.load(dict(handler.headers)["Set-Cookie"])
+    assert cookie[AUTH_COOKIE].value == handler.auth_token
+
+
+def test_tls_server_context_requires_tls_1_2_or_newer() -> None:
+    assert _create_tls_server_context().minimum_version >= ssl.TLSVersion.TLSv1_2
 
 
 def test_render_page_has_mobile_layout_contracts() -> None:
@@ -268,13 +336,14 @@ def test_lan_auth_rejects_get_without_token() -> None:
 
 
 def test_lan_auth_allows_get_with_token() -> None:
+    opener = build_opener(HTTPCookieProcessor(CookieJar()))
     with running_web_server(auth_token="secret-token") as base_url:
-        response = urlopen(f"{base_url}/?{AUTH_FIELD}=secret-token", timeout=5)  # noqa: S310
+        response = opener.open(f"{base_url}/?{AUTH_FIELD}=secret-token", timeout=5)  # noqa: S310
         body = response.read().decode("utf-8")
 
     assert response.status == 200
     assert response.headers["Content-Security-Policy"]
-    assert f'name="{AUTH_FIELD}" value="secret-token"' in body
+    assert f'name="{AUTH_FIELD}" value="secret-token"' not in body
 
 
 def test_lan_auth_rejects_post_without_token() -> None:
@@ -323,22 +392,14 @@ def test_web_in_process_errors_include_recovery_guidance() -> None:
     assert "--plan-in" in body
 
 
-def test_serve_does_not_echo_configured_lan_token(monkeypatch: pytest.MonkeyPatch, capsys) -> None:  # type: ignore[no-untyped-def]
-    class FakeServer:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        def serve_forever(self) -> None:
-            raise RuntimeError("stop")
-
-    monkeypatch.setattr("guildbridge.web.ThreadingHTTPServer", FakeServer)
-
-    with pytest.raises(RuntimeError, match="stop"):
+def test_serve_requires_tls_for_lan() -> None:
+    with pytest.raises(ValueError, match="--tls-cert"):
         serve("0.0.0.0", allow_lan=True, auth_token="super-secret-token")
 
-    out = capsys.readouterr().out
-    assert "super-secret-token" not in out
-    assert f"?{AUTH_FIELD}=<token>" in out
+
+def test_serve_requires_configured_lan_token() -> None:
+    with pytest.raises(ValueError, match="auth-token"):
+        serve("0.0.0.0", allow_lan=True, tls_cert="cert.pem", tls_key="key.pem")
 
 
 def test_web_refuses_non_loopback_without_lan_opt_in() -> None:

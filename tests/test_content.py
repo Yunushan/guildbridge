@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from collections.abc import Iterator
@@ -39,7 +40,9 @@ from guildbridge.content import (
     selected_content_features,
 )
 from guildbridge.models import Action
+from guildbridge.providers.daccord import DaccordProvider
 from guildbridge.providers.discord import DiscordProvider
+from guildbridge.providers.fluxer import FluxerProvider
 from guildbridge.providers.matrix import MatrixProvider
 from guildbridge.providers.mattermost import MattermostProvider
 from guildbridge.providers.rocket_chat import RocketChatProvider
@@ -369,6 +372,7 @@ def test_download_discord_chat_exporter_fetches_matching_release_asset(
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("DiscordChatExporter.Cli.exe", "binary")
     archive_bytes = archive.getvalue()
+    archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
     calls: list[str] = []
 
     class Response:
@@ -387,8 +391,8 @@ def test_download_discord_chat_exporter_fetches_matching_release_asset(
                 data={
                     "tag_name": "v2.0.0",
                     "assets": [
-                        {"name": "DiscordChatExporter.Cli.linux-x64.zip", "browser_download_url": "https://example.invalid/linux.zip"},
-                        {"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://example.invalid/win.zip"},
+                        {"name": "DiscordChatExporter.Cli.linux-x64.zip", "browser_download_url": "https://example.invalid/linux.zip", "digest": f"sha256:{archive_sha256}"},
+                        {"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://example.invalid/win.zip", "digest": f"sha256:{archive_sha256}"},
                     ],
                 }
             )
@@ -405,6 +409,21 @@ def test_download_discord_chat_exporter_fetches_matching_release_asset(
     assert executable.name == "DiscordChatExporter.Cli.exe"
     assert executable.read_text(encoding="utf-8") == "binary"
     assert calls[-1] == "https://example.invalid/win.zip"
+
+
+def test_download_discord_chat_exporter_rejects_asset_without_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"assets": [{"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://example.invalid/win.zip"}]}
+
+    monkeypatch.setattr("guildbridge.content.sys.platform", "win32")
+    monkeypatch.setattr("guildbridge.content.platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("guildbridge.content.requests.get", lambda *_args, **_kwargs: Response())
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        download_discord_chat_exporter(DiscordChatExporterBootstrapOptions(install_dir=tmp_path / "tools"))
 
 
 def test_load_channel_map_accepts_plain_and_result_shapes(tmp_path: Path) -> None:
@@ -914,6 +933,249 @@ def test_mattermost_native_content_uses_files_embeds_replies_reactions_and_pins(
     assert isinstance(second_post, dict)
     assert second_post["root_id"] == "post-1"
     assert [call["path"] for call in recorder.posts[2:]] == ["/posts/post-2/pin", "/reactions"]
+
+
+def test_fluxer_native_content_uses_files_embeds_replies_reactions_and_pins(tmp_path: Path) -> None:
+    provider = FluxerProvider(RuntimeConfig(fluxer_token="token"))
+    recorder = RecordingNativeHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    attachment = tmp_path / "guide.txt"
+    attachment.write_text("hello", encoding="utf-8")
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[
+            ContentMessage(
+                id="message-1",
+                channel_id="source-channel",
+                content="first",
+                attachments=[ContentAttachment(filename="guide.txt", local_path=str(attachment))],
+                embeds=[ContentEmbed(title="Docs", description="Read this", url="https://example.invalid/docs")],
+            ),
+            ContentMessage(
+                id="message-2",
+                channel_id="source-channel",
+                content="second",
+                reply_to_id="message-1",
+                pinned=True,
+                reactions=[ContentReaction(emoji="rocket", count=1)],
+            ),
+        ],
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            channel_map={"source-channel": "target-channel"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    assert recorder.post_files_calls[0]["path"] == "/channels/target-channel/messages"
+    first_payload = json.loads(str(recorder.post_files_calls[0]["form_body"]["payload_json"]))
+    assert first_payload["attachments"] == [{"id": 0, "filename": "guide.txt"}]
+    assert first_payload["embeds"][0]["title"] == "Docs"
+    second_payload = recorder.posts[0]["json_body"]
+    assert isinstance(second_payload, dict)
+    assert second_payload["message_reference"] == {"message_id": "message-1", "fail_if_not_exists": False}
+    assert [call["path"] for call in recorder.puts] == [
+        "/channels/target-channel/messages/pins/message-2",
+        "/channels/target-channel/messages/message-2/reactions/rocket/@me",
+    ]
+
+
+def test_daccord_native_content_uses_files_embeds_replies_reactions_and_pins(tmp_path: Path) -> None:
+    provider = DaccordProvider(RuntimeConfig(daccord_token="token"))
+    recorder = RecordingNativeHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    attachment = tmp_path / "guide.txt"
+    attachment.write_text("hello", encoding="utf-8")
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[
+            ContentMessage(
+                id="message-1",
+                channel_id="source-channel",
+                content="first",
+                attachments=[ContentAttachment(filename="guide.txt", local_path=str(attachment))],
+                embeds=[ContentEmbed(title="Docs", description="Read this", url="https://example.invalid/docs")],
+            ),
+            ContentMessage(
+                id="message-2",
+                channel_id="source-channel",
+                content="second",
+                reply_to_id="message-1",
+                pinned=True,
+                reactions=[ContentReaction(emoji="rocket", count=1)],
+            ),
+        ],
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            channel_map={"source-channel": "target-channel"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    assert recorder.post_files_calls[0]["path"] == "/channels/target-channel/messages"
+    first_payload = json.loads(str(recorder.post_files_calls[0]["form_body"]["payload_json"]))
+    assert first_payload["attachments"] == [{"id": 0, "filename": "guide.txt"}]
+    assert first_payload["embeds"][0]["title"] == "Docs"
+    second_payload = recorder.posts[0]["json_body"]
+    assert isinstance(second_payload, dict)
+    assert second_payload["message_reference"] == {"message_id": "message-1", "fail_if_not_exists": False}
+    assert [call["path"] for call in recorder.puts] == [
+        "/channels/target-channel/messages/pins/message-2",
+        "/channels/target-channel/messages/message-2/reactions/rocket/@me",
+    ]
+
+
+def test_matrix_native_content_uses_replies_reactions_and_pins(tmp_path: Path) -> None:
+    provider = MatrixProvider(RuntimeConfig(matrix_access_token="token"))
+    recorder = RecordingNativeHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[
+            ContentMessage(id="message-1", channel_id="source-channel", content="first"),
+            ContentMessage(
+                id="message-2",
+                channel_id="source-channel",
+                content="second",
+                reply_to_id="message-1",
+                pinned=True,
+                reactions=[ContentReaction(emoji="rocket", count=1)],
+            ),
+        ],
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            channel_map={"source-channel": "!target:example.org"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    second_payload = recorder.puts[1]["json_body"]
+    assert isinstance(second_payload, dict)
+    assert second_payload["m.relates_to"] == {"m.in_reply_to": {"event_id": "event-1"}}
+    assert any("m.room.pinned_events" in str(call["path"]) for call in recorder.puts[2:])
+    assert any("m.reaction" in str(call["path"]) for call in recorder.puts[2:])
+
+
+def test_rocket_chat_native_content_uses_uploads_replies_reactions_and_pins(tmp_path: Path) -> None:
+    provider = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
+    recorder = RecordingNativeHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    attachment = tmp_path / "guide.txt"
+    attachment.write_text("hello", encoding="utf-8")
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[
+            ContentMessage(id="message-1", channel_id="source-channel", content="first", attachments=[ContentAttachment(filename="guide.txt", local_path=str(attachment))]),
+            ContentMessage(
+                id="message-2",
+                channel_id="source-channel",
+                content="second",
+                reply_to_id="message-1",
+                pinned=True,
+                reactions=[ContentReaction(emoji="rocket", count=1)],
+            ),
+        ],
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            channel_map={"source-channel": "target-room"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    assert recorder.post_file_calls[0]["path"] == "/rooms.upload/target-room"
+    first_payload = recorder.posts[0]["json_body"]
+    assert isinstance(first_payload, dict)
+    assert first_payload["roomId"] == "target-room"
+    second_payload = recorder.posts[1]["json_body"]
+    assert isinstance(second_payload, dict)
+    assert second_payload["tmid"] == "rocket-1"
+    assert [call["path"] for call in recorder.posts[2:]] == ["/chat.pinMessage", "/chat.react"]
+
+
+def test_zulip_native_content_uses_uploads_and_reactions(tmp_path: Path) -> None:
+    provider = ZulipProvider(RuntimeConfig(zulip_email="bot@example.test", zulip_api_key="token"))
+    recorder = RecordingNativeHttp()
+    provider.http = recorder  # type: ignore[assignment]
+    attachment = tmp_path / "guide.txt"
+    attachment.write_text("hello", encoding="utf-8")
+    archive = ContentArchive(
+        name="Archive",
+        source=ContentSource(platform="discord"),
+        channels=[ContentChannel(id="source-channel", name="general")],
+        messages=[
+            ContentMessage(
+                id="message-1",
+                channel_id="source-channel",
+                content="first",
+                attachments=[ContentAttachment(filename="guide.txt", local_path=str(attachment))],
+                reactions=[ContentReaction(emoji="rocket", count=1)],
+            )
+        ],
+    )
+
+    provider.import_content(
+        archive,
+        ContentImportOptions(
+            apply=True,
+            channel_map={"source-channel": "target-stream"},
+            preserve_authors=False,
+            native_content=True,
+            journal_path=str(tmp_path / "journal.json"),
+            report_path=str(tmp_path / "report.json"),
+            dead_letter_path=str(tmp_path / "dead-letter.json"),
+            lock_path=str(tmp_path / "content.lock"),
+        ),
+    )
+
+    assert recorder.post_file_calls[0]["path"] == "/user_uploads"
+    message_call = recorder.post_form_calls[0]
+    assert message_call["path"] == "/messages"
+    assert "Uploaded files:" in str(message_call["form_body"]["content"])
+    assert recorder.post_form_calls[1]["path"] == "/messages/zulip-1/reactions"
 
 
 def test_matrix_zulip_and_rocket_native_capabilities_are_opt_in() -> None:

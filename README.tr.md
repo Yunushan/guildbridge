@@ -80,6 +80,8 @@ guildbridge content-export \
 
 GuildBridge remote exporter binary'lerini sadece `--download-discord-chat-exporter` verildiginde indirir ve Discord token'larini template, archive, plan, journal veya report dosyalarina yazmaz. DiscordChatExporter cikisini `guildbridge.content.v1` formatina cevirir, ham kaynak ID'lerini hash'ler ve mesaj metni, yazarlar, zaman damgalari, ek URL/local path bilgileri, embed'ler, yanitlar, pin'ler, reaction'lar, custom emoji isaretleri, sticker'lar, anketler, thread/forum metadata'si, sunucu banner/icon URL'leri, role color metadata'si, kanal permission metadata'si ve NSFW kanal flag'lerini private arsivde veya companion structure flow'da korur. CLI, masaustu GUI Content sekmesi veya web GUI Content paneli uzerinden her hedef saglayici icin content import dry-run plani uretebilir. Canli formatli mesaj yazma Discord, Spacebar, Daccord, Fluxer, Stoat/Revolt, Matrix/Element, Rocket.Chat, Mattermost ve Zulip icin desteklenir; bunun icin incelenmis plan, hedef kanal eslemesi ve provider token'i gerekir. `--content-parallel-sends N` birden fazla kaynak kanali ayni anda gonderir, ancak her kanal icindeki mesaj sirasini korur. `--content-thread-mode reference|merge|channel|markdown`, thread/forum mesajlarini referans olarak tutar, parent kanal gecmisine birlestirir, eslenen thread kanallarina yollar veya local markdown thread arsivleri yazar. Mumble metin gecmisi import yuzeyi olmadigi icin yapi/ses kanali tarafinda kalir.
 
+Varsayilan `community.content.json` archive adi ile yaygin content journal, report, incremental-state, dead-letter ve thread archive ciktilari Git ve Docker build context disinda tutulur. Tum content archive dosyalarini onayli private storage icinde saklayin.
+
 Apply tarafindaki content import islemleri journal, rapor, lock dosyasi, incremental state ve dead-letter dosyasi yazabilir:
 
 ```bash
@@ -243,7 +245,7 @@ guildbridge-web.exe
 
 ### Masaustu GUI akisi
 
-1. GUI'yi acmadan once saglayici token'larini `.env` icinde yapilandirin.
+1. Saglayici token'larini injected environment variable'lar ile yapilandirin veya GUI assistant icindeki **Configure Tokens** secenegini kullanin. GUI, onaylanan kimlik bilgilerini Evet/Hayir onayindan sonra isletim sistemi kimlik bilgisi deposunda saklar; acik Discord veya Stoat tarayici oturumlarini okuyamaz.
 2. `guildbridge-gui` veya `guildbridge-gui.exe` acin.
 3. Once **Platforms** sekmesini kullanarak CLI, masaustu GUI ve web GUI hazirligini kontrol edin.
 4. Kaynak saglayicidan tarafsiz template olusturmak icin **Export** kullanin. Source ID veya provider template URL/code girin, sonra output JSON yolu secin.
@@ -274,7 +276,7 @@ guildbridge check-access --provider discord --id "SOURCE_GUILD_ID"
 guildbridge check-access --provider stoat --id "TARGET_SERVER_ID"
 ```
 
-Ayni agdaki telefon veya tabletlerin baglanmasini sadece guvenilir aglarda istiyorsaniz `--host 0.0.0.0 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"` kullanin. LAN modu her istekte auth token'i ister; `--auth-token` vermediginizde GuildBridge bir token uretir ve baslangicta bir kez yazdirir.
+Ayni agdaki telefon veya tabletlerin baglanmasini sadece guvenilir aglarda istiyorsaniz `--host 0.0.0.0 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"` kullanin. LAN modu yapilandirilmis bir auth token'i ve TLS sertifikasi/anahtari ister; ilk yetkili URL acildiktan sonra HttpOnly, Secure ve same-site oturum cerezini kullanir. Token form veya sayfa icinde gosterilmez.
 
 ### Tarayici ve mobil akis
 
@@ -289,10 +291,10 @@ guildbridge-web
 4. Ayni guvenilir agdaki telefon veya tabletten erisim icin sunucuyu LAN modunda baslatin:
 
 ```bash
-guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "uzun-rastgele-bir-token-secin"
+guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "uzun-rastgele-bir-token-secin" --tls-cert /secure/guildbridge-cert.pem --tls-key /secure/guildbridge-key.pem
 ```
 
-5. Yazdirilan LAN URL'sini mobil tarayicida acin ve auth token'i ekleyin. Bu token'i gizli tutun; web GUI onaydan sonra provider yazma islemleri calistirabilir.
+5. Mobil tarayicida HTTPS URL'sini `?auth_token=<token>` ile bir kez acin. GuildBridge hemen tokensiz bir URL'ye yonlendirir ve guvenli oturum cerezini saklar. Bu token'i gizli tutun; web GUI onaydan sonra provider yazma islemleri calistirabilir.
 
 Alternatif baslatma komutlari:
 
@@ -589,7 +591,7 @@ GuildBridge, herkese acik sablon dosyalarinin guvenle yayinlanabilmesi icin tasa
 1. **Mesaj yok.** Mesaj gecmisi semanin parcasi degildir.
 2. **Uye yok.** Uye listeleri ve kullanici profilleri semanin parcasi degildir.
 3. **DM yok.** Direkt/ozel konusmalar asla export edilmez.
-4. **Sir yok.** Token ve oturum degerleri yalnizca ortam degiskenlerinden okunur.
+4. **Migration artifact'larinda sir yok.** Template, archive, plan, journal ve report dosyalari token veya oturum degerlerini saklamaz. CLI ve headless calismalar injected environment variable veya local `.env` kullanir; onaylanan masaustu GUI kimlik bilgileri acik kullanici onayindan sonra isletim sistemi kimlik bilgisi deposunda saklanir.
 5. **Kararlı incelenmis planlar.** `--apply --confirm-apply APPLY --plan-in <reviewed-plan.json>` ayarlanmadikca import hicbir sey yazmaz. GuildBridge mevcut aday plan incelenmis dry-run planindan farkliysa yazmayi reddeder.
 6. **Apply journal'lari.** Onayli apply calistirmalari, kesintiye ugrayan yazmalarin yeniden denemeden once denetlenebilmesi icin baslayan, basarili ve basarisiz islem kayitlari olan yerel bir journal yazar.
 7. **Redaksiyon mevcut.** `guildbridge redact`, elle duzenlenmis sablonlardan guvensiz metadata anahtarlarini, token benzeri degerleri, ham kaynak ID'leri ve guvensiz overwrite placeholder'larini kaldirir.
@@ -708,11 +710,13 @@ Windows artifact build ayrintilari [docs/WINDOWS_RELEASE.md](docs/WINDOWS_RELEAS
 ```bash
 python -m pip install -e ".[dev]"
 python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py
+python -m ruff check --select S src scripts
+python -m ruff check --select BLE src scripts
 python -m mypy src
 python -m pytest -q
 python scripts/check-platform.py --require cli --format json
 python -m build
-python -m twine check dist/*
+python -m twine check dist/*.whl dist/*.tar.gz
 python scripts/verify-dist.py
 ```
 

@@ -105,8 +105,9 @@ def configure_stdio_utf8() -> None:
             continue
         try:
             reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            # Some redirected or embedded consoles do not support reconfigure().
+            continue
 
 
 def prepare_apply_journal(
@@ -446,7 +447,7 @@ def _import_to_target(
                 journal=journal,
             ),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI boundary converts unexpected command failures into sanitized diagnostics.
         if journal:
             journal.fail(exc)
         raise
@@ -855,6 +856,7 @@ def _resolve_discord_chat_export_path(args: argparse.Namespace) -> str | Path:
                 version=getattr(args, "discord_chat_exporter_version", "latest") or "latest",
                 install_dir=getattr(args, "discord_chat_exporter_install_dir", None),
                 timeout_seconds=int(getattr(args, "discord_export_timeout", 3600) or 3600),
+                sha256=getattr(args, "discord_chat_exporter_sha256", None),
             )
         )
     if not exporter_bin:
@@ -910,10 +912,23 @@ def command_content_import(args: argparse.Namespace) -> int:
 
 
 def command_content_migrate(args: argparse.Namespace) -> int:
-    if getattr(args, "provider_from", "discord") != "discord":
-        raise ValueError("Content migrate currently supports --from discord through DiscordChatExporter JSON.")
+    source_provider = getattr(args, "provider_from", "discord")
     config = RuntimeConfig.from_env()
-    archive = load_discord_chat_export(_resolve_discord_chat_export_path(args))
+    content_archive = getattr(args, "content_archive", None)
+    if content_archive:
+        archive = load_content_archive(content_archive)
+        archive_source = archive.source.platform.strip().lower()
+        if archive_source and archive_source != "unknown" and archive_source != source_provider:
+            raise ValueError(
+                f"Content archive source is {archive.source.platform!r}, which does not match --from {source_provider!r}."
+            )
+    elif source_provider == "discord":
+        archive = load_discord_chat_export(_resolve_discord_chat_export_path(args))
+    else:
+        raise ValueError(
+            f"Content migrate from {source_provider!r} requires --content-archive with a GuildBridge content archive. "
+            "Direct offline export conversion is currently available only for DiscordChatExporter."
+        )
     problems = archive.validate()
     if problems:
         print("Content archive validation problems:", file=sys.stderr)
@@ -925,7 +940,7 @@ def command_content_migrate(args: argparse.Namespace) -> int:
         archive=archive,
         targets=targets,
         command="content-migrate",
-        source_provider="discord",
+        source_provider=source_provider,
         validation_problems=problems,
     )
     write_json(result, args.plan_out)
@@ -1082,6 +1097,10 @@ def _add_discord_content_export_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--discord-chat-exporter-install-dir",
         help="directory used for managed DiscordChatExporter downloads; default: .guildbridge/tools/discord-chat-exporter",
+    )
+    parser.add_argument(
+        "--discord-chat-exporter-sha256",
+        help="expected SHA-256 for the managed DiscordChatExporter asset; required when release metadata has no digest",
     )
     parser.add_argument(
         "--discord-token-env",
@@ -1252,9 +1271,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_content_migrate.add_argument(
         "--from",
         dest="provider_from",
-        choices=("discord",),
+        choices=tuple(provider_names()),
         default="discord",
-        help="offline content source provider; currently discord through DiscordChatExporter JSON",
+        help="content archive source provider; Discord can also be converted directly from DiscordChatExporter JSON",
+    )
+    p_content_migrate.add_argument(
+        "--content-archive",
+        help="existing GuildBridge content archive JSON; required for non-Discord source providers",
     )
     _add_discord_content_export_args(p_content_migrate)
     _add_content_target_args(p_content_migrate)
@@ -1287,6 +1310,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return int(args.func(args))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - top-level CLI boundary converts unexpected errors into sanitized diagnostics.
         print(format_error_report(exc), file=sys.stderr)
         return 1

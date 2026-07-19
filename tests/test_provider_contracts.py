@@ -119,6 +119,34 @@ class ExplodingHttp(RecordingHttp):
         raise AssertionError("dry-run attempted HTTP PUT")
 
 
+class FailAfterWriteHttp(RecordingHttp):
+    def __init__(self, fail_on_write: int) -> None:
+        super().__init__()
+        self.fail_on_write = fail_on_write
+        self.write_attempts = 0
+
+    def _fail_if_needed(self) -> None:
+        self.write_attempts += 1
+        if self.write_attempts == self.fail_on_write:
+            raise RuntimeError("simulated provider write failure")
+
+    def post(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_needed()
+        return super().post(*args, **kwargs)
+
+    def post_form(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_needed()
+        return super().post_form(*args, **kwargs)
+
+    def patch(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_needed()
+        return super().patch(*args, **kwargs)
+
+    def put(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        self._fail_if_needed()
+        return super().put(*args, **kwargs)
+
+
 @dataclass(frozen=True)
 class ProviderCase:
     label: str
@@ -254,6 +282,27 @@ def test_provider_apply_records_journal_for_each_write(case: ProviderCase) -> No
     assert journal.recorded == len(result.actions)
     assert journal.succeeded == list(range(len(result.actions)))
     assert journal.failed == []
+
+
+@pytest.mark.parametrize("case", PROVIDER_CASES, ids=lambda case: case.label)
+def test_provider_apply_records_failed_write_in_journal(case: ProviderCase) -> None:
+    provider = case.factory()
+    provider.http = FailAfterWriteHttp(fail_on_write=2)  # type: ignore[attr-defined]
+    journal = MemoryJournal()
+    options = ImportOptions(
+        target_id=case.apply_options.target_id,
+        target_name=case.apply_options.target_name,
+        apply=True,
+        audit_log_reason=case.apply_options.audit_log_reason,
+        journal=journal,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated provider write failure"):
+        provider.import_template(contract_template(), options)
+
+    assert journal.recorded == 2
+    assert journal.succeeded == [0]
+    assert journal.failed == [(1, "simulated provider write failure")]
 
 
 @dataclass

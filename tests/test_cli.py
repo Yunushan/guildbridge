@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from itertools import product
 from pathlib import Path
 
 from guildbridge.access import AccessCheckResult
 from guildbridge.cli import main, write_json
+from guildbridge.config import RuntimeConfig
 from guildbridge.models import CommunityTemplate, Role
+from guildbridge.providers import get_provider, provider_names
+from guildbridge.providers.base import ImportOptions
+from guildbridge.routes import canonical_provider_names, structure_route_document
 from guildbridge.safety import APPLY_CONFIRMATION, validate_apply_safety
 
 
@@ -63,6 +68,88 @@ def test_routes_command_json(tmp_path: Path) -> None:
     assert ("discord", "matrix") in route_pairs
     assert ("stoat", "fluxer") in route_pairs
     assert ("fluxer", "discord") in route_pairs
+
+
+def test_every_registered_provider_pair_has_a_structural_dry_run_contract() -> None:
+    providers = canonical_provider_names()
+    document = structure_route_document()
+    route_pairs = {(route["from"], route["to"]) for route in document["routes"]}
+
+    assert providers == sorted(provider_names())
+    assert route_pairs == set(product(providers, repeat=2))
+    assert len(route_pairs) == 100
+    assert all(route["status"] == "supported" for route in document["routes"])
+    assert all(route["route_type"] == "structure-template" for route in document["routes"])
+    assert all(route["multi_target"] is True for route in document["routes"])
+
+    template = CommunityTemplate(name="Route contract", roles=[Role(id="everyone", name="@everyone")])
+    for target in providers:
+        result = get_provider(target, RuntimeConfig()).import_template(
+            template,
+            ImportOptions(target_id="contract-target", target_name="Route contract"),
+        )
+        assert result.applied is False
+
+
+def test_import_dry_run_handles_every_registered_destination_in_one_cli_batch(tmp_path: Path) -> None:
+    providers = canonical_provider_names()
+    template_path = tmp_path / "all-destinations.template.json"
+    plan_path = tmp_path / "all-destinations.plan.json"
+    template = CommunityTemplate(name="All destinations", roles=[Role(id="everyone", name="@everyone")])
+    template_path.write_text(json.dumps(template.to_dict()), encoding="utf-8")
+
+    arguments = ["import", "--file", str(template_path), "--plan-out", str(plan_path)]
+    for provider in providers:
+        arguments.extend(["--to", provider, "--target-id", f"{provider}=contract-target"])
+
+    assert main(arguments) == 0
+
+    batch = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert batch["command"] == "import"
+    assert "source_provider" not in batch
+    assert batch["target_providers"] == providers
+    assert {result["provider"] for result in batch["results"]} == set(providers)
+    assert all(result["applied"] is False for result in batch["results"])
+
+
+def test_migrate_dry_run_exercises_every_registered_source_target_pair(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    providers = canonical_provider_names()
+    template = CommunityTemplate(name="Route contract", roles=[Role(id="everyone", name="@everyone")])
+
+    def offline_provider(name: str, config: RuntimeConfig):
+        provider = get_provider(name, config)
+        monkeypatch.setattr(provider, "export_template", lambda _options: template)
+        return provider
+
+    monkeypatch.setattr("guildbridge.cli.get_provider", offline_provider)
+
+    for index, (source, target) in enumerate(product(providers, repeat=2)):
+        plan_path = tmp_path / f"{index}-{source}-to-{target}.plan.json"
+        assert (
+            main(
+                [
+                    "migrate",
+                    "--from",
+                    source,
+                    "--to",
+                    target,
+                    "--source-id",
+                    "contract-source",
+                    "--target-id",
+                    f"{target}=contract-target",
+                    "--plan-out",
+                    str(plan_path),
+                ]
+            )
+            == 0
+        )
+        result = json.loads(plan_path.read_text(encoding="utf-8"))
+        assert result["provider"] == target
+        assert result["applied"] is False
+        context = result["plan"]["context"]
+        assert context["command"] == "migrate"
+        assert context["source_provider"] == source
+        assert context["provider"] == target
 
 
 def test_content_export_and_import_dry_run(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -150,6 +237,44 @@ def test_content_migrate_dry_run_supports_multiple_targets(tmp_path: Path) -> No
     assert plan["command"] == "content-migrate"
     assert plan["target_providers"] == ["stoat", "fluxer"]
     assert plan["action_count"] == 2
+
+
+def test_content_migrate_accepts_a_neutral_archive_for_non_discord_sources(tmp_path: Path) -> None:
+    archive_path = tmp_path / "stoat.content.json"
+    plan_path = tmp_path / "batch.plan.json"
+    archive_path.write_text(
+        json.dumps(
+            {
+                "schema": "guildbridge.content.v1",
+                "version": "1.0",
+                "name": "Stoat archive",
+                "source": {"platform": "stoat", "id_hash": "source-server-hash"},
+                "channels": [{"id": "source-channel", "name": "general"}],
+                "messages": [{"id": "message-1", "channel_id": "source-channel", "content": "Hello"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "content-migrate",
+                "--from",
+                "stoat",
+                "--content-archive",
+                str(archive_path),
+                "--to",
+                "fluxer,discord",
+                "--plan-out",
+                str(plan_path),
+            ]
+        )
+        == 0
+    )
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["source_provider"] == "stoat"
+    assert plan["target_providers"] == ["fluxer", "discord"]
 
 
 def test_include_content_is_explicitly_gated(capsys) -> None:  # type: ignore[no-untyped-def]

@@ -78,6 +78,15 @@ function Get-GitStatus {
     return Get-CheckedOutput -FilePath "git" -Arguments @("status", "--porcelain")
 }
 
+function Get-GitHubRepository {
+    $remote = Get-CheckedOutput -FilePath "git" -Arguments @("remote", "get-url", "origin")
+    $match = [regex]::Match($remote, 'github\.com[:/](?<owner>[^/\s:]+)/(?<name>[^/\s]+?)(?:\.git)?$')
+    if (-not $match.Success) {
+        throw "Release prep requires an origin remote hosted on github.com; found: $remote"
+    }
+    return "$($match.Groups['owner'].Value)/$($match.Groups['name'].Value)"
+}
+
 function Assert-CleanWorktree {
     param([string]$Reason)
 
@@ -152,9 +161,23 @@ function Invoke-ReleaseChecks {
         return
     }
 
-    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "src", "tests", "scripts/check-platform.py", "scripts/verify-dist.py", "scripts/check-release-version.py")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "src", "tests", "scripts/check-platform.py", "scripts/verify-dist.py", "scripts/check-release-version.py", "scripts/check-release-controls.py", "scripts/check-secret-hygiene.py", "scripts/check-security-baseline.py", "scripts/check-github-production-settings.py", "scripts/check-production-evidence.py", "scripts/check-production-readiness.py", "scripts/record-provider-drill-receipt.py", "scripts/check-release-assets.py", "scripts/check-content-capability-scope.py", "scripts/pip-audit-truststore.py")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "--select", "S", "src", "scripts")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "--select", "BLE", "src", "scripts")
+    Invoke-Checked -FilePath $Python -Arguments @("scripts/check-release-controls.py")
+    Invoke-Checked -FilePath $Python -Arguments @("scripts/check-secret-hygiene.py", "--history")
+    Invoke-Checked -FilePath $Python -Arguments @("scripts/check-security-baseline.py")
+    Invoke-Checked -FilePath $Python -Arguments @("scripts/check-content-capability-scope.py")
+    Invoke-Checked -FilePath $Python -Arguments @("scripts/pip-audit-truststore.py", "--strict")
+    Assert-Command -Name "gh"
+    Invoke-Checked -FilePath $Python -Arguments @(
+        "scripts/check-github-production-settings.py",
+        "--repo",
+        (Get-GitHubRepository)
+    )
     Invoke-Checked -FilePath $Python -Arguments @("-m", "mypy", "src")
-    Invoke-Checked -FilePath $Python -Arguments @("-m", "pytest", "-q")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "coverage", "run", "-m", "pytest", "-q")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "coverage", "report")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-platform.py", "--require", "cli", "--format", "json")
 }
 
@@ -177,7 +200,8 @@ function Invoke-ReleaseBuild {
         throw "Expected exactly one wheel and one source archive in dist/."
     }
 
-    Invoke-Checked -FilePath $Python -Arguments (@("-m", "twine", "check") + $distFiles)
+    # The build also emits an SPDX JSON SBOM. Twine only accepts Python distributions.
+    Invoke-Checked -FilePath $Python -Arguments (@("-m", "twine", "check") + $wheels + $sdists)
     Invoke-Checked -FilePath $Python -Arguments @("scripts/verify-dist.py")
 }
 
@@ -235,6 +259,9 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseBranch) -and $currentBranch -ne $R
 }
 
 Assert-TagAvailable
+if ($SkipChecks -and -not $SkipTag) {
+    throw "-SkipChecks may only be used with -SkipTag; a releasable tag requires every production gate."
+}
 Set-Version
 Assert-VersionSynced
 Invoke-ReleaseChecks

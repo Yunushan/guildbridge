@@ -8,6 +8,7 @@ from guildbridge.config import RuntimeConfig
 from guildbridge.http import HttpError
 from guildbridge.models import Category, Channel, CommunityTemplate, Role
 from guildbridge.plan import action_fingerprint
+from guildbridge.providers import get_provider, provider_names
 from guildbridge.providers.base import ExportOptions, ImportOptions, require_response_id, safe_int
 from guildbridge.providers.daccord import DaccordProvider
 from guildbridge.providers.discord import DiscordProvider
@@ -29,6 +30,69 @@ class EmptyCreateHttp:
         return {}
 
 
+class RecordingCreateHttp:
+    """Offline provider responses for successful template-write contract tests."""
+
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, dict[str, object] | None, dict[str, str] | None]] = []
+        self.post_forms: list[tuple[str, dict[str, object] | None, dict[str, str] | None]] = []
+        self.puts: list[tuple[str, dict[str, object] | None, dict[str, str] | None]] = []
+
+    def post(
+        self,
+        path: str,
+        json_body: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.posts.append((path, json_body, headers))
+        index = len(self.posts)
+        if path == "/roles.create":
+            return {"role": {"_id": f"role-{index}"}}
+        if path == "/teams.create":
+            return {"team": {"_id": f"team-{index}"}}
+        if path == "/teams":
+            return {"id": f"team-{index}"}
+        if path == "/guilds":
+            return {"id": f"guild-{index}"}
+        if path == "/spaces":
+            return {"data": {"id": f"space-{index}"}}
+        if path in {"/channels.create", "/groups.create"}:
+            return {"channel": {"_id": f"room-{index}"}}
+        if path == "/channels":
+            return {"id": f"channel-{index}"}
+        if path.endswith("/roles"):
+            if path.startswith("/spaces/"):
+                return {"data": {"id": f"role-{index}"}}
+            return {"id": f"role-{index}"}
+        if path.endswith("/channels"):
+            if path.startswith("/spaces/"):
+                return {"data": {"id": f"channel-{index}"}}
+            return {"id": f"channel-{index}"}
+        if path == "/_matrix/client/v3/createRoom":
+            return {"room_id": f"!room-{index}:example.org"}
+        return {"id": f"id-{index}"}
+
+    def post_form(
+        self,
+        path: str,
+        form_body: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        self.post_forms.append((path, form_body, headers))
+        if path == "/user_groups/create":
+            return {"group_id": f"group-{len(self.post_forms)}"}
+        return {"result": "success"}
+
+    def put(
+        self,
+        path: str,
+        json_body: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        self.puts.append((path, json_body, headers))
+        return {"event_id": f"event-{len(self.puts)}"}
+
+
 class DiscordNotFoundHttp:
     def __init__(self, *, channel_guild_id: str | None = None):
         self.channel_guild_id = channel_guild_id
@@ -39,6 +103,32 @@ class DiscordNotFoundHttp:
         raise HttpError("GET", f"https://discord.example.test{path}", 404, '{"message":"Unknown Guild"}')
 
 
+class ExportHttp:
+    """Recorded provider responses for authenticated export-path tests."""
+
+    def __init__(self, responses: dict[str, object]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def get(self, path: str, **_kwargs: object) -> object:
+        self.calls.append(path)
+        return self.responses[path]
+
+
+class MatrixHierarchyFallbackHttp:
+    """Simulate an older Matrix server without the space hierarchy endpoint."""
+
+    def __init__(self, state: list[dict[str, Any]]) -> None:
+        self.state = state
+        self.calls: list[str] = []
+
+    def get(self, path: str, **_kwargs: object) -> object:
+        self.calls.append(path)
+        if path.endswith("/hierarchy"):
+            raise HttpError("GET", f"https://matrix.example.test{path}", 404, "{}")
+        return self.state
+
+
 def _template_with_role() -> CommunityTemplate:
     return CommunityTemplate(
         name="Example",
@@ -47,6 +137,34 @@ def _template_with_role() -> CommunityTemplate:
             Role(id="role_admin", name="Admin", permissions=["manage_roles"]),
         ],
     )
+
+
+def _template_with_category_and_channel() -> CommunityTemplate:
+    return CommunityTemplate(
+        name="Example",
+        roles=[
+            Role(id="everyone", name="@everyone"),
+            Role(id="role_admin", name="Admin", permissions=["manage_roles"], position=1),
+        ],
+        categories=[Category(id="cat_general", name="General", position=0)],
+        channels=[
+            Channel(
+                id="chan_general",
+                name="general",
+                type="text",
+                position=0,
+                parent_id="cat_general",
+                topic="General discussion",
+            )
+        ],
+    )
+
+
+def test_every_provider_export_fails_closed_without_configured_credentials() -> None:
+    for provider_name in provider_names():
+        provider = get_provider(provider_name, RuntimeConfig())
+        with pytest.raises(ValueError):
+            provider.export_template(ExportOptions(source_id="contract-source"))
 
 
 def test_provider_helpers_parse_ints_and_require_ids() -> None:
@@ -148,6 +266,24 @@ def test_fluxer_export_drops_user_overwrites_even_when_requested() -> None:
     assert any("cannot be represented safely" in warning for warning in template.warnings)
 
 
+def test_fluxer_live_export_uses_guild_role_and_channel_routes() -> None:
+    provider = FluxerProvider(RuntimeConfig(fluxer_token="token"))
+    http = ExportHttp(
+        {
+            "/guilds/guild1": {"id": "guild1", "name": "Fluxer Guild"},
+            "/guilds/guild1/roles": {"roles": [{"id": "guild1", "name": "@everyone", "permissions": 0}]},
+            "/guilds/guild1/channels": {"channels": [{"id": "chan1", "name": "general", "type": 0}]},
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="guild1"))
+
+    assert http.calls == ["/guilds/guild1", "/guilds/guild1/roles", "/guilds/guild1/channels"]
+    assert template.name == "Fluxer Guild"
+    assert template.channels[0].name == "general"
+
+
 def test_rocket_chat_build_template_exports_rooms_and_roles() -> None:
     provider = RocketChatProvider(RuntimeConfig())
     template = provider._build_template(  # noqa: SLF001
@@ -186,6 +322,24 @@ def test_mumble_build_template_exports_voice_channels_and_groups() -> None:
     assert template.channels[0].type == "voice"
     assert template.channels[0].parent_id == template.categories[0].id
     assert template.validate() == []
+
+
+def test_mumble_live_export_reads_server_group_and_channel_routes() -> None:
+    provider = MumbleProvider(RuntimeConfig(mumble_api_token="token"))
+    http = ExportHttp(
+        {
+            "/servers/server1": {"id": "server1", "name": "Mumble Server"},
+            "/servers/server1/groups": {"groups": [{"id": "mods", "name": "Moderators", "permissions": []}]},
+            "/servers/server1/channels": {"channels": [{"id": "chan1", "name": "Lobby", "type": "voice"}]},
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="server1"))
+
+    assert http.calls == ["/servers/server1", "/servers/server1/groups", "/servers/server1/channels"]
+    assert template.name == "Mumble Server"
+    assert template.channels[0].name == "Lobby"
 
 
 def test_spacebar_uses_discord_like_template_shape() -> None:
@@ -228,6 +382,30 @@ def test_daccord_build_template_exports_space_roles_channels_and_overwrites() ->
     assert template.validate() == []
 
 
+def test_daccord_live_export_reads_space_resources_and_channel_permissions() -> None:
+    provider = DaccordProvider(RuntimeConfig(daccord_token="token"))
+    http = ExportHttp(
+        {
+            "/spaces/space1": {"data": {"id": "space1", "name": "Daccord Space"}},
+            "/spaces/space1/roles": {"data": [{"id": "space1", "name": "@everyone", "permissions": []}]},
+            "/spaces/space1/channels": {"data": [{"id": "chan1", "name": "general", "type": "text"}]},
+            "/channels/chan1/permissions": {"data": []},
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="space1"))
+
+    assert http.calls == [
+        "/spaces/space1",
+        "/spaces/space1/roles",
+        "/spaces/space1/channels",
+        "/channels/chan1/permissions",
+    ]
+    assert template.name == "Daccord Space"
+    assert template.channels[0].type == "text"
+
+
 def test_mattermost_build_template_exports_team_channels() -> None:
     provider = MattermostProvider(RuntimeConfig())
     template = provider._build_template(  # noqa: SLF001
@@ -246,6 +424,23 @@ def test_mattermost_build_template_exports_team_channels() -> None:
     assert template.validate() == []
 
 
+def test_mattermost_live_export_reads_team_and_channel_routes() -> None:
+    provider = MattermostProvider(RuntimeConfig(mattermost_token="token"))
+    http = ExportHttp(
+        {
+            "/teams/team1": {"id": "team1", "name": "engineering", "display_name": "Engineering"},
+            "/teams/team1/channels": [{"id": "chan1", "name": "town-square", "display_name": "Town Square", "type": "O"}],
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="team1"))
+
+    assert http.calls == ["/teams/team1", "/teams/team1/channels"]
+    assert template.name == "Engineering"
+    assert template.channels[0].name == "town-square"
+
+
 def test_zulip_build_template_exports_channels_and_groups() -> None:
     provider = ZulipProvider(RuntimeConfig())
     template = provider._build_template(  # noqa: SLF001
@@ -260,6 +455,267 @@ def test_zulip_build_template_exports_channels_and_groups() -> None:
     assert template.channels[0].name == "general"
     assert template.channels[0].topic == "General chat"
     assert template.validate() == []
+
+
+def test_zulip_live_export_reads_stream_and_group_routes() -> None:
+    provider = ZulipProvider(RuntimeConfig(zulip_email="bot@example.test", zulip_api_key="token"))
+    http = ExportHttp(
+        {
+            "/streams": {"streams": [{"stream_id": 1, "name": "general", "description": "General"}]},
+            "/user_groups": {"user_groups": [{"id": 2, "name": "Admins", "description": "Operators"}]},
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="zulip.example.test"))
+
+    assert http.calls == ["/streams", "/user_groups"]
+    assert template.channels[0].name == "general"
+    assert any(role.name == "Admins" for role in template.roles)
+
+
+def test_matrix_live_export_reads_space_hierarchy() -> None:
+    provider = MatrixProvider(RuntimeConfig(matrix_access_token="token"))
+    http = ExportHttp(
+        {
+            "/_matrix/client/v1/rooms/%21space%3Aexample.org/hierarchy": {
+                "rooms": [
+                    {"room_id": "!space:example.org", "room_type": "m.space", "name": "Engineering"},
+                    {"room_id": "!general:example.org", "name": "General", "topic": "Announcements"},
+                ]
+            }
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="!space:example.org"))
+
+    assert http.calls == ["/_matrix/client/v1/rooms/%21space%3Aexample.org/hierarchy"]
+    assert template.name == "Engineering"
+    assert template.channels[0].topic == "Announcements"
+
+
+def test_matrix_live_export_falls_back_to_room_state_when_hierarchy_is_unavailable() -> None:
+    provider = MatrixProvider(RuntimeConfig(matrix_access_token="token"))
+    http = MatrixHierarchyFallbackHttp(
+        [
+            {"type": "m.room.name", "content": {"name": "Incident room"}},
+            {"type": "m.room.topic", "content": {"topic": "Operational updates"}},
+        ]
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="!incident:example.org"))
+
+    assert http.calls == [
+        "/_matrix/client/v1/rooms/%21incident%3Aexample.org/hierarchy",
+        "/_matrix/client/v3/rooms/%21incident%3Aexample.org/state",
+    ]
+    assert template.name == "Incident room"
+    assert template.categories == []
+    assert template.channels[0].topic == "Operational updates"
+    assert any("Hierarchy API was unavailable (404)" in warning for warning in template.warnings)
+
+
+def test_matrix_url_helpers_preserve_host_and_escape_room_ids() -> None:
+    provider = MatrixProvider(RuntimeConfig(matrix_base_url="https://matrix.example.test:8448"))
+
+    assert provider._server_name_from_base_url() == "matrix.example.test"  # noqa: SLF001
+    assert provider._q("!space:example.org") == "%21space%3Aexample.org"  # noqa: SLF001
+
+
+def test_stoat_live_export_reads_embedded_server_roles_categories_and_channels() -> None:
+    provider = StoatProvider(RuntimeConfig(stoat_token="token"))
+    http = ExportHttp(
+        {
+            "/servers/server1": {
+                "_id": "server1",
+                "name": "Stoat Server",
+                "default_permissions": 0,
+                "roles": {"mods": {"name": "Moderators", "permissions": {"a": 0}, "rank": 1}},
+                "categories": [{"id": "cat1", "title": "General", "channels": ["chan1"]}],
+                "channels": [{"_id": "chan1", "name": "general", "channel_type": "TextChannel"}],
+            }
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="server1"))
+
+    assert http.calls == ["/servers/server1"]
+    assert template.name == "Stoat Server"
+    assert template.categories[0].name == "General"
+    assert template.channels[0].parent_id == template.categories[0].id
+    assert any(role.name == "Moderators" for role in template.roles)
+
+
+def test_rocket_chat_live_export_reads_selected_room_roles_and_workspace_info() -> None:
+    provider = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
+    http = ExportHttp(
+        {
+            "/rooms.info": {"room": {"_id": "room1", "name": "general", "t": "c"}},
+            "/roles.list": {"roles": [{"_id": "admin", "name": "admin", "permissions": ["admin"]}]},
+            "/info": {"siteName": "Rocket Workspace", "uniqueId": "workspace1"},
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions(source_id="room1"))
+
+    assert http.calls == ["/rooms.info", "/roles.list", "/info"]
+    assert template.name == "Rocket Workspace"
+    assert template.channels[0].name == "general"
+
+
+def test_rocket_chat_live_export_normalizes_channels_and_groups_and_skips_livechat() -> None:
+    provider = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
+    http = ExportHttp(
+        {
+            "/rooms.get": {
+                "channels": [{"_id": "public", "name": "general", "t": "c"}],
+                "groups": [
+                    {"_id": "private", "name": "operators", "t": "p"},
+                    {"_id": "livechat", "name": "support", "t": "l"},
+                ],
+            },
+            "/roles.list": {"roles": [{"_id": "user", "name": "user"}, {"_id": "owner", "name": "owner"}]},
+            "/info": {"siteName": "Rocket Workspace", "uniqueId": "workspace1"},
+        }
+    )
+    provider.http = http  # type: ignore[assignment]
+
+    template = provider.export_template(ExportOptions())
+
+    assert http.calls == ["/rooms.get", "/roles.list", "/info"]
+    assert [channel.name for channel in template.channels] == ["general", "operators"]
+    assert [role.name for role in template.roles] == ["@everyone", "owner"]
+
+
+def test_matrix_template_dry_run_plans_space_category_room_and_links() -> None:
+    provider = MatrixProvider(RuntimeConfig())
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_name="Example space"))
+
+    assert result.applied is False
+    assert result.id_map["space"] == "!dryMainSpace:example.org"
+    assert result.id_map["chan_general"].startswith("!dryRoom")
+    assert [action.method for action in result.actions] == ["POST", "POST", "PUT", "PUT", "POST", "PUT", "PUT"]
+    assert result.actions[0].path == "/_matrix/client/v3/createRoom"
+    assert any("global server roles" in warning for warning in result.warnings)
+
+
+def test_matrix_template_apply_uses_room_creation_and_space_link_contracts() -> None:
+    provider = MatrixProvider(RuntimeConfig(matrix_access_token="token"))
+    http = RecordingCreateHttp()
+    provider.http = http  # type: ignore[assignment]
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_name="Example space", apply=True))
+
+    assert result.applied is True
+    assert result.id_map["space"] == "!room-1:example.org"
+    assert result.id_map["chan_general"] == "!room-3:example.org"
+    assert [path for path, _body, _headers in http.posts] == [
+        "/_matrix/client/v3/createRoom",
+        "/_matrix/client/v3/createRoom",
+        "/_matrix/client/v3/createRoom",
+    ]
+    assert len(http.puts) == 4
+    assert all("/state/m.space." in path for path, _body, _headers in http.puts)
+
+
+def test_rocket_chat_template_dry_run_plans_roles_teams_and_rooms() -> None:
+    provider = RocketChatProvider(RuntimeConfig())
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_id="workspace1"))
+
+    assert result.applied is False
+    assert result.id_map["role_admin"] == "dry_role_role_admin"
+    assert result.id_map["cat_general"] == "dry_team_cat_general"
+    assert result.id_map["chan_general"] == "dry_room_chan_general"
+    assert [action.path for action in result.actions] == ["/roles.create", "/teams.create", "/channels.create"]
+
+
+def test_rocket_chat_template_apply_uses_role_team_and_room_contracts() -> None:
+    provider = RocketChatProvider(RuntimeConfig(rocket_chat_auth_token="token", rocket_chat_user_id="user"))
+    http = RecordingCreateHttp()
+    provider.http = http  # type: ignore[assignment]
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_id="workspace1", apply=True))
+
+    assert result.applied is True
+    assert result.id_map["role_admin"] == "role-1"
+    assert result.id_map["cat_general"] == "team-2"
+    assert result.id_map["chan_general"] == "room-3"
+    assert [path for path, _body, _headers in http.posts] == ["/roles.create", "/teams.create", "/channels.create"]
+    channel_payload = http.posts[-1][1]
+    assert channel_payload is not None
+    assert channel_payload["extraData"] == {"topic": "General discussion", "teamId": "team-2", "broadcast": False, "encrypted": False}
+
+
+def test_fluxer_template_apply_uses_guild_role_and_channel_contracts() -> None:
+    provider = FluxerProvider(RuntimeConfig(fluxer_token="token"))
+    http = RecordingCreateHttp()
+    provider.http = http  # type: ignore[assignment]
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_name="Example", apply=True))
+
+    assert result.applied is True
+    assert result.id_map["guild"] == "guild-1"
+    assert result.id_map["role_admin"] == "role-2"
+    assert result.id_map["cat_general"] == "channel-3"
+    assert result.id_map["chan_general"] == "channel-4"
+    assert [path for path, _body, _headers in http.posts] == [
+        "/guilds",
+        "/guilds/guild-1/roles",
+        "/guilds/guild-1/channels",
+        "/guilds/guild-1/channels",
+    ]
+
+
+def test_daccord_template_apply_uses_space_role_and_channel_contracts() -> None:
+    provider = DaccordProvider(RuntimeConfig(daccord_token="token"))
+    http = RecordingCreateHttp()
+    provider.http = http  # type: ignore[assignment]
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_name="Example", apply=True))
+
+    assert result.applied is True
+    assert result.id_map["space"] == "space-1"
+    assert result.id_map["role_admin"] == "role-2"
+    assert result.id_map["cat_general"] == "channel-3"
+    assert result.id_map["chan_general"] == "channel-4"
+    assert [path for path, _body, _headers in http.posts] == [
+        "/spaces",
+        "/spaces/space-1/roles",
+        "/spaces/space-1/channels",
+        "/spaces/space-1/channels",
+    ]
+
+
+def test_zulip_template_apply_uses_group_and_subscription_contracts() -> None:
+    provider = ZulipProvider(RuntimeConfig(zulip_email="bot@example.test", zulip_api_key="token"))
+    http = RecordingCreateHttp()
+    provider.http = http  # type: ignore[assignment]
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_id="organization", apply=True))
+
+    assert result.applied is True
+    assert result.id_map["role_admin"] == "group-1"
+    assert result.id_map["chan_general"] == "zulip_channel:general"
+    assert [path for path, _body, _headers in http.post_forms] == ["/user_groups/create", "/users/me/subscriptions"]
+
+
+def test_mattermost_template_apply_uses_team_and_channel_contracts() -> None:
+    provider = MattermostProvider(RuntimeConfig(mattermost_token="token"))
+    http = RecordingCreateHttp()
+    provider.http = http  # type: ignore[assignment]
+
+    result = provider.import_template(_template_with_category_and_channel(), ImportOptions(target_name="Example", apply=True))
+
+    assert result.applied is True
+    assert result.id_map["team"] == "team-1"
+    assert result.id_map["chan_general"] == "channel-2"
+    assert [path for path, _body, _headers in http.posts] == ["/teams", "/channels"]
 
 
 def test_discord_apply_requires_role_create_id() -> None:

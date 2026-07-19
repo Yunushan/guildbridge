@@ -14,89 +14,271 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: build release artifacts
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
+      - name: Verify public tag is based on main
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Public release tag must target a commit reachable from origin/main." >&2
+            exit 1
+          }
       - name: Verify release version
         if: github.ref_type == 'tag'
         run: python scripts/check-release-version.py --tag "${{ github.ref_name }}"
       - name: Install build tools
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install --require-hashes -r requirements/release.txt
+          python -m pip install --no-deps -e ".[dev]"
+      - name: Verify repository release controls
+        run: python scripts/check-release-controls.py
+      - name: Secret hygiene
+        run: python scripts/check-secret-hygiene.py --history
+      - name: Static security baseline
+        run: python scripts/check-security-baseline.py
+      - name: Verify live-content capability scope
+        run: python scripts/check-content-capability-scope.py
       - name: Lint
-        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py
+        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-security-baseline.py scripts/new-production-evidence-template.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/pip-audit-truststore.py
+      - name: Security lint
+        run: python -m ruff check --select S src scripts
+      - name: Exception lint
+        run: python -m ruff check --select BLE src scripts
       - name: Type check
         run: python -m mypy src
-      - name: Test
-        run: python -m pytest -q
+      - name: Test with source coverage
+        run: |
+          python -m coverage run -m pytest -q
+          python -m coverage report
       - name: Platform check
         run: python scripts/check-platform.py --require cli --format json
+      - name: Docker runtime smoke test
+        run: |
+          docker build --pull=false --tag guildbridge:${{ github.sha }} .
+          docker run --rm guildbridge:${{ github.sha }} --version
       - name: Build distributions
-        run: python -m build
+        run: |
+          rm -rf dist
+          python -m build
+      - name: Audit installed dependencies
+        run: >
+          python scripts/pip-audit-truststore.py --strict --format json
+          --output "dist/guildbridge-${{ github.ref_name }}.dependency-audit.json"
       - name: Check distributions
-        run: python -m twine check dist/*
-      - name: Verify wheel install
-        run: python scripts/verify-dist.py
+        run: python -m twine check dist/*.whl dist/*.tar.gz
+      - name: Verify wheel install and generate SPDX SBOM
+        run: python scripts/verify-dist.py --sbom-out "dist/guildbridge-${{ github.ref_name }}.spdx.json"
+      - name: Create distribution checksums
+        run: (cd dist && sha256sum * > SHA256SUMS)
       - name: Upload distributions
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: guildbridge-dist
-          path: dist/*
+          path: |
+            dist/*
           if-no-files-found: error
+      - name: Attest Python distributions
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: dist/*
 
   windows-artifacts:
     name: build Windows installers
     runs-on: windows-2025-vs2026
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
+      - name: Verify public tag is based on main
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Public release tag must target a commit reachable from origin/main."
+          }
       - name: Verify release version
         if: github.ref_type == 'tag'
         run: python scripts/check-release-version.py --tag "${{ github.ref_name }}"
       - name: Install Python build tools
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,windows-build]"
+          python -m pip install --require-hashes -r requirements/release.txt
+          python -m pip install --no-deps -e ".[dev,windows-build]"
       - name: Install WiX Toolset
         run: |
-          dotnet tool install --global wix --version 7.*
+          dotnet tool install --global wix --version 7.0.0
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Build Windows ZIP and MSI
+        shell: pwsh
         run: .\scripts\build-windows-dist.ps1 -WixEulaId wix7
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v7
+      - name: Upload unsigned Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: guildbridge-windows
+          name: guildbridge-windows-unsigned
           path: |
             dist/GuildBridge-*-windows-x64.zip
             dist/GuildBridge-*-windows-x64.msi
           if-no-files-found: error
 
+  sign-windows-artifacts:
+    name: sign Windows installers
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: windows-2025-vs2026
+    needs: windows-artifacts
+    environment: production-release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require protected signing materials
+        shell: pwsh
+        env:
+          GUILDBRIDGE_CODESIGN_PFX_BASE64: ${{ secrets.GUILDBRIDGE_CODESIGN_PFX_BASE64 }}
+          GUILDBRIDGE_CODESIGN_PFX_PASSWORD: ${{ secrets.GUILDBRIDGE_CODESIGN_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GUILDBRIDGE_CODESIGN_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:GUILDBRIDGE_CODESIGN_PFX_PASSWORD)) {
+            throw "Public tag releases require protected GUILDBRIDGE_CODESIGN_PFX_BASE64 and GUILDBRIDGE_CODESIGN_PFX_PASSWORD secrets in production-release."
+          }
+      - name: Download unsigned Windows artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: guildbridge-windows-unsigned
+          path: signed-windows
+      - name: Prepare code-signing certificate
+        shell: pwsh
+        env:
+          GUILDBRIDGE_CODESIGN_PFX_BASE64: ${{ secrets.GUILDBRIDGE_CODESIGN_PFX_BASE64 }}
+        run: |
+          [IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP 'guildbridge-signing.pfx'), [Convert]::FromBase64String($env:GUILDBRIDGE_CODESIGN_PFX_BASE64))
+      - name: Sign and verify Windows ZIP and MSI
+        shell: pwsh
+        env:
+          GUILDBRIDGE_CODESIGN_PFX_PASSWORD: ${{ secrets.GUILDBRIDGE_CODESIGN_PFX_PASSWORD }}
+        run: .\scripts\sign-windows-release.ps1 -ArtifactsDir signed-windows -CodeSigningCertificatePath (Join-Path $env:RUNNER_TEMP 'guildbridge-signing.pfx')
+      - name: Remove ephemeral signing certificate
+        if: always()
+        shell: pwsh
+        run: Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'guildbridge-signing.pfx') -Force -ErrorAction SilentlyContinue
+      - name: Upload signed Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: guildbridge-windows
+          path: |
+            signed-windows/GuildBridge-*-windows-x64.zip
+            signed-windows/GuildBridge-*-windows-x64.msi
+            signed-windows/SHA256SUMS-windows.txt
+          if-no-files-found: error
+      - name: Attest signed Windows installers
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: |
+            signed-windows/GuildBridge-*-windows-x64.zip
+            signed-windows/GuildBridge-*-windows-x64.msi
+            signed-windows/SHA256SUMS-windows.txt
+
   publish-release:
     name: publish GitHub release assets
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
-    needs: [build, windows-artifacts]
+    needs: [build, sign-windows-artifacts]
+    environment: production-release
     permissions:
       actions: read
+      attestations: read
       contents: write
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v7
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Install production evidence validator
+        run: |
+          python -m pip install --require-hashes -r requirements/release.txt
+          python -m pip install --no-deps .
+      - name: Download Python distributions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: guildbridge-dist
           path: release-assets
-          merge-multiple: true
+      - name: Download signed Windows artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: guildbridge-windows
+          path: release-assets
       - name: List release assets
         run: find release-assets -type f -maxdepth 1 -print | sort
+      - name: Verify build provenance attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for asset in \
+            release-assets/guildbridge-*.whl \
+            release-assets/guildbridge-*.tar.gz \
+            release-assets/guildbridge-*.spdx.json \
+            release-assets/guildbridge-*.dependency-audit.json \
+            release-assets/GuildBridge-*-windows-x64.zip \
+            release-assets/GuildBridge-*-windows-x64.msi \
+            release-assets/SHA256SUMS \
+            release-assets/SHA256SUMS-windows.txt; do
+            gh attestation verify "$asset" \
+              --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG_NAME" \
+              --source-digest "$SOURCE_COMMIT" \
+              --deny-self-hosted-runners
+          done
+      - name: Verify private production evidence
+        env:
+          GUILDBRIDGE_PRODUCTION_EVIDENCE_JSON: ${{ secrets.GUILDBRIDGE_PRODUCTION_EVIDENCE_JSON }}
+          TAG_NAME: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          if [ -z "$GUILDBRIDGE_PRODUCTION_EVIDENCE_JSON" ]; then
+            echo "GUILDBRIDGE_PRODUCTION_EVIDENCE_JSON must be configured in the protected production-release environment." >&2
+            exit 1
+          fi
+          evidence_file="$RUNNER_TEMP/guildbridge-production-evidence.json"
+          printf '%s' "$GUILDBRIDGE_PRODUCTION_EVIDENCE_JSON" > "$evidence_file"
+          python scripts/check-production-evidence.py --evidence "$evidence_file" --tag "$TAG_NAME" --expected-commit "$SOURCE_COMMIT"
+          python scripts/check-release-assets.py --assets-dir release-assets --evidence "$evidence_file"
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

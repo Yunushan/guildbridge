@@ -188,6 +188,8 @@ def test_build_content_command_args() -> None:
 
     migrate_args = build_content_migrate_args(
         "stoat",
+        provider_from="fluxer",
+        content_archive="fluxer.content.json",
         source_id="guild",
         download_discord_chat_exporter=True,
         discord_chat_exporter_version="latest",
@@ -197,7 +199,7 @@ def test_build_content_command_args() -> None:
         message_limit="10",
         content_thread_mode="channel",
     )
-    assert migrate_args[:5] == ["content-migrate", "--from", "discord", "--source-id", "guild"]
+    assert migrate_args[:7] == ["content-migrate", "--from", "fluxer", "--content-archive", "fluxer.content.json", "--source-id", "guild"]
     assert migrate_args[migrate_args.index("--source-id") + 1] == "guild"
     assert "--download-discord-chat-exporter" in migrate_args
     assert "--apply" in migrate_args

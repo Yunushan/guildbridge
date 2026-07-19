@@ -17,6 +17,7 @@ from tkinter import (
     Listbox,
     PhotoImage,
     StringVar,
+    TclError,
     Tk,
     Toplevel,
     filedialog,
@@ -174,7 +175,7 @@ class GuildBridgeGUI(ttk.Frame):
             with resources.as_file(png_resource) as png_path:
                 self.icon_image = PhotoImage(file=str(png_path))
             self.root.iconphoto(True, self.icon_image)
-        except Exception:
+        except (FileNotFoundError, ModuleNotFoundError, OSError, TclError):
             self.icon_image = None
         if sys.platform == "win32":
             try:
@@ -182,7 +183,8 @@ class GuildBridgeGUI(ttk.Frame):
                 with resources.as_file(ico_resource) as ico_path:
                     self.root.iconbitmap(str(ico_path))
                     self.root.iconbitmap(default=str(ico_path))
-            except Exception:
+            except (FileNotFoundError, ModuleNotFoundError, OSError, TclError):
+                # The PNG icon remains available when a Windows ICO cannot be loaded.
                 pass
 
     def _build(self) -> None:
@@ -221,7 +223,8 @@ class GuildBridgeGUI(ttk.Frame):
         palette = GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])
         try:
             self.style.theme_use("clam")
-        except Exception:
+        except TclError:
+            # Keep the platform default ttk theme when clam is unavailable.
             pass
 
         self.master["background"] = palette["bg"]
@@ -361,7 +364,8 @@ class GuildBridgeGUI(ttk.Frame):
                     colorref = ctypes.c_int(self._windows_colorref(color))
                     dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(colorref), ctypes.sizeof(colorref))
             ctypes.windll.user32.RedrawWindow(hwnds[-1], None, None, 0x0400 | 0x0100 | 0x0001)
-        except Exception:
+        except (AttributeError, OSError, ValueError):
+            # Older Windows builds can reject DWM title-bar attributes.
             pass
 
     def _refresh_windows_titlebar(self) -> None:
@@ -509,11 +513,13 @@ class GuildBridgeGUI(ttk.Frame):
         if self.icon_image is not None:
             try:
                 dialog.iconphoto(False, self.icon_image)
-            except Exception:
+            except TclError:
+                # Some window managers reject icon updates for transient dialogs.
                 pass
         try:
             dialog.configure(background=GUI_THEMES.get(self.theme.get(), GUI_THEMES["Light"])["bg"])
-        except Exception:
+        except TclError:
+            # The dialog can be destroyed while a theme update is in progress.
             pass
 
         body = ttk.Frame(dialog, padding=12)
@@ -522,12 +528,15 @@ class GuildBridgeGUI(ttk.Frame):
         ttk.Label(
             body,
             text=(
-                "Paste provider tokens here to save them in a local GuildBridge .env file. "
+                "Paste provider tokens here to save them in your system credential store. "
                 "GuildBridge cannot read Discord or Stoat browser sessions directly."
             ),
             wraplength=620,
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Label(body, text=f"Save location: {target}").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
+        ttk.Label(
+            body,
+            text=f"Credential store: system keychain. Legacy non-secret settings remain in {target}",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
 
         entries: list[tuple[TokenField, StringVar]] = []
         row = 2
@@ -554,7 +563,8 @@ class GuildBridgeGUI(ttk.Frame):
                 return
             if not messagebox.askyesno(
                 "Save tokens",
-                f"Save {len(updates)} value(s) to this local file?\n\n{target}\n\nToken values will not be shown in output.",
+                f"Save {len(updates)} credential(s) to your system credential store?\n\n"
+                "Token values will not be shown in output or written to the GUI .env file.",
                 icon="warning",
                 parent=dialog,
             ):
@@ -562,11 +572,13 @@ class GuildBridgeGUI(ttk.Frame):
             try:
                 saved = write_env_values(updates, env_file=target)
                 load_env_files((saved,))
-            except Exception as exc:
+            except (OSError, UnicodeError, ValueError) as exc:
                 messagebox.showerror("Configure Tokens", f"Could not save token configuration:\n{exc}", parent=dialog)
                 return
-            self._append_output(f"Token configuration saved to {saved}. Values are hidden.\n")
-            messagebox.showinfo("Configure Tokens", "Token configuration saved. Restart is not required.", parent=dialog)
+            self._append_output(f"Credentials saved to the system credential store. Legacy file: {saved}.\n")
+            messagebox.showinfo(
+                "Configure Tokens", "Credentials saved to the system credential store. Restart is not required.", parent=dialog
+            )
             dialog.destroy()
 
         ttk.Button(actions, text="Cancel", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
@@ -680,6 +692,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _prepare_selected_content_target(
         self,
+        source_provider: StringVar,
         provider_to: Listbox,
         discord_export_out: StringVar,
         archive_file: StringVar,
@@ -700,6 +713,7 @@ class GuildBridgeGUI(ttk.Frame):
         content_incremental.set(True)
         content_continue_on_error.set(True)
         self._fill_content_paths(
+            source_provider.get(),
             self._selected_providers(provider_to),
             discord_export_out,
             archive_file,
@@ -716,6 +730,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _fill_content_paths(
         self,
+        source_provider: str,
         target_providers: list[str],
         discord_export_out: StringVar,
         archive_file: StringVar,
@@ -729,13 +744,19 @@ class GuildBridgeGUI(ttk.Frame):
         content_incremental_state: StringVar,
         content_thread_archive_dir: StringVar,
     ) -> None:
-        paths = content_artifact_paths(default_migration_artifact_dir(), target_providers=target_providers)
+        source_name = source_provider.strip().lower() or "discord"
+        paths = content_artifact_paths(
+            default_migration_artifact_dir(), source_provider=source_name, target_providers=target_providers
+        )
         self._ensure_file_parent(paths["archive_out"])
-        self._ensure_directory(paths["discord_export_out"])
         self._ensure_directory(paths["content_thread_archive_dir"])
-        discord_export_out.set(paths["discord_export_out"])
+        if source_name == "discord":
+            self._ensure_directory(paths["discord_export_out"])
+            discord_export_out.set(paths["discord_export_out"])
+            archive_file.set(paths["archive_out"])
+        else:
+            discord_export_out.set("")
         archive_out.set(paths["archive_out"])
-        archive_file.set(paths["archive_out"])
         plan_out.set(paths["plan_out"])
         plan_in.set("")
         content_journal_out.set(paths["content_journal_out"])
@@ -780,6 +801,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _prepare_content_discord_stoat_wizard(
         self,
+        source_provider: StringVar,
         provider_to: Listbox,
         discord_export_out: StringVar,
         archive_file: StringVar,
@@ -800,6 +822,7 @@ class GuildBridgeGUI(ttk.Frame):
         content_continue_on_error: BooleanVar,
         content_parallel_sends: StringVar,
     ) -> None:
+        source_provider.set("discord")
         self._select_only_provider(provider_to, "stoat")
         native_content.set(True)
         ferry_parity.set(True)
@@ -809,6 +832,7 @@ class GuildBridgeGUI(ttk.Frame):
         content_continue_on_error.set(True)
         content_parallel_sends.set("3")
         self._fill_content_paths(
+            "discord",
             ["stoat"],
             discord_export_out,
             archive_file,
@@ -1271,6 +1295,7 @@ class GuildBridgeGUI(ttk.Frame):
 
     def _content_tab(self, parent: ttk.Notebook) -> ttk.Frame:
         tab, frame = self._new_tab(parent)
+        content_source_provider = StringVar(value="discord")
         discord_export = StringVar()
         discord_source_id = StringVar()
         discord_client_id = StringVar()
@@ -1313,10 +1338,11 @@ class GuildBridgeGUI(ttk.Frame):
         content_incremental = BooleanVar(value=False)
         content_continue_on_error = BooleanVar(value=False)
 
-        provider_to = self._provider_listbox(frame, "To", 0, ("stoat",))
+        self._option_combo(frame, "Content source", 0, content_source_provider, tuple(self.providers))
+        provider_to = self._provider_listbox(frame, "To", 1, ("stoat",))
         row = self._fields(
             frame,
-            1,
+            2,
             (
                 Field("DiscordChatExporter file/folder", discord_export, "folder"),
                 Field("Discord guild/server ID", discord_source_id),
@@ -1371,6 +1397,7 @@ class GuildBridgeGUI(ttk.Frame):
             assistant,
             text="Prepare Selected Target",
             command=lambda: self._prepare_selected_content_target(
+                content_source_provider,
                 provider_to,
                 discord_export_out,
                 archive_file,
@@ -1392,6 +1419,7 @@ class GuildBridgeGUI(ttk.Frame):
             assistant,
             text="Discord -> Stoat Preset",
             command=lambda: self._prepare_content_discord_stoat_wizard(
+                content_source_provider,
                 provider_to,
                 discord_export_out,
                 archive_file,
@@ -1417,6 +1445,7 @@ class GuildBridgeGUI(ttk.Frame):
             assistant,
             text="Fill Paths",
             command=lambda: self._prepare_selected_content_target(
+                content_source_provider,
                 provider_to,
                 discord_export_out,
                 archive_file,
@@ -1456,8 +1485,10 @@ class GuildBridgeGUI(ttk.Frame):
         ).grid(row=1, column=0, sticky="w", padx=8, pady=8)
         ttk.Button(
             assistant,
-            text="Check Discord Access",
-            command=lambda: self._check_discord_access(discord_source_id.get()),
+            text="Check Source Access",
+            command=lambda: self._check_provider_access(
+                content_source_provider.get(), discord_source_id.get(), "Check source access"
+            ),
         ).grid(row=1, column=1, sticky="w", padx=8, pady=8)
         ttk.Button(
             assistant,
@@ -1510,7 +1541,7 @@ class GuildBridgeGUI(ttk.Frame):
 
         ttk.Button(
             actions,
-            text="Export Archive",
+            text="Export Discord Archive",
             command=lambda: self._run_export_with_source_guard(
                 build_content_export_args(
                     discord_chat_export=discord_export.get(),
@@ -1545,6 +1576,8 @@ class GuildBridgeGUI(ttk.Frame):
             command=lambda: self._run_migrate_with_source_guard(
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
+                    provider_from=content_source_provider.get(),
+                    content_archive=archive_file.get(),
                     discord_chat_export=discord_export.get(),
                     source_id=discord_source_id.get(),
                     discord_chat_exporter_bin=discord_exporter_bin.get(),
@@ -1555,7 +1588,7 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_export_out=discord_export_out.get(),
                     **content_options(apply=False, reviewed=False),
                 ),
-                provider_from="discord",
+                provider_from=content_source_provider.get(),
                 source_id=discord_source_id.get(),
                 plan_out=plan_out.get(),
             ),
@@ -1587,6 +1620,8 @@ class GuildBridgeGUI(ttk.Frame):
             command=lambda: self._run_apply_with_source_guard(
                 build_content_migrate_args(
                     self._selected_providers(provider_to),
+                    provider_from=content_source_provider.get(),
+                    content_archive=archive_file.get(),
                     discord_chat_export=discord_export.get(),
                     source_id=discord_source_id.get(),
                     discord_chat_exporter_bin=discord_exporter_bin.get(),
@@ -1597,13 +1632,13 @@ class GuildBridgeGUI(ttk.Frame):
                     discord_export_out=discord_export_out.get(),
                     **content_options(apply=True, reviewed=True),
                 ),
-                provider_from="discord",
+                provider_from=content_source_provider.get(),
                 source_id=discord_source_id.get(),
                 reviewed_plan=plan_in.get(),
                 plan_out=plan_out.get(),
                 apply_prompt=ApplyPrompt(
                     operation="Content migrate",
-                    source_provider="discord",
+                    source_provider=content_source_provider.get(),
                     target_providers=tuple(self._selected_providers(provider_to)),
                     target_id=target_id.get(),
                     target_name=target_name.get(),
@@ -1611,6 +1646,7 @@ class GuildBridgeGUI(ttk.Frame):
             ),
         ).grid(row=1, column=2, sticky="e")
         self._fill_content_paths(
+            content_source_provider.get(),
             self._selected_providers(provider_to),
             discord_export_out,
             archive_file,
@@ -1863,7 +1899,7 @@ class GuildBridgeGUI(ttk.Frame):
 def main() -> int:
     try:
         root = Tk()
-    except Exception as exc:
+    except TclError as exc:
         print(f"guildbridge-gui: unable to start Tkinter GUI: {exc}")
         return 1
     GuildBridgeGUI(root)

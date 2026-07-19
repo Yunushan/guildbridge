@@ -21,7 +21,7 @@ from guildbridge.content import (
     metadata_first,
     resolve_content_asset_path,
 )
-from guildbridge.http import HttpClient, HttpError, sanitize_text
+from guildbridge.http import HttpClient, HttpError, HttpTransportError, sanitize_text
 from guildbridge.models import (
     Action,
     Category,
@@ -72,7 +72,7 @@ class DiscordProvider(Provider):
     name = "discord"
     aliases: tuple[str, ...] = ("disc",)
     provider_label = "Discord"
-    token_env_hint = "DISCORD_BOT_TOKEN or DISCORD_TOKEN"
+    token_env_hint = "DISCORD_BOT_TOKEN or DISCORD_TOKEN"  # noqa: S105 - public environment-variable names.
 
     def __init__(self, config: RuntimeConfig):
         super().__init__(config)
@@ -248,7 +248,7 @@ class DiscordProvider(Provider):
     def _guild_id_for_channel(self, channel_id: str) -> str | None:
         try:
             channel = self.http.get(f"/channels/{channel_id}", retries=0)
-        except Exception:
+        except (HttpError, HttpTransportError):
             return None
         if not isinstance(channel, dict):
             return None

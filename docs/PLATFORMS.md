@@ -17,7 +17,7 @@ GuildBridge separates platform support into explicit tiers:
 |---|---|---|---|---|---|---|
 | Windows | Windows | CI tested | Tk desktop supported | local/LAN browser supported | GitHub Actions `windows-2025-vs2026`; self-hosted `windows-10`, `windows-11` | Python 3.10+, Git |
 | Windows Server | Windows | install documented plus CI compatibility | Desktop Experience only | local/LAN browser supported | GitHub Actions `windows-2022`; self-hosted `windows-server-2019`, `windows-server-2026` | Python 3.10+, Git |
-| Debian | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitLab `python:3.12` Debian image | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
+| Debian | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitLab digest-pinned Python 3.14 Debian image | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | Ubuntu | Debian | CI tested | `python3-tk` desktop supported | local/LAN browser supported | GitHub Actions `ubuntu-24.04`; self-hosted `ubuntu-26.04` | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | Linux Mint | Debian | install-script supported | `python3-tk` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-venv python3-tk git ca-certificates` |
 | RHEL | RHEL | install-script supported | `python3-tkinter` desktop supported | local/LAN browser supported | no project CI | `python3 python3-pip python3-tkinter git ca-certificates` |
@@ -118,6 +118,16 @@ python scripts/check-platform.py --require cli --format json
 The desktop GUI needs a desktop session and Tkinter. Headless servers can still use the CLI and web GUI without Tkinter display access.
 Android and iOS are browser-client targets first. iOS does not provide Tkinter for normal app workflows; run `guildbridge-web` on a trusted desktop/server and open it from Safari, or use an iOS Python runtime that can run a local HTTP server.
 
+## Live Content Migration Scope
+
+Structural template migration supports every documented provider direction. Live message-content migration accepts a private GuildBridge content archive tagged with any registered source provider, then plans or applies it to the supported content-import targets. Discord is the only provider with built-in direct offline export conversion, through an existing DiscordChatExporter archive or a locally executed DiscordChatExporter CLI. Live imports are supported for Discord, Fluxer, Stoat, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mattermost, and Zulip. Mumble live-content import is not implemented.
+
+Run the guard below before a release when content capabilities change:
+
+```bash
+python scripts/check-content-capability-scope.py
+```
+
 ## GUI
 
 Launch the desktop GUI with:
@@ -151,7 +161,7 @@ The desktop GUI exposes separate **Dry-run Check** and **Actual Run** buttons fo
 To allow another device on the same trusted network to connect:
 
 ```bash
-guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "choose-a-long-random-token"
+guildbridge-web --host 0.0.0.0 --port 8765 --allow-lan --auth-token "choose-a-long-random-token" --tls-cert /secure/guildbridge-cert.pem --tls-key /secure/guildbridge-key.pem
 ```
 
-If `--allow-lan` is used without `--auth-token`, GuildBridge generates a token and prints it once at startup. Request logs do not include the token; share it out-of-band only with devices that should control the migration UI.
+LAN mode requires `--auth-token` (or `GUILDBRIDGE_WEB_AUTH_TOKEN`) and a TLS certificate/key. Open the one-time authenticated URL only over HTTPS; GuildBridge then redirects to a token-free URL and uses an HttpOnly, Secure, same-site session cookie. Share the token only out-of-band with devices that should control the migration UI.

@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [{name = "GuildBridge contributors"}]
 keywords = ["discord", "fluxer", "stoat", "spacebar", "daccord", "matrix", "element", "rocket.chat", "mumble", "mattermost", "zulip", "migration", "template", "community", "server"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Environment :: Web Environment",
   "Intended Audience :: Developers",
@@ -31,6 +31,10 @@ classifiers = [
   "Topic :: Utilities",
 ]
 dependencies = [
+  "keyring>=25.6.0",
+  # Keep the Linux Keyring backend closure in the cross-platform release lock.
+  "SecretStorage>=3.2",
+  "jeepney>=0.4.2",
   "requests>=2.31.0",
   "python-dotenv>=1.0.0",
 ]
@@ -38,11 +42,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "build>=1.2.1",
+  "coverage>=7.6.0",
   "pytest>=8.0.0",
   "jsonschema>=4.22.0",
   "ruff>=0.5.0",
   "mypy>=1.10.0",
   "twine>=5.1.0",
+  "pip-audit>=2.7.3",
+  "truststore>=0.10.0",
   "types-requests>=2.31.0",
 ]
 windows-build = [
@@ -79,6 +86,14 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/guildbridge"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
 
 [tool.mypy]
 python_version = "3.10"
