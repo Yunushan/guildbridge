@@ -8,7 +8,7 @@
 
 Uyeleri, mesajlari, DM'leri, token'lari veya ham kullanici kimliklerini acik kaynak sablonlara koymadan topluluk yapisini ice aktarir, disa aktarir, redakte eder, dogrular ve tasir.
 
-![python](https://img.shields.io/badge/python-3.10%2B-blue) ![license](https://img.shields.io/badge/license-MIT-blue) ![build](https://img.shields.io/badge/build-ready-brightgreen) ![privacy](https://img.shields.io/badge/privacy-redacted_by_default-success)
+![python](https://img.shields.io/badge/python-3.10%2B-blue) ![license](https://img.shields.io/badge/license-0BSD-blue) ![build](https://img.shields.io/badge/build-ready-brightgreen) ![privacy](https://img.shields.io/badge/privacy-redacted_by_default-success)
 
 **dil** [English](README.md) · [Turkce](README.tr.md)
 
@@ -801,4 +801,4 @@ Pull request'ler memnuniyetle karsilanir. Saglayiciya ozel API farkliliklarini p
 
 ## Lisans
 
-MIT. [LICENSE](LICENSE) dosyasina bakin.
+0BSD. [LICENSE](LICENSE) dosyasina bakin.
