@@ -8,7 +8,7 @@ version = "1.0.9"
 description = "Privacy-first server/community template importer-exporter for Discord, Fluxer, Stoat, Spacebar, Daccord, Matrix/Element, Rocket.Chat, Mumble, Mattermost, and Zulip."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "0BSD"
 license-files = ["LICENSE"]
 authors = [{name = "GuildBridge contributors"}]
 keywords = ["discord", "fluxer", "stoat", "spacebar", "daccord", "matrix", "element", "rocket.chat", "mumble", "mattermost", "zulip", "migration", "template", "community", "server"]
