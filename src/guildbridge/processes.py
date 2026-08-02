@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-from pathlib import Path
 from typing import Any
 
 
@@ -24,11 +23,13 @@ def terminate_process_tree(process: Any) -> None:
         return
     try:
         if os.name == "nt":
-            system_root = Path(os.environ.get("SystemRoot", r"C:\\Windows"))
-            taskkill = system_root / "System32" / "taskkill.exe"
+            # Use os.path so tests can emulate Windows on POSIX without
+            # pathlib selecting the host-incompatible WindowsPath class.
+            system_root = os.environ.get("SystemRoot", r"C:\\Windows")
+            taskkill = os.path.join(system_root, "System32", "taskkill.exe")
             # taskkill /T is the Windows equivalent of killing an isolated POSIX process group.
             subprocess.run(  # noqa: S603
-                [str(taskkill), "/PID", str(process.pid), "/T", "/F"],
+                [taskkill, "/PID", str(process.pid), "/T", "/F"],
                 capture_output=True,
                 check=False,
                 timeout=10,

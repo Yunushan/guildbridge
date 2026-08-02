@@ -23,8 +23,8 @@ class _Process:
 
 def test_process_group_kwargs_selects_windows_process_group(monkeypatch) -> None:
     monkeypatch.setattr(processes.os, "name", "nt")
-    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)
-    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x8000000)
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x8000000, raising=False)
 
     assert processes.process_group_kwargs() == {"creationflags": 0x8000200}
 
