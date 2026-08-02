@@ -1862,7 +1862,7 @@ class GuildBridgeGUI(ttk.Frame):
     def _worker(self, args: list[str]) -> None:
         try:
             result = run_cli_args(args)
-        except Exception as exc:  # pragma: no cover - defensive boundary for worker failures
+        except Exception as exc:  # noqa: BLE001 - worker boundary must surface unexpected failures in the GUI.
             result = CommandResult(
                 args=tuple(args),
                 command=(),
