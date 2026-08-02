@@ -119,7 +119,14 @@ def main(argv: list[str] | None = None) -> int:
         default_branch_commit = _gh_api(f"repos/{args.repo}/commits/{default_branch}")
         default_branch_commit_sha = _string(default_branch_commit.get("sha"))
         if args.expected_commit is not None and default_branch_commit_sha != args.expected_commit:
-            raise RuntimeError("the expected release commit does not match the current default-branch commit")
+            comparison = _gh_api(
+                f"repos/{args.repo}/compare/{args.expected_commit}...{default_branch}"
+            )
+            comparison_status = _string(comparison.get("status"))
+            if comparison_status not in {"identical", "ahead"}:
+                raise RuntimeError(
+                    "the expected release commit is not reachable from the current default-branch history"
+                )
         protection = _gh_api(f"repos/{args.repo}/branches/{default_branch}/protection")
         environment = _gh_api(f"repos/{args.repo}/environments/{args.environment}")
         deployment_policies = _gh_api(
@@ -254,6 +261,7 @@ def _atomic_json_write(path: Path, data: dict[str, object]) -> None:
         try:
             os.unlink(temporary_name)
         except FileNotFoundError:
+            # The failed write may already have removed the temporary receipt.
             pass
         raise
 
@@ -488,7 +496,7 @@ def _validate_release_tag_protection(
             "release tag ruleset for refs/tags/v* must not grant bypass to an organization administrator, "
             "enterprise owner/role, or repository role"
         )
-    authorized_bypass = any(
+    authorized_bypass = bool(bypass_actors) and all(
         _string(actor.get("actor_type")) == "User"
         and _integer(actor.get("actor_id")) == release_author_id
         and _string(actor.get("bypass_mode")) == "always"

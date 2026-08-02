@@ -1353,6 +1353,7 @@ def _download_remote_content_asset(
                     try:
                         os.unlink(temporary_name)
                     except FileNotFoundError:
+                        # The failed download may already have removed the temporary asset.
                         pass
                     raise
             finally:
@@ -1674,9 +1675,8 @@ def run_discord_chat_exporter(options: DiscordChatExporterOptions) -> Path:
         stdout, stderr = process.communicate(timeout=max(1, options.timeout_seconds))
     except subprocess.TimeoutExpired as exc:
         terminate_process_tree(process)
-        stdout, stderr = process.communicate()
-        stdout = stdout or _redact_process_output(_text_output(exc.stdout), token)
-        stderr = stderr or _redact_process_output(_text_output(exc.stderr), token)
+        # Drain the pipes after termination; timeout output is intentionally not surfaced.
+        process.communicate()
         raise ValueError(
             f"DiscordChatExporter timed out after {max(1, options.timeout_seconds)} seconds."
         ) from exc

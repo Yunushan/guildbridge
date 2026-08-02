@@ -48,4 +48,5 @@ def terminate_process_tree(process: Any) -> None:
         try:
             process.kill()
         except OSError:
+            # The process may have exited between the fallback attempts.
             pass

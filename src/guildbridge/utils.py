@@ -73,6 +73,7 @@ def atomic_write_text(path: str | Path, text: str) -> None:
         try:
             os.unlink(temporary_name)
         except FileNotFoundError:
+            # The failed write may already have removed the temporary file.
             pass
         raise
 
@@ -96,6 +97,7 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
         try:
             os.unlink(temporary_name)
         except FileNotFoundError:
+            # The failed write may already have removed the temporary file.
             pass
         raise
 

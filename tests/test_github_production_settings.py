@@ -254,6 +254,30 @@ def test_validate_settings_requires_the_authorized_release_user_to_bypass_tag_ru
     )
 
 
+def test_validate_settings_rejects_an_extra_release_tag_bypass_actor() -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+    rulesets = _valid_tag_rulesets()
+    rulesets[0]["bypass_actors"].append({"actor_id": 999, "actor_type": "User", "bypass_mode": "always"})
+
+    errors = module.validate_settings(
+        repository,
+        protection,
+        environment,
+        secrets,
+        deployment_policies=deployment_policies,
+        release_author_id=2,
+        rulesets=rulesets,
+        default_branch_commit_sha="a" * 40,
+        codeql_analyses=_valid_codeql_analyses(),
+    )
+
+    assert (
+        "release tag ruleset for refs/tags/v* must grant always-on bypass only to the authorized release user"
+        in errors
+    )
+
+
 def test_validate_settings_rejects_broad_tag_ruleset_bypass() -> None:
     module = _module()
     repository, protection, environment, secrets, deployment_policies = _valid_settings()

@@ -91,6 +91,7 @@ class ApplyMigrationLock:
             try:
                 self.path.unlink()
             except FileNotFoundError:
+                # Recovery cleanup is idempotent if the lock disappeared concurrently.
                 pass
             raise
         self._created = True
@@ -107,6 +108,7 @@ class ApplyMigrationLock:
             try:
                 self.path.unlink()
             except FileNotFoundError:
+                # Normal exit cleanup is idempotent if another recovery removed the lock.
                 pass
 
 
