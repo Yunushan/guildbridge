@@ -60,3 +60,9 @@ def test_history_pattern_is_a_valid_git_ere() -> None:
     )
 
     assert completed.returncode in (0, 1), completed.stderr
+
+
+def test_gitignore_does_not_hide_generic_private_artifact_names() -> None:
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    assert "/test" not in gitignore.splitlines()

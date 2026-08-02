@@ -47,11 +47,11 @@ jobs:
             runner_os: Linux
             runner_label: ubuntu-26.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ inputs.python_version }}
       - name: Show runner identity
@@ -61,7 +61,7 @@ jobs:
           python -m pip install --require-hashes -r requirements/release.txt
           python -m pip install --no-deps -e ".[dev]"
       - name: Lint
-        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-release-controls.py scripts/check-secret-hygiene.py scripts/check-security-baseline.py scripts/new-production-evidence-template.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/pip-audit-truststore.py
+        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-release-controls.py scripts/check-secret-hygiene.py scripts/check-security-baseline.py scripts/new-production-evidence-template.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/check-operations-readiness.py scripts/pip-audit-truststore.py
       - name: Security lint
         run: python -m ruff check --select S src scripts
       - name: Exception lint
@@ -71,7 +71,7 @@ jobs:
       - name: Test with source coverage
         run: |
           python -m coverage run -m pytest -q
-          python -m coverage report
+          python -m coverage report --fail-under=80
       - name: Verify repository release controls
         run: python scripts/check-release-controls.py
       - name: Secret hygiene
@@ -82,3 +82,5 @@ jobs:
         run: python scripts/check-platform.py --require cli --format json
       - name: Verify live-content capability scope
         run: python scripts/check-content-capability-scope.py
+      - name: Verify operations runbook
+        run: python scripts/check-operations-readiness.py

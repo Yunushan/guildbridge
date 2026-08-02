@@ -31,11 +31,15 @@ class FakeResponse:
         self._body = body
         self.headers = headers or {}
         self.content = text.encode("utf-8") if text else (b"{}" if body is not None else b"")
+        self.closed = False
 
     def json(self) -> Any:
         if self._body is None:
             raise ValueError("no json")
         return self._body
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeSession:
@@ -70,10 +74,12 @@ def test_http_rejects_remote_plain_http_absolute_request() -> None:
 
 
 def test_http_retries_retryable_status_and_returns_json() -> None:
+    temporary = FakeResponse(503, text="temporary")
+    successful = FakeResponse(200, body={"ok": True})
     session = FakeSession(
         [
-            FakeResponse(503, text="temporary"),
-            FakeResponse(200, body={"ok": True}),
+            temporary,
+            successful,
         ]
     )
     sleeps: list[float] = []
@@ -83,6 +89,8 @@ def test_http_retries_retryable_status_and_returns_json() -> None:
     assert client.get("/thing") == {"ok": True}
     assert len(session.calls) == 2
     assert len(sleeps) == 1
+    assert temporary.closed is True
+    assert successful.closed is True
 
 
 def test_http_retries_transport_errors_before_failing() -> None:
@@ -113,6 +121,39 @@ def test_http_error_sanitizes_response_text() -> None:
 
     assert "secret-token" not in str(exc_info.value)
     assert "[redacted]" in str(exc_info.value)
+
+
+def test_http_does_not_retry_non_idempotent_writes_by_default() -> None:
+    session = FakeSession([requests.Timeout("temporary")])
+    client = HttpClient("https://api.example", max_retries=3, retry_sleep=lambda _: None)
+    client.session = session  # type: ignore[assignment]
+
+    with pytest.raises(HttpTransportError) as exc_info:
+        client.post("/servers", json_body={"name": "target"})
+
+    assert exc_info.value.attempts == 1
+    assert len(session.calls) == 1
+
+
+def test_http_allows_explicit_non_idempotent_retry_opt_in() -> None:
+    session = FakeSession([FakeResponse(503, text="temporary"), FakeResponse(200, body={"id": "server-1"})])
+    client = HttpClient("https://api.example", max_retries=1, retry_sleep=lambda _: None)
+    client.session = session  # type: ignore[assignment]
+
+    assert client.post("/servers", json_body={"name": "target"}, retry_non_idempotent=True) == {"id": "server-1"}
+    assert len(session.calls) == 2
+
+
+def test_http_rejects_redirects_without_following_them() -> None:
+    session = FakeSession([FakeResponse(302, headers={"Location": "https://other.example/endpoint"})])
+    client = HttpClient("https://api.example", max_retries=0)
+    client.session = session  # type: ignore[assignment]
+
+    with pytest.raises(HttpError) as exc_info:
+        client.get("/thing")
+
+    assert exc_info.value.status_code == 302
+    assert session.calls[0]["allow_redirects"] is False
 
 
 def test_http_error_compacts_html_response_text() -> None:
@@ -166,6 +207,12 @@ def test_http_post_files_sends_indexed_multipart_fields(tmp_path: Path) -> None:
 def test_retry_delay_uses_retry_after_header() -> None:
     response = FakeResponse(429, headers={"Retry-After": "2.5"})
     assert retry_delay_seconds(0, response) == 2.5  # type: ignore[arg-type]
+
+
+def test_retry_delay_falls_back_for_invalid_retry_metadata() -> None:
+    response = FakeResponse(429, body={"retry_after": "not-a-number"}, headers={"Retry-After": "invalid"})
+    delay = retry_delay_seconds(0, response)  # type: ignore[arg-type]
+    assert 1.0 <= delay <= 1.25
 
 
 def test_sanitize_text_redacts_common_secret_shapes() -> None:

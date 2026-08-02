@@ -17,6 +17,7 @@ from guildbridge.content import (
     DiscordChatExporterBootstrapOptions,
     DiscordChatExporterOptions,
     ThreadMode,
+    content_actions_fingerprint,
     content_archive_fingerprint,
     content_capabilities_document,
     content_capabilities_table,
@@ -32,6 +33,8 @@ from guildbridge.diagnostics import format_error_report
 from guildbridge.journal import (
     ApplyJournal,
     ApplyJournalContext,
+    ApplyMigrationLock,
+    default_apply_lock_path,
     default_journal_path,
     template_fingerprint,
     utc_now,
@@ -40,7 +43,6 @@ from guildbridge.journal import (
 from guildbridge.models import CommunityTemplate, ImportResult
 from guildbridge.plan import (
     PLAN_SCHEMA,
-    action_fingerprint,
     apply_result_plan_metadata,
     build_plan_context,
     build_plan_metadata,
@@ -54,6 +56,7 @@ from guildbridge.providers import get_provider, provider_names
 from guildbridge.providers.base import ExportOptions, ImportOptions, Provider
 from guildbridge.routes import structure_route_document, structure_routes_table
 from guildbridge.safety import APPLY_CONFIRMATION, validate_apply_safety
+from guildbridge.utils import atomic_write_text
 
 BATCH_RESULT_SCHEMA = "guildbridge.batch-result.v1"
 
@@ -85,8 +88,7 @@ def write_json(data: dict[str, Any], path: str | None) -> None:
     if not path or path == "-":
         write_stdout_utf8(text)
         return
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
 
 
 def write_stdout_utf8(text: str) -> None:
@@ -371,11 +373,57 @@ def _content_plan_metadata(
             "target_name": target_name,
         },
         "action_count": len(result.actions),
-        "action_hash": action_fingerprint(result.actions),
+        "action_hash": content_actions_fingerprint(result.actions),
     }
 
 
 def _import_to_target(
+    args: argparse.Namespace,
+    *,
+    template: CommunityTemplate,
+    target: TargetSpec,
+    command: str,
+    source_provider: str | None = None,
+    reviewed_data: dict[str, Any] | None = None,
+    multi_target: bool = False,
+) -> dict[str, Any]:
+    if not args.apply:
+        return _import_to_target_unlocked(
+            args,
+            template=template,
+            target=target,
+            command=command,
+            source_provider=source_provider,
+            reviewed_data=reviewed_data,
+            multi_target=multi_target,
+        )
+    configured_lock = _provider_path(
+        getattr(args, "lock_file", None),
+        provider_name=target.provider.name,
+        requested_name=target.requested_name,
+        option="--lock-file",
+        multi_target=multi_target,
+    )
+    lock_path = configured_lock or str(
+        default_apply_lock_path(
+            target.provider.name,
+            target_id=target.target_id,
+            target_name=target.target_name,
+        )
+    )
+    with ApplyMigrationLock(lock_path):
+        return _import_to_target_unlocked(
+            args,
+            template=template,
+            target=target,
+            command=command,
+            source_provider=source_provider,
+            reviewed_data=reviewed_data,
+            multi_target=multi_target,
+        )
+
+
+def _import_to_target_unlocked(
     args: argparse.Namespace,
     *,
     template: CommunityTemplate,
@@ -1176,6 +1224,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--plan-in", help="reviewed dry-run plan required before --apply writes are allowed")
     p_import.add_argument("--journal-out", help="write an apply journal JSON file; defaults under .guildbridge/journals when --apply is used")
     p_import.add_argument("--resume-journal", help="validate this apply run against a failed or interrupted journal before writing")
+    p_import.add_argument("--lock-file", help="lock structural writes to one target; defaults under .guildbridge/locks")
     p_import.add_argument("--audit-log-reason", help="optional audit-log reason where supported")
     p_import.add_argument("--redact", action="store_true", help="redact template before import")
     p_import.add_argument("--include-content", action="store_true", help="opt into private content migration features when implemented")
@@ -1199,6 +1248,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("--plan-in", help="reviewed dry-run plan required before --apply writes are allowed")
     p_migrate.add_argument("--journal-out", help="write an apply journal JSON file; defaults under .guildbridge/journals when --apply is used")
     p_migrate.add_argument("--resume-journal", help="validate this apply run against a failed or interrupted journal before writing")
+    p_migrate.add_argument("--lock-file", help="lock structural writes to one target; defaults under .guildbridge/locks")
     p_migrate.add_argument("--include-user-overwrites", action="store_true", help="request user/member overwrite diagnostics; unsafe user targets are still dropped")
     p_migrate.add_argument("--include-content", action="store_true", help="opt into private content migration features when implemented")
     p_migrate.add_argument(

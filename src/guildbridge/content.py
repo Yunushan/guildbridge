@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import platform
 import re
 import secrets
+import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -18,13 +21,22 @@ from pathlib import Path
 from threading import Event, Lock
 from types import TracebackType
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
 from guildbridge.http import sanitize_text
 from guildbridge.models import Action, ImportResult
-from guildbridge.utils import hash_id, local_id, normalize_channel_name, normalize_name, without_none
+from guildbridge.processes import process_group_kwargs, terminate_process_tree
+from guildbridge.utils import (
+    atomic_write_bytes,
+    atomic_write_text,
+    hash_id,
+    local_id,
+    normalize_channel_name,
+    normalize_name,
+    without_none,
+)
 
 CONTENT_CAPABILITIES_SCHEMA = "guildbridge.content-capabilities.v1"
 CONTENT_ARCHIVE_SCHEMA = "guildbridge.content.v1"
@@ -70,7 +82,15 @@ CUSTOM_EMOJI_RE = re.compile(r"<(?P<animated>a?):(?P<name>[A-Za-z0-9_.~-]+):(?P<
 DCE_REPOSITORY = "Tyrrrz/DiscordChatExporter"
 DCE_RELEASE_API = f"https://api.github.com/repos/{DCE_REPOSITORY}/releases"
 DCE_EXECUTABLE = "DiscordChatExporter.Cli"
+DCE_MAX_REDIRECTS = 5
+DCE_MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
+DCE_MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
+DCE_MAX_ARCHIVE_MEMBERS = 10_000
+DCE_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 REMOTE_ASSET_CACHE_DIR = Path(".guildbridge") / "content" / "remote-assets"
+DEFAULT_REMOTE_ASSET_SIZE_LIMIT = 50 * 1024 * 1024
+REMOTE_ASSET_MAX_REDIRECTS = 5
+REMOTE_ASSET_TIMEOUT = (10, 60)
 
 
 @dataclass(frozen=True)
@@ -494,8 +514,7 @@ def load_content_archive(path: str | Path) -> ContentArchive:
 
 
 def write_content_archive(archive: ContentArchive, path: str | Path) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(archive.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _write_json_atomic(Path(path), archive.to_dict())
 
 
 def load_channel_map(path: str | Path | None) -> dict[str, str]:
@@ -520,9 +539,16 @@ def content_archive_fingerprint(archive: ContentArchive) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def content_action_key(action: Action) -> str:
-    payload = json.dumps(asdict(action), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+def content_action_key(action: Action | Mapping[str, Any]) -> str:
+    normalized = asdict(action) if isinstance(action, Action) else dict(action)
+    payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def content_actions_fingerprint(actions: Sequence[Action | Mapping[str, Any]]) -> str:
+    """Bind a content journal resume to the exact ordered action set."""
+    payload = json.dumps([content_action_key(action) for action in actions], separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def content_text_from_action(action: Action) -> str:
@@ -581,7 +607,8 @@ class ContentMigrationLock:
             try:
                 self.path.unlink()
             except FileNotFoundError:
-                pass
+                # Cleanup is idempotent when another process already removed the file.
+                return None
 
 
 class ContentApplyJournal:
@@ -592,6 +619,7 @@ class ContentApplyJournal:
         provider: str,
         target_id: str | None,
         target_name: str | None,
+        action_hash: str | None = None,
         resumed_from: str | Path | None = None,
     ):
         self.path = Path(path)
@@ -601,6 +629,7 @@ class ContentApplyJournal:
             "provider": provider,
             "target_id": target_id,
             "target_name": target_name,
+            "action_hash": action_hash,
             "resumed_from": str(resumed_from) if resumed_from else None,
             "started_at": _utc_now(),
             "finished_at": None,
@@ -694,6 +723,33 @@ class ContentApplyJournal:
         _write_json_atomic(self.path, self._data)
 
 
+def validate_content_resume_journal(
+    path: str | Path,
+    *,
+    provider: str,
+    target_id: str | None,
+    target_name: str | None,
+    action_hash: str,
+) -> dict[str, Any]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if data.get("schema") != CONTENT_APPLY_JOURNAL_SCHEMA:
+        raise ValueError("Refusing to resume content from a non-content apply journal.")
+    if data.get("status") == "succeeded":
+        raise ValueError("Refusing to resume from a content journal that already succeeded.")
+    for key, expected in (
+        ("provider", provider),
+        ("target_id", target_id),
+        ("target_name", target_name),
+        ("action_hash", action_hash),
+    ):
+        if data.get(key) != expected:
+            raise ValueError(
+                f"Refusing to resume content from a journal with different {key}: "
+                f"{data.get(key)!r} != {expected!r}."
+            )
+    return data
+
+
 def load_completed_content_actions(path: str | Path | None) -> set[str]:
     if not path:
         return set()
@@ -746,12 +802,22 @@ def apply_content_actions(
     lock_path = options.lock_path or str(
         default_content_apply_path(provider, "locks", target_id=options.target_id or options.target_name)
     )
+    action_hash = content_actions_fingerprint(actions)
+    if options.resume_journal:
+        validate_content_resume_journal(
+            options.resume_journal,
+            provider=provider,
+            target_id=options.target_id,
+            target_name=options.target_name,
+            action_hash=action_hash,
+        )
 
     journal = ContentApplyJournal(
         journal_path,
         provider=provider,
         target_id=options.target_id,
         target_name=options.target_name,
+        action_hash=action_hash,
         resumed_from=options.resume_journal,
     )
     completed = load_completed_content_actions(options.resume_journal)
@@ -973,7 +1039,7 @@ def write_content_markdown_report(path: str | Path, report: dict[str, Any]) -> N
             "",
         ]
     )
-    Path(path).write_text("\n".join(lines), encoding="utf-8")
+    _write_text_atomic(Path(path), "\n".join(lines))
 
 
 def _dead_letter_entry(action: Action, error: BaseException | str, *, action_key: str) -> dict[str, Any]:
@@ -1102,8 +1168,7 @@ def _apply_local_content_action(action: Action) -> dict[str, str]:
     payload = action.payload or {}
     content = str(payload.get("content") or "")
     path = Path(action.path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _write_text_atomic(path, content)
     return {"id": str(path)}
 
 
@@ -1128,11 +1193,12 @@ def _apply_content_action_group(
 
 
 def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    _write_text_atomic(path, text)
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    atomic_write_text(path, text)
 
 
 def _utc_now() -> str:
@@ -1202,9 +1268,11 @@ def _download_remote_content_asset(
     cache_dir: Path,
     max_bytes: int | None,
 ) -> Path | None:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        warnings.append(f"Native {label} upload skipped; remote asset URL is not HTTP(S).")
+    effective_max_bytes = max_bytes if max_bytes is not None else DEFAULT_REMOTE_ASSET_SIZE_LIMIT
+    try:
+        _validate_remote_asset_url(url)
+    except ValueError as exc:
+        warnings.append(f"Native {label} upload skipped; remote asset was blocked: {exc}.")
         return None
     filename = _remote_asset_filename(url, item)
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
@@ -1212,39 +1280,123 @@ def _download_remote_content_asset(
     if target.exists() and target.is_file():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
+    current_url = url
     try:
-        response = requests.get(url, stream=True, timeout=60)
-        status_code = int(getattr(response, "status_code", 0) or 0)
-        if status_code >= 400:
-            warnings.append(f"Native {label} upload skipped; remote asset returned HTTP {status_code}.")
-            return None
-        headers = getattr(response, "headers", {}) or {}
-        length = headers.get("content-length") if isinstance(headers, Mapping) else None
-        if max_bytes is not None and length:
+        for redirect_count in range(REMOTE_ASSET_MAX_REDIRECTS + 1):
             try:
-                if int(length) > max_bytes:
-                    warnings.append(f"Native {label} upload skipped; remote asset exceeds the {max_bytes} byte limit.")
-                    return None
-            except ValueError:
-                pass
-        total = 0
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        with tmp.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                if not chunk:
+                _validate_remote_asset_url(current_url)
+            except ValueError as exc:
+                warnings.append(f"Native {label} upload skipped; remote asset redirect was blocked: {exc}.")
+                return None
+            response = requests.get(
+                current_url,
+                stream=True,
+                timeout=REMOTE_ASSET_TIMEOUT,
+                allow_redirects=False,
+            )
+            try:
+                status_code = int(getattr(response, "status_code", 0) or 0)
+                if status_code in {301, 302, 303, 307, 308}:
+                    response_headers = getattr(response, "headers", {}) or {}
+                    location = response_headers.get("location") if isinstance(response_headers, Mapping) else None
+                    if not isinstance(location, str) or not location.strip():
+                        warnings.append(f"Native {label} upload skipped; remote asset redirect had no location.")
+                        return None
+                    if redirect_count >= REMOTE_ASSET_MAX_REDIRECTS:
+                        warnings.append(f"Native {label} upload skipped; remote asset exceeded the redirect limit.")
+                        return None
+                    current_url = urljoin(current_url, location.strip())
                     continue
-                total += len(chunk)
-                if max_bytes is not None and total > max_bytes:
-                    handle.close()
-                    tmp.unlink(missing_ok=True)
-                    warnings.append(f"Native {label} upload skipped; remote asset exceeds the {max_bytes} byte limit.")
+                if status_code >= 400:
+                    warnings.append(f"Native {label} upload skipped; remote asset returned HTTP {status_code}.")
                     return None
-                handle.write(chunk)
-        tmp.replace(target)
-        return target
+                headers = getattr(response, "headers", {}) or {}
+                length = headers.get("content-length") if isinstance(headers, Mapping) else None
+                try:
+                    content_length = int(length) if length is not None else None
+                except (TypeError, ValueError):
+                    # A malformed optional header must not bypass bounded streaming validation.
+                    content_length = None
+                if content_length is not None and content_length > effective_max_bytes:
+                    warnings.append(
+                        f"Native {label} upload skipped; remote asset exceeds the {effective_max_bytes} byte limit."
+                    )
+                    return None
+                total = 0
+                fd, temporary_name = tempfile.mkstemp(
+                    prefix=f".{target.name}.",
+                    suffix=".tmp",
+                    dir=str(target.parent),
+                )
+                try:
+                    too_large = False
+                    with os.fdopen(fd, "wb") as handle:
+                        for chunk in response.iter_content(chunk_size=64 * 1024):
+                            if not chunk:
+                                continue
+                            total += len(chunk)
+                            if total > effective_max_bytes:
+                                too_large = True
+                                break
+                            handle.write(chunk)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    if too_large:
+                        os.unlink(temporary_name)
+                        warnings.append(
+                            f"Native {label} upload skipped; remote asset exceeds the {effective_max_bytes} byte limit."
+                        )
+                        return None
+                    os.replace(temporary_name, target)
+                    return target
+                except Exception:
+                    try:
+                        os.unlink(temporary_name)
+                    except FileNotFoundError:
+                        # The failed download may already have removed the temporary asset.
+                        pass
+                    raise
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+        warnings.append(f"Native {label} upload skipped; remote asset exceeded the redirect limit.")
+        return None
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"Native {label} upload skipped; remote asset download failed: {sanitize_text(str(exc))}.")
         return None
+
+
+def _validate_remote_asset_url(url: str) -> None:
+    """Reject remote asset URLs that could reach local or private network services."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("remote asset URL is malformed") from exc
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise ValueError("remote asset URL is not HTTP(S)")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("remote asset URL must not include credentials")
+    service_port = port if port is not None else (443 if parsed.scheme == "https" else 80)
+    try:
+        addresses = {
+            str(result[4][0])
+            for result in socket.getaddrinfo(hostname, service_port, type=socket.SOCK_STREAM)
+            if len(result) >= 5 and result[4]
+        }
+    except OSError as exc:
+        raise ValueError("remote asset host could not be resolved safely") from exc
+    if not addresses:
+        raise ValueError("remote asset host did not resolve to an address")
+    for address in addresses:
+        try:
+            parsed_address = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise ValueError("remote asset host resolved to an invalid address") from exc
+        if not parsed_address.is_global:
+            raise ValueError("remote asset host resolves to a non-public address")
 
 
 def _remote_asset_filename(url: str, item: Mapping[str, Any]) -> str:
@@ -1282,27 +1434,24 @@ def download_discord_chat_exporter(options: DiscordChatExporterBootstrapOptions 
             "DiscordChatExporter install directory already contains unverified files. Remove it before using a managed download."
         )
     install_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = install_dir / str(asset.get("name") or f"{DCE_EXECUTABLE}.zip")
-    response = requests.get(download_url, timeout=max(1, options.timeout_seconds))
-    if response.status_code >= 400:
-        raise ValueError(f"Could not download DiscordChatExporter asset: HTTP {response.status_code}.")
-    archive_bytes = response.content
+    archive_path = install_dir / _remote_asset_filename(download_url, asset)
+    archive_bytes = _download_dce_asset(download_url, timeout_seconds=options.timeout_seconds)
     actual_sha256 = hashlib.sha256(archive_bytes).hexdigest()
     if not secrets.compare_digest(actual_sha256, expected_sha256):
         raise ValueError("DiscordChatExporter asset checksum did not match the trusted SHA-256 digest.")
-    archive_path.write_bytes(archive_bytes)
+    atomic_write_bytes(archive_path, archive_bytes)
     if zipfile.is_zipfile(archive_path):
         _extract_zip_safely(archive_path, install_dir)
     else:
         direct_path = install_dir / executable_name
-        direct_path.write_bytes(archive_path.read_bytes())
+        atomic_write_bytes(direct_path, archive_path.read_bytes())
 
     executable = _find_dce_executable(install_dir, executable_name)
     if not executable:
         raise ValueError(f"DiscordChatExporter asset did not contain {executable_name!r}.")
     if sys.platform != "win32":
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    marker.write_text(expected_sha256 + "\n", encoding="utf-8")
+    atomic_write_text(marker, expected_sha256 + "\n")
     return executable
 
 
@@ -1318,16 +1467,89 @@ def _dce_asset_sha256(asset: Mapping[str, Any], configured: str | None) -> str:
     return raw
 
 
+def _validate_dce_asset_url(url: str) -> None:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password:
+        raise ValueError("managed DiscordChatExporter assets must use an HTTPS GitHub URL without credentials")
+    if hostname != "github.com" and not hostname.endswith(".github.com") and not hostname.endswith(".githubusercontent.com"):
+        raise ValueError("managed DiscordChatExporter assets must be hosted by GitHub")
+
+
+def _download_dce_asset(url: str, *, timeout_seconds: int) -> bytes:
+    current_url = url
+    for redirect_count in range(DCE_MAX_REDIRECTS + 1):
+        _validate_dce_asset_url(current_url)
+        response = requests.get(
+            current_url,
+            stream=True,
+            timeout=max(1, timeout_seconds),
+            allow_redirects=False,
+        )
+        try:
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            if status_code in {301, 302, 303, 307, 308}:
+                headers = getattr(response, "headers", {}) or {}
+                location = headers.get("location") if isinstance(headers, Mapping) else None
+                if not isinstance(location, str) or not location.strip():
+                    raise ValueError("DiscordChatExporter asset redirect had no location")
+                if redirect_count >= DCE_MAX_REDIRECTS:
+                    raise ValueError("DiscordChatExporter asset exceeded the redirect limit")
+                current_url = urljoin(current_url, location.strip())
+                continue
+            if status_code >= 400:
+                raise ValueError(f"Could not download DiscordChatExporter asset: HTTP {status_code}.")
+
+            headers = getattr(response, "headers", {}) or {}
+            content_length = headers.get("content-length") if isinstance(headers, Mapping) else None
+            try:
+                declared_length = int(content_length) if content_length is not None else None
+            except (TypeError, ValueError):
+                declared_length = None
+            if declared_length is not None and declared_length > DCE_MAX_DOWNLOAD_BYTES:
+                raise ValueError(
+                    f"DiscordChatExporter asset exceeds the {DCE_MAX_DOWNLOAD_BYTES} byte download limit."
+                )
+
+            iter_content = getattr(response, "iter_content", None)
+            if callable(iter_content):
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in iter_content(chunk_size=DCE_DOWNLOAD_CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    chunk_bytes = bytes(chunk)
+                    total += len(chunk_bytes)
+                    if total > DCE_MAX_DOWNLOAD_BYTES:
+                        raise ValueError(
+                            f"DiscordChatExporter asset exceeds the {DCE_MAX_DOWNLOAD_BYTES} byte download limit."
+                        )
+                    chunks.append(chunk_bytes)
+                return b"".join(chunks)
+
+            content = getattr(response, "content", b"")
+            archive_bytes = bytes(content)
+            if len(archive_bytes) > DCE_MAX_DOWNLOAD_BYTES:
+                raise ValueError(f"DiscordChatExporter asset exceeds the {DCE_MAX_DOWNLOAD_BYTES} byte download limit.")
+            return archive_bytes
+        finally:
+            response.close()
+    raise ValueError("DiscordChatExporter asset exceeded the redirect limit")
+
+
 def _dce_release_metadata(options: DiscordChatExporterBootstrapOptions) -> dict[str, Any]:
     version = (options.version or "latest").strip()
     url = f"{DCE_RELEASE_API}/latest" if version in {"", "latest"} else f"{DCE_RELEASE_API}/tags/{version}"
     response = requests.get(url, timeout=max(1, options.timeout_seconds))
-    if response.status_code >= 400:
-        raise ValueError(f"Could not inspect DiscordChatExporter release {version!r}: HTTP {response.status_code}.")
-    data = response.json()
-    if not isinstance(data, dict):
-        raise ValueError("DiscordChatExporter release metadata was not a JSON object.")
-    return data
+    try:
+        if response.status_code >= 400:
+            raise ValueError(f"Could not inspect DiscordChatExporter release {version!r}: HTTP {response.status_code}.")
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("DiscordChatExporter release metadata was not a JSON object.")
+        return data
+    finally:
+        response.close()
 
 
 def _dce_runtime_id() -> str:
@@ -1379,7 +1601,16 @@ def _select_dce_asset(release: Mapping[str, Any], runtime: str) -> Mapping[str, 
 def _extract_zip_safely(archive_path: Path, install_dir: Path) -> None:
     base = install_dir.resolve()
     with zipfile.ZipFile(archive_path) as archive:
-        for member in archive.infolist():
+        members = archive.infolist()
+        if len(members) > DCE_MAX_ARCHIVE_MEMBERS:
+            raise ValueError(f"Refusing DiscordChatExporter archive with more than {DCE_MAX_ARCHIVE_MEMBERS} files.")
+        extracted_bytes = 0
+        for member in members:
+            extracted_bytes += max(0, int(member.file_size))
+            if extracted_bytes > DCE_MAX_EXTRACTED_BYTES:
+                raise ValueError(
+                    f"Refusing DiscordChatExporter archive larger than {DCE_MAX_EXTRACTED_BYTES} bytes after extraction."
+                )
             target = (install_dir / member.filename).resolve()
             if target != base and base not in target.parents:
                 raise ValueError(f"Refusing unsafe DiscordChatExporter archive path {member.filename!r}.")
@@ -1431,25 +1662,34 @@ def run_discord_chat_exporter(options: DiscordChatExporterOptions) -> Path:
         options.export_format,
     ]
     # The exporter executable and all arguments remain an explicit, shell-free vector.
-    completed = subprocess.run(  # noqa: S603
+    process = subprocess.Popen(  # noqa: S603
         command,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=max(1, options.timeout_seconds),
-        check=False,
+        **process_group_kwargs(),
     )
-    if completed.returncode != 0:
+    try:
+        stdout, stderr = process.communicate(timeout=max(1, options.timeout_seconds))
+    except subprocess.TimeoutExpired as exc:
+        terminate_process_tree(process)
+        # Drain the pipes after termination; timeout output is intentionally not surfaced.
+        process.communicate()
+        raise ValueError(
+            f"DiscordChatExporter timed out after {max(1, options.timeout_seconds)} seconds."
+        ) from exc
+    if process.returncode != 0:
         detail = "\n".join(
             part
             for part in (
-                _redact_process_output(completed.stdout, token),
-                _redact_process_output(completed.stderr, token),
+                _redact_process_output(stdout, token),
+                _redact_process_output(stderr, token),
             )
             if part
         )
-        raise ValueError(f"DiscordChatExporter failed with exit code {completed.returncode}.{f' Output: {detail}' if detail else ''}")
+        raise ValueError(f"DiscordChatExporter failed with exit code {process.returncode}.{f' Output: {detail}' if detail else ''}")
     files = sorted(output_path.glob("*.json")) if output_path.is_dir() else ([output_path] if output_path.exists() else [])
     if not files:
         raise ValueError(f"DiscordChatExporter completed but no JSON files were found at {output_path}.")
@@ -1458,6 +1698,14 @@ def run_discord_chat_exporter(options: DiscordChatExporterOptions) -> Path:
 
 def _redact_process_output(text: str, token: str) -> str:
     return sanitize_text(text.replace(token, "[redacted]")).strip()[:4000]
+
+
+def _text_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def load_discord_chat_export(path: str | Path) -> ContentArchive:

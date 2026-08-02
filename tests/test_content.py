@@ -10,6 +10,7 @@ from threading import Barrier
 
 import pytest
 
+from guildbridge import content as content_module
 from guildbridge.config import RuntimeConfig
 from guildbridge.content import (
     CONTENT_CAPABILITIES_SCHEMA,
@@ -22,12 +23,14 @@ from guildbridge.content import (
     ContentEmbed,
     ContentImportOptions,
     ContentMessage,
+    ContentMigrationLock,
     ContentReaction,
     ContentSource,
     DiscordChatExporterBootstrapOptions,
     DiscordChatExporterOptions,
     apply_content_actions,
     content_action_key,
+    content_actions_fingerprint,
     content_capabilities_document,
     content_not_implemented_message,
     download_discord_chat_exporter,
@@ -201,6 +204,15 @@ def test_selected_content_features_are_opt_in() -> None:
     assert selected_content_features(include_content=False, requested_features=["messages"]) == ["messages"]
 
 
+def test_content_migration_lock_cleanup_is_idempotent(tmp_path: Path) -> None:
+    lock_path = tmp_path / "migration.lock"
+
+    with ContentMigrationLock(lock_path):
+        lock_path.unlink()
+
+    assert not lock_path.exists()
+
+
 def test_selected_content_features_reject_unknown_name() -> None:
     with pytest.raises(ValueError, match="Unknown content feature"):
         selected_content_features(include_content=False, requested_features=["history"])
@@ -216,13 +228,18 @@ def test_resolve_content_asset_path_downloads_remote_asset(tmp_path: Path, monke
             yield b"hello "
             yield b"world"
 
-    calls: list[tuple[str, bool, int]] = []
+    calls: list[tuple[str, bool, tuple[int, int]]] = []
 
-    def fake_get(url: str, *, stream: bool, timeout: int) -> Response:
+    def fake_get(url: str, *, stream: bool, timeout: tuple[int, int], allow_redirects: bool) -> Response:
         calls.append((url, stream, timeout))
+        assert allow_redirects is False
         return Response()
 
     monkeypatch.setattr("guildbridge.content.requests.get", fake_get)
+    monkeypatch.setattr(
+        "guildbridge.content.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
     warnings: list[str] = []
 
     path = resolve_content_asset_path(
@@ -236,8 +253,142 @@ def test_resolve_content_asset_path_downloads_remote_asset(tmp_path: Path, monke
 
     assert path is not None
     assert path.read_bytes() == b"hello world"
-    assert calls == [("https://cdn.example.invalid/path/file.txt", True, 60)]
+    assert calls == [("https://cdn.example.invalid/path/file.txt", True, (10, 60))]
     assert warnings == []
+
+
+def test_resolve_content_asset_path_ignores_malformed_content_length(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        status_code = 200
+        headers = {"content-length": "not-a-number"}
+
+        def iter_content(self, *, chunk_size: int) -> Iterator[bytes]:
+            del chunk_size
+            yield b"safe payload"
+
+    monkeypatch.setattr("guildbridge.content.requests.get", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr(
+        "guildbridge.content.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
+    warnings: list[str] = []
+
+    path = resolve_content_asset_path(
+        {"url": "https://cdn.example.invalid/path/file.txt", "filename": "file.txt"},
+        label="attachment",
+        allow_remote_download=True,
+        warnings=warnings,
+        cache_dir=tmp_path / "remote-assets",
+        max_bytes=100,
+    )
+
+    assert path is not None
+    assert path.read_bytes() == b"safe payload"
+    assert warnings == []
+
+
+def test_resolve_content_asset_path_blocks_private_remote_asset_hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr("guildbridge.content.requests.get", lambda url, **_kwargs: calls.append(url))
+    warnings: list[str] = []
+
+    path = resolve_content_asset_path(
+        {"url": "http://169.254.169.254/latest/meta-data/", "filename": "metadata"},
+        label="attachment",
+        allow_remote_download=True,
+        warnings=warnings,
+        cache_dir=tmp_path / "remote-assets",
+    )
+
+    assert path is None
+    assert calls == []
+    assert warnings == [
+        "Native attachment upload skipped; remote asset was blocked: remote asset host resolves to a non-public address."
+    ]
+
+
+def test_resolve_content_asset_path_blocks_private_dns_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "guildbridge.content.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(2, 1, 6, "", ("10.0.0.8", 443))],
+    )
+    warnings: list[str] = []
+
+    path = resolve_content_asset_path(
+        {"url": "https://cdn.example.invalid/path/file.txt", "filename": "file.txt"},
+        label="attachment",
+        allow_remote_download=True,
+        warnings=warnings,
+        cache_dir=tmp_path / "remote-assets",
+    )
+
+    assert path is None
+    assert warnings == [
+        "Native attachment upload skipped; remote asset was blocked: remote asset host resolves to a non-public address."
+    ]
+
+
+def test_resolve_content_asset_path_blocks_private_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Response:
+        status_code = 302
+        headers = {"location": "http://127.0.0.1:8080/internal"}
+
+    monkeypatch.setattr(
+        "guildbridge.content.socket.getaddrinfo",
+        lambda hostname, *_args, **_kwargs: (
+            [(2, 1, 6, "", ("93.184.216.34", 443))]
+            if hostname == "cdn.example.invalid"
+            else [(2, 1, 6, "", ("127.0.0.1", 8080))]
+        ),
+    )
+    monkeypatch.setattr("guildbridge.content.requests.get", lambda url, **_kwargs: calls.append(url) or Response())
+    warnings: list[str] = []
+
+    path = resolve_content_asset_path(
+        {"url": "https://cdn.example.invalid/path/file.txt", "filename": "file.txt"},
+        label="attachment",
+        allow_remote_download=True,
+        warnings=warnings,
+        cache_dir=tmp_path / "remote-assets",
+    )
+
+    assert path is None
+    assert calls == ["https://cdn.example.invalid/path/file.txt"]
+    assert warnings == [
+        "Native attachment upload skipped; remote asset redirect was blocked: remote asset host resolves to a non-public address."
+    ]
+
+
+def test_resolve_content_asset_path_applies_default_remote_size_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        status_code = 200
+        headers = {"content-length": str(50 * 1024 * 1024 + 1)}
+
+    monkeypatch.setattr(
+        "guildbridge.content.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
+    monkeypatch.setattr("guildbridge.content.requests.get", lambda *_args, **_kwargs: Response())
+    warnings: list[str] = []
+
+    path = resolve_content_asset_path(
+        {"url": "https://cdn.example.invalid/path/file.bin", "filename": "file.bin"},
+        label="attachment",
+        allow_remote_download=True,
+        warnings=warnings,
+        cache_dir=tmp_path / "remote-assets",
+    )
+
+    assert path is None
+    assert warnings == [
+        "Native attachment upload skipped; remote asset exceeds the 52428800 byte limit."
+    ]
 
 
 def test_content_capabilities_document_marks_templates_private_by_default() -> None:
@@ -324,17 +475,27 @@ def test_run_discord_chat_exporter_invokes_local_cli_and_redacts_token(tmp_path:
         stdout = "ok"
         stderr = ""
 
-    def fake_run(command: list[str], **_kwargs: object) -> Completed:
+    class FakeProcess:
+        pid = 1234
+        returncode = 0
+
+        def communicate(self, **_kwargs: object) -> tuple[str, str]:
+            return "ok", ""
+
+        def poll(self) -> int:
+            return self.returncode
+
+    def fake_popen(command: list[str], **_kwargs: object) -> FakeProcess:
         calls.append(command)
         output_path.mkdir(parents=True, exist_ok=True)
         (output_path / "general.json").write_text(
             json.dumps({"guild": {"id": "guild-1", "name": "Example"}, "channel": {"id": "chan-1"}, "messages": []}),
             encoding="utf-8",
         )
-        return Completed()
+        return FakeProcess()
 
     monkeypatch.setenv("DISCORD_TOKEN", "secret-token")
-    monkeypatch.setattr("guildbridge.content.subprocess.run", fake_run)
+    monkeypatch.setattr("guildbridge.content.subprocess.Popen", fake_popen)
 
     result_path = run_discord_chat_exporter(
         DiscordChatExporterOptions(exporter_bin="DiscordChatExporter.Cli", guild_id="guild-1", output_path=output_path)
@@ -348,13 +509,18 @@ def test_run_discord_chat_exporter_invokes_local_cli_and_redacts_token(tmp_path:
 
 
 def test_run_discord_chat_exporter_error_hides_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    class Completed:
+    class FakeProcess:
+        pid = 1234
         returncode = 1
-        stdout = ""
-        stderr = "failed with secret-token"
+
+        def communicate(self, **_kwargs: object) -> tuple[str, str]:
+            return "", "failed with secret-token"
+
+        def poll(self) -> int:
+            return self.returncode
 
     monkeypatch.setenv("DISCORD_TOKEN", "secret-token")
-    monkeypatch.setattr("guildbridge.content.subprocess.run", lambda *_args, **_kwargs: Completed())
+    monkeypatch.setattr("guildbridge.content.subprocess.Popen", lambda *_args, **_kwargs: FakeProcess())
 
     with pytest.raises(ValueError) as error:
         run_discord_chat_exporter(
@@ -380,9 +546,18 @@ def test_download_discord_chat_exporter_fetches_matching_release_asset(
             self.status_code = 200
             self._data = data or {}
             self.content = content
+            self.headers: dict[str, str] = {}
+            self.closed = False
 
         def json(self) -> dict[str, object]:
             return self._data
+
+        def iter_content(self, *, chunk_size: int) -> Iterator[bytes]:
+            del chunk_size
+            yield self.content
+
+        def close(self) -> None:
+            self.closed = True
 
     def fake_get(url: str, **_kwargs: object) -> Response:
         calls.append(url)
@@ -391,8 +566,8 @@ def test_download_discord_chat_exporter_fetches_matching_release_asset(
                 data={
                     "tag_name": "v2.0.0",
                     "assets": [
-                        {"name": "DiscordChatExporter.Cli.linux-x64.zip", "browser_download_url": "https://example.invalid/linux.zip", "digest": f"sha256:{archive_sha256}"},
-                        {"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://example.invalid/win.zip", "digest": f"sha256:{archive_sha256}"},
+                        {"name": "DiscordChatExporter.Cli.linux-x64.zip", "browser_download_url": "https://github.com/Tyrrrz/DiscordChatExporter/releases/linux.zip", "digest": f"sha256:{archive_sha256}"},
+                        {"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://github.com/Tyrrrz/DiscordChatExporter/releases/win.zip", "digest": f"sha256:{archive_sha256}"},
                     ],
                 }
             )
@@ -408,15 +583,19 @@ def test_download_discord_chat_exporter_fetches_matching_release_asset(
 
     assert executable.name == "DiscordChatExporter.Cli.exe"
     assert executable.read_text(encoding="utf-8") == "binary"
-    assert calls[-1] == "https://example.invalid/win.zip"
+    assert calls[-1] == "https://github.com/Tyrrrz/DiscordChatExporter/releases/win.zip"
 
 
 def test_download_discord_chat_exporter_rejects_asset_without_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class Response:
         status_code = 200
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            return None
 
         def json(self) -> dict[str, object]:
-            return {"assets": [{"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://example.invalid/win.zip"}]}
+            return {"assets": [{"name": "DiscordChatExporter.Cli.win-x64.zip", "browser_download_url": "https://github.com/Tyrrrz/DiscordChatExporter/releases/win.zip"}]}
 
     monkeypatch.setattr("guildbridge.content.sys.platform", "win32")
     monkeypatch.setattr("guildbridge.content.platform.machine", lambda: "AMD64")
@@ -424,6 +603,149 @@ def test_download_discord_chat_exporter_rejects_asset_without_digest(tmp_path: P
 
     with pytest.raises(ValueError, match="SHA-256"):
         download_discord_chat_exporter(DiscordChatExporterBootstrapOptions(install_dir=tmp_path / "tools"))
+
+
+def test_download_discord_chat_exporter_rejects_untrusted_asset_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        status_code = 200
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            digest = "0" * 64
+            return {
+                "assets": [
+                    {
+                        "name": "DiscordChatExporter.Cli.win-x64.zip",
+                        "browser_download_url": "https://downloads.example.invalid/win.zip",
+                        "digest": f"sha256:{digest}",
+                    }
+                ]
+            }
+
+    calls: list[str] = []
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        calls.append(url)
+        return Response()
+
+    monkeypatch.setattr("guildbridge.content.sys.platform", "win32")
+    monkeypatch.setattr("guildbridge.content.platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("guildbridge.content.requests.get", fake_get)
+
+    with pytest.raises(ValueError, match="hosted by GitHub"):
+        download_discord_chat_exporter(DiscordChatExporterBootstrapOptions(install_dir=tmp_path / "tools"))
+
+    assert calls == ["https://api.github.com/repos/Tyrrrz/DiscordChatExporter/releases/latest"]
+
+
+def test_download_discord_chat_exporter_enforces_archive_size_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        def __init__(self, *, data: dict[str, object] | None = None, content: bytes = b"") -> None:
+            self.status_code = 200
+            self._data = data or {}
+            self.content = content
+            self.headers: dict[str, str] = {}
+
+        def json(self) -> dict[str, object]:
+            return self._data
+
+        def iter_content(self, *, chunk_size: int) -> Iterator[bytes]:
+            del chunk_size
+            yield self.content
+
+        def close(self) -> None:
+            return None
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        if url.endswith("/latest"):
+            return Response(
+                data={
+                    "tag_name": "v2.0.0",
+                    "assets": [
+                        {
+                            "name": "DiscordChatExporter.Cli.win-x64.zip",
+                            "browser_download_url": "https://github.com/Tyrrrz/DiscordChatExporter/releases/win.zip",
+                            "digest": "0" * 64,
+                        }
+                    ],
+                }
+            )
+        return Response(content=b"oversized")
+
+    monkeypatch.setattr("guildbridge.content.sys.platform", "win32")
+    monkeypatch.setattr("guildbridge.content.platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("guildbridge.content.requests.get", fake_get)
+    monkeypatch.setattr("guildbridge.content.DCE_MAX_DOWNLOAD_BYTES", 4)
+
+    with pytest.raises(ValueError, match="download limit"):
+        download_discord_chat_exporter(DiscordChatExporterBootstrapOptions(install_dir=tmp_path / "tools"))
+
+
+def test_download_discord_chat_exporter_sanitizes_remote_asset_filename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    archive = BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("DiscordChatExporter.Cli.exe", "binary")
+    archive_bytes = archive.getvalue()
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+
+    class Response:
+        status_code = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self, data: dict[str, object] | None = None, content: bytes = b"") -> None:
+            self._data = data or {}
+            self.content = content
+
+        def json(self) -> dict[str, object]:
+            return self._data
+
+        def iter_content(self, *, chunk_size: int) -> Iterator[bytes]:
+            del chunk_size
+            yield self.content
+
+        def close(self) -> None:
+            return None
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        if url.endswith("/latest"):
+            return Response(
+                {
+                    "tag_name": "v2.0.0",
+                    "assets": [
+                        {
+                            "name": "DiscordChatExporter.Cli.win-x64/../../escaped.zip",
+                            "browser_download_url": "https://github.com/Tyrrrz/DiscordChatExporter/releases/win.zip",
+                            "digest": f"sha256:{digest}",
+                        }
+                    ],
+                }
+            )
+        return Response(content=archive_bytes)
+
+    monkeypatch.setattr("guildbridge.content.sys.platform", "win32")
+    monkeypatch.setattr("guildbridge.content.platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("guildbridge.content.requests.get", fake_get)
+
+    executable = download_discord_chat_exporter(
+        DiscordChatExporterBootstrapOptions(install_dir=tmp_path / "tools", timeout_seconds=1)
+    )
+
+    assert executable.is_relative_to(tmp_path / "tools")
+    assert not (tmp_path / "escaped.zip").exists()
+
+
+def test_discord_chat_exporter_rejects_archive_that_expands_past_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    archive_path = tmp_path / "exporter.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("large.bin", b"12345")
+
+    monkeypatch.setattr(content_module, "DCE_MAX_EXTRACTED_BYTES", 4)
+
+    with pytest.raises(ValueError, match="after extraction"):
+        content_module._extract_zip_safely(archive_path, tmp_path / "install")
 
 
 def test_load_channel_map_accepts_plain_and_result_shapes(tmp_path: Path) -> None:
@@ -563,6 +885,34 @@ def test_apply_content_actions_writes_journal_report_and_incremental_state(tmp_p
     assert "Fidelity score" in (tmp_path / "report.md").read_text(encoding="utf-8")
     assert content_action_key(plan.actions[0]) in load_completed_content_actions(incremental)
     assert not dead_letter.exists()
+
+
+def test_apply_content_actions_rejects_mismatched_resume_journal(tmp_path: Path) -> None:
+    first_action = Action("stoat", "POST", "/channels/target/messages", {"content": "first"})
+    journal = content_module.ContentApplyJournal(
+        tmp_path / "failed.json",
+        provider="stoat",
+        target_id="target",
+        target_name="Target",
+        action_hash=content_actions_fingerprint([first_action]),
+    )
+    journal.start()
+
+    changed_action = Action("stoat", "POST", "/channels/target/messages", {"content": "changed"})
+    with pytest.raises(ValueError, match="different action_hash"):
+        apply_content_actions(
+            "stoat",
+            [changed_action],
+            ContentImportOptions(
+                apply=True,
+                target_id="target",
+                target_name="Target",
+                resume_journal=str(tmp_path / "failed.json"),
+                journal_path=str(tmp_path / "new-journal.json"),
+                lock_path=str(tmp_path / "content.lock"),
+            ),
+            lambda _action: pytest.fail("mismatched resumes must fail before provider writes"),
+        )
 
 
 def test_apply_content_actions_parallelizes_across_channels_and_preserves_channel_order(tmp_path: Path) -> None:

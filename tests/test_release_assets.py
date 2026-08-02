@@ -76,7 +76,21 @@ def test_release_asset_verifier_accepts_matching_manifests_and_evidence(tmp_path
     module = _module()
     assets, evidence = _release_bundle(tmp_path)
 
-    assert module.validate_release_assets(assets, evidence) == []
+    assert module.validate_release_assets(assets, evidence, tag="v1.0.9") == []
+
+
+def test_release_asset_verifier_rejects_assets_from_another_release(tmp_path: Path) -> None:
+    module = _module()
+    assets, evidence = _release_bundle(tmp_path)
+
+    errors = module.validate_release_assets(assets, evidence, tag="v1.0.10")
+
+    assert "sdist asset must be named guildbridge-1.0.10.tar.gz, found guildbridge-1.0.9.tar.gz." in errors
+    assert (
+        "windows_msi asset must be named GuildBridge-1.0.10-windows-x64.msi, "
+        "found GuildBridge-1.0.9-windows-x64.msi."
+    ) in errors
+    assert "sbom asset must be named guildbridge-v1.0.10.spdx.json, found guildbridge-v1.0.9.spdx.json." in errors
 
 
 def test_release_asset_tools_share_one_public_asset_contract() -> None:

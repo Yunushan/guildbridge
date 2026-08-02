@@ -226,7 +226,7 @@ def test_unix_release_script_requires_hosted_production_controls() -> None:
     assert "require_command gh" in release_sh
     assert "--skip-checks may only be used with --skip-tag" in release_sh
     assert "-m coverage run -m pytest -q" in release_sh
-    assert "-m coverage report" in release_sh
+    assert "-m coverage report --fail-under=80" in release_sh
 
 
 def test_windows_release_accepts_pinned_wix_v7_eula() -> None:
@@ -272,6 +272,15 @@ def test_release_workflow_attaches_built_files_to_github_release() -> None:
     assert "GitHub Release asset'i olarak ekler" in turkish_readme
 
 
+def test_dependabot_groups_codeql_action_updates() -> None:
+    dependabot = _text(".github/dependabot.yml")
+
+    assert "package-ecosystem: github-actions" in dependabot
+    assert "groups:" in dependabot
+    assert "codeql-actions:" in dependabot
+    assert '"github/codeql-action/*"' in dependabot
+
+
 def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     github_ci = _text(".github/workflows/ci.yml")
     release = _text(".github/workflows/release.yml")
@@ -292,9 +301,12 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "macos-26" in github_ci
     assert "desktop-gui-smoke:" in github_ci
     assert "xvfb-run -a python -m pytest -q tests/test_gui_workflows.py" in github_ci
+    assert "desktop-gui-smoke-windows:" in github_ci
+    assert "Construct the desktop GUI on Windows" in github_ci
+    assert 'GUILDBRIDGE_REQUIRE_GUI: "1"' in github_ci
     assert "container-smoke:" in github_ci
     assert "docker run --rm guildbridge:${{ github.sha }} --version" in github_ci
-    assert "needs: [test, hosted-compatibility, desktop-gui-smoke, container-smoke]" in github_ci
+    assert "needs: [test, hosted-compatibility, desktop-gui-smoke, desktop-gui-smoke-windows, container-smoke]" in github_ci
     assert "windows-latest" not in github_ci
     assert _uses_pinned_action(github_ci, "actions/checkout")
     assert _uses_pinned_action(github_ci, "actions/setup-python")
@@ -318,13 +330,13 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert '--no-deps -e ".[dev]"' in self_hosted
     assert "fetch-depth: 0" in self_hosted
     assert "persist-credentials: false" in self_hosted
-    assert "python -m coverage report" in self_hosted
+    assert "python -m coverage report --fail-under=80" in self_hosted
     assert "python scripts/check-secret-hygiene.py --history" in self_hosted
     assert "python scripts/check-security-baseline.py" in self_hosted
     assert "python -m ruff check --select S src scripts" in self_hosted
     assert "python -m ruff check --select BLE src scripts" in self_hosted
     assert "python -m coverage run -m pytest -q" in github_ci
-    assert "python -m coverage report" in github_ci
+    assert "python -m coverage report --fail-under=80" in github_ci
     assert "Test with source coverage on Linux" in github_ci
     assert "xvfb-run -a python -m coverage run -m pytest -q" in github_ci
     assert "python scripts/check-release-controls.py" in github_ci
@@ -345,7 +357,7 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "ubuntu-24.04" in release
     assert 'python-version: "3.14"' in release
     assert "python -m coverage run -m pytest -q" in release
-    assert "python -m coverage report" in release
+    assert "python -m coverage report --fail-under=80" in release
     assert "Docker runtime smoke test" in release
     assert "docker run --rm guildbridge:${{ github.sha }} --version" in release
     assert "python scripts/check-platform.py --require cli --format json" in release
@@ -365,6 +377,10 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "--no-deps -e \".[dev,windows-build]\"" in release
     assert "--no-deps ." in release
     assert "--sbom-out" in release
+    assert release.index("Audit installed dependencies") < release.index("Upload distributions")
+    assert release.index("Verify wheel install and generate SPDX SBOM") < release.index("Upload distributions")
+    assert release.index("Create distribution checksums") < release.index("Upload distributions")
+    assert release.index("Upload distributions") < release.index("Attest Python distributions")
     assert "python scripts/check-secret-hygiene.py" in release
     assert "python scripts/check-security-baseline.py" in release
     assert "python -m ruff check --select S src scripts" in release
@@ -373,6 +389,7 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert release.count("fetch-depth: 0") >= 4
     assert release.count("persist-credentials: false") >= 4
     assert "python scripts/check-release-assets.py --assets-dir release-assets --evidence" in release
+    assert '--tag "$TAG_NAME"' in release
     assert "sign-windows-artifacts:" in release
     assert "Require protected signing materials" in release
     assert "Sign and verify Windows ZIP and MSI" in release
@@ -397,7 +414,7 @@ def test_ci_builds_without_uploading_distribution_artifacts() -> None:
     assert "--require-hashes -r requirements/release.txt" in gitlab
     assert '--no-deps -e ".[dev]"' in gitlab
     assert "python -m coverage run -m pytest -q" in gitlab
-    assert "python -m coverage report" in gitlab
+    assert "python -m coverage report --fail-under=80" in gitlab
     assert "python scripts/check-secret-hygiene.py --history" in gitlab
     assert "python scripts/check-security-baseline.py" in gitlab
     assert "python scripts/pip-audit-truststore.py --strict" in gitlab

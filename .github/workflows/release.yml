@@ -27,11 +27,11 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Verify public tag is based on main
@@ -57,8 +57,10 @@ jobs:
         run: python scripts/check-security-baseline.py
       - name: Verify live-content capability scope
         run: python scripts/check-content-capability-scope.py
+      - name: Verify operations runbook
+        run: python scripts/check-operations-readiness.py
       - name: Lint
-        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-security-baseline.py scripts/new-production-evidence-template.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/pip-audit-truststore.py
+        run: python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-security-baseline.py scripts/new-production-evidence-template.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/check-operations-readiness.py scripts/pip-audit-truststore.py
       - name: Security lint
         run: python -m ruff check --select S src scripts
       - name: Exception lint
@@ -68,7 +70,7 @@ jobs:
       - name: Test with source coverage
         run: |
           python -m coverage run -m pytest -q
-          python -m coverage report
+          python -m coverage report --fail-under=80
       - name: Platform check
         run: python scripts/check-platform.py --require cli --format json
       - name: Docker runtime smoke test
@@ -97,7 +99,7 @@ jobs:
             dist/*
           if-no-files-found: error
       - name: Attest Python distributions
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: dist/*
 
@@ -107,11 +109,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Verify public tag is based on main
@@ -157,7 +159,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -200,7 +202,7 @@ jobs:
             signed-windows/SHA256SUMS-windows.txt
           if-no-files-found: error
       - name: Attest signed Windows installers
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             signed-windows/GuildBridge-*-windows-x64.zip
@@ -218,11 +220,11 @@ jobs:
       attestations: read
       contents: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Install production evidence validator
@@ -277,8 +279,8 @@ jobs:
           fi
           evidence_file="$RUNNER_TEMP/guildbridge-production-evidence.json"
           printf '%s' "$GUILDBRIDGE_PRODUCTION_EVIDENCE_JSON" > "$evidence_file"
-          python scripts/check-production-evidence.py --evidence "$evidence_file" --tag "$TAG_NAME" --expected-commit "$SOURCE_COMMIT"
-          python scripts/check-release-assets.py --assets-dir release-assets --evidence "$evidence_file"
+          python scripts/check-production-evidence.py --repo "$GITHUB_REPOSITORY" --evidence "$evidence_file" --tag "$TAG_NAME" --expected-commit "$SOURCE_COMMIT"
+          python scripts/check-release-assets.py --assets-dir release-assets --evidence "$evidence_file" --tag "$TAG_NAME"
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

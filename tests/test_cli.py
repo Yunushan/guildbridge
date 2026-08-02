@@ -12,6 +12,27 @@ from guildbridge.providers import get_provider, provider_names
 from guildbridge.providers.base import ImportOptions
 from guildbridge.routes import canonical_provider_names, structure_route_document
 from guildbridge.safety import APPLY_CONFIRMATION, validate_apply_safety
+from guildbridge.utils import atomic_write_bytes
+
+
+def test_write_json_creates_a_complete_utf8_file_without_temp_artifacts(tmp_path: Path) -> None:
+    output = tmp_path / "nested" / "plan.json"
+
+    write_json({"status": "ok", "message": "Türkçe"}, str(output))
+
+    assert json.loads(output.read_text(encoding="utf-8")) == {"status": "ok", "message": "Türkçe"}
+    assert list(output.parent.glob(f".{output.name}.*.tmp")) == []
+
+
+def test_atomic_write_bytes_replaces_destination_without_temp_artifacts(tmp_path: Path) -> None:
+    output = tmp_path / "nested" / "asset.bin"
+    output.parent.mkdir()
+    output.write_bytes(b"old")
+
+    atomic_write_bytes(output, b"new\x00bytes")
+
+    assert output.read_bytes() == b"new\x00bytes"
+    assert list(output.parent.glob(f".{output.name}.*.tmp")) == []
 
 
 def test_providers_command(capsys) -> None:  # type: ignore[no-untyped-def]

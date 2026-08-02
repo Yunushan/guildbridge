@@ -6,8 +6,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
+CODEOWNERS = ROOT / ".github" / "CODEOWNERS"
 ACTION_REFERENCE = re.compile(
-    r"^\s*-\s+uses:\s*(?P<action>[^\s@]+)@(?P<reference>[^\s#]+)", re.MULTILINE
+    r"^\s*(?:-\s+)?uses:\s*(?P<value>[^\s#]+)?", re.MULTILINE
 )
 FULL_COMMIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -20,6 +21,13 @@ def main() -> int:
     codeql = workflow_text.get("codeql.yml", "")
     self_hosted = workflow_text.get("self-hosted-platforms.yml", "")
     gitlab = _read(ROOT / ".gitlab-ci.yml", errors)
+    codeowners = _read(CODEOWNERS, errors)
+    gitattributes = _read(ROOT / ".gitattributes", errors)
+
+    _require(codeowners, "@Yunushan", ".github/CODEOWNERS must name the repository maintainer.", errors)
+    _require(gitattributes, "*.sh text eol=lf", ".gitattributes must enforce LF endings for shell scripts.", errors)
+    for path in ("/.github/", "/packaging/", "/scripts/", "/src/guildbridge/providers/"):
+        _require(codeowners, path, f".github/CODEOWNERS must cover {path}.", errors)
 
     for name, text in workflow_text.items():
         if "pull_request_target:" in text:
@@ -34,12 +42,13 @@ def main() -> int:
         errors.append("ci.yml must use full-depth checkouts without persisted credentials in every job.")
     _require(ci, "python scripts/check-security-baseline.py", "ci.yml must run the static security baseline.", errors)
     _require(ci, "python scripts/check-content-capability-scope.py", "ci.yml must verify live-content scope.", errors)
+    _require(ci, "python scripts/check-operations-readiness.py", "ci.yml must verify the operations runbook.", errors)
     _require(ci, "scripts/check-production-readiness.py", "ci.yml must lint the production-readiness preflight.", errors)
     _require(ci, "scripts/record-provider-drill-receipt.py", "ci.yml must lint the provider-drill receipt tool.", errors)
     _require(ci, "python -m ruff check --select S src scripts", "ci.yml must run Ruff security lint.", errors)
     _require(ci, "python -m ruff check --select BLE src scripts", "ci.yml must run Ruff exception lint.", errors)
     _require(ci, "python -m coverage run -m pytest -q", "ci.yml must measure source coverage.", errors)
-    _require(ci, "python -m coverage report", "ci.yml must enforce the source coverage threshold.", errors)
+    _require(ci, "python -m coverage report --fail-under=80", "ci.yml must enforce the source coverage threshold.", errors)
     _require(ci, "--require-hashes -r requirements/release.txt", "ci.yml package job must use the release lock.", errors)
     if ci.count("--require-hashes -r requirements/release.txt") != 1:
         errors.append("ci.yml must reserve the hash-locked release dependency graph for the package job.")
@@ -61,10 +70,11 @@ def main() -> int:
     )
     _require(self_hosted, "fetch-depth: 0", "self-hosted-platforms.yml must fetch Git history for secret scanning.", errors)
     _require(self_hosted, "persist-credentials: false", "self-hosted-platforms.yml must not persist GitHub credentials.", errors)
-    _require(self_hosted, "python -m coverage report", "self-hosted-platforms.yml must enforce the source coverage threshold.", errors)
+    _require(self_hosted, "python -m coverage report --fail-under=80", "self-hosted-platforms.yml must enforce the source coverage threshold.", errors)
     _require(self_hosted, "python scripts/check-secret-hygiene.py --history", "self-hosted-platforms.yml must scan full Git history for likely secrets.", errors)
     _require(self_hosted, "python scripts/check-security-baseline.py", "self-hosted-platforms.yml must run the static security baseline.", errors)
     _require(self_hosted, "python scripts/check-content-capability-scope.py", "self-hosted-platforms.yml must verify live-content scope.", errors)
+    _require(self_hosted, "python scripts/check-operations-readiness.py", "self-hosted-platforms.yml must verify the operations runbook.", errors)
     _require(self_hosted, "scripts/check-production-readiness.py", "self-hosted-platforms.yml must lint the production-readiness preflight.", errors)
     _require(self_hosted, "scripts/record-provider-drill-receipt.py", "self-hosted-platforms.yml must lint the provider-drill receipt tool.", errors)
     _require(self_hosted, "python -m ruff check --select S src scripts", "self-hosted-platforms.yml must run Ruff security lint.", errors)
@@ -79,11 +89,12 @@ def main() -> int:
         "python -m ruff check --select S src scripts",
         "python -m ruff check --select BLE src scripts",
         "python -m coverage run -m pytest -q",
-        "python -m coverage report",
+        "python -m coverage report --fail-under=80",
         "python scripts/check-release-controls.py",
         "python scripts/check-secret-hygiene.py --history",
         "python scripts/check-security-baseline.py",
         "python scripts/check-content-capability-scope.py",
+        "python scripts/check-operations-readiness.py",
         "scripts/check-production-readiness.py",
         "scripts/record-provider-drill-receipt.py",
         "python scripts/pip-audit-truststore.py --strict",
@@ -95,7 +106,12 @@ def main() -> int:
     _require(ci, "xvfb-run -a python -m pytest -q tests/test_gui_workflows.py", "ci.yml must construct the GUI under Xvfb.", errors)
     _require(ci, "container-smoke:", "ci.yml must build and run the pinned runtime container.", errors)
     _require(ci, "docker run --rm guildbridge:${{ github.sha }} --version", "ci.yml must verify the container entry point.", errors)
-    _require(ci, "needs: [test, hosted-compatibility, desktop-gui-smoke, container-smoke]", "ci.yml package must wait for every smoke job.", errors)
+    _require(
+        ci,
+        "needs: [test, hosted-compatibility, desktop-gui-smoke, desktop-gui-smoke-windows, container-smoke]",
+        "ci.yml package must wait for every smoke job.",
+        errors,
+    )
     _require(codeql, "security-events: write", "codeql.yml must allow CodeQL security-event uploads.", errors)
     _require(codeql, "actions: read", "codeql.yml must allow Actions workflow analysis.", errors)
     _require(codeql, "language: [python, actions]", "codeql.yml must analyze Python and Actions workflows.", errors)
@@ -140,6 +156,7 @@ def main() -> int:
         "python scripts/check-secret-hygiene.py --history",
         "python scripts/check-security-baseline.py",
         "python scripts/check-content-capability-scope.py",
+        "python scripts/check-operations-readiness.py",
         "scripts/check-production-readiness.py",
         "scripts/record-provider-drill-receipt.py",
         "python -m ruff check --select S src scripts",
@@ -147,7 +164,7 @@ def main() -> int:
         "Docker runtime smoke test",
         "docker run --rm guildbridge:${{ github.sha }} --version",
         "python -m coverage run -m pytest -q",
-        "python -m coverage report",
+        "python -m coverage report --fail-under=80",
         "python scripts/pip-audit-truststore.py --strict",
         "--require-hashes -r requirements/release.txt",
         "rm -rf dist",
@@ -175,7 +192,8 @@ def main() -> int:
         "--source-digest",
         "--deny-self-hosted-runners",
         "Verify private production evidence",
-        "scripts/check-production-evidence.py",
+        'scripts/check-production-evidence.py --repo "$GITHUB_REPOSITORY"',
+        '--expected-commit "$SOURCE_COMMIT"',
         "scripts/check-release-assets.py",
         "scripts/check-github-production-settings.py",
         "Verify public tag is based on main",
@@ -230,6 +248,9 @@ def main() -> int:
     ):
         _require(dockerignore, required, f".dockerignore is missing required build-context protection: {required}", errors)
 
+    gitignore = _read(ROOT / ".gitignore", errors)
+    errors.extend(_generic_gitignore_errors(gitignore))
+
     runtime_lock = _read(ROOT / "requirements" / "runtime-linux.txt", errors)
     for required in ("--hash=sha256:", "keyring==", "requests==", "secretstorage=="):
         _require(
@@ -268,11 +289,14 @@ def main() -> int:
 
     for path in (ROOT / "scripts" / "release.ps1", ROOT / "scripts" / "release.sh"):
         release_script = _read(path, errors)
+        if path.suffix == ".sh":
+            errors.extend(_shell_line_ending_errors(path))
         for required in (
             "scripts/check-secret-hygiene.py",
             "--history",
             "scripts/check-security-baseline.py",
             "scripts/check-content-capability-scope.py",
+            "scripts/check-operations-readiness.py",
             "scripts/check-production-readiness.py",
             "scripts/record-provider-drill-receipt.py",
             "--select",
@@ -314,9 +338,26 @@ def _read(path: Path, errors: list[str]) -> str:
         return ""
 
 
+def _shell_line_ending_errors(path: Path, *, root: Path = ROOT) -> list[str]:
+    """Reject line endings that can prevent a checked-in shell script from starting on Unix."""
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        return [f"Could not read {path.relative_to(root)}: {exc}"]
+    if b"\r\n" in content or b"\r" in content:
+        return [f"{path.relative_to(root)}: shell scripts must use LF line endings."]
+    return []
+
+
 def _require(text: str, value: str, message: str, errors: list[str]) -> None:
     if value not in text:
         errors.append(message)
+
+
+def _generic_gitignore_errors(text: str) -> list[str]:
+    if re.search(r"(?m)^/test\s*$", text):
+        return [".gitignore must not hide a generic top-level /test artifact path."]
+    return []
 
 
 def _require_release_job_permissions(
@@ -359,11 +400,12 @@ def _workflow_permissions_from_body(body: str) -> dict[str, str]:
 def _action_pin_errors(name: str, text: str) -> list[str]:
     errors: list[str] = []
     for match in ACTION_REFERENCE.finditer(text):
-        reference = match.group("reference")
-        if not FULL_COMMIT_SHA.fullmatch(reference):
+        value = match.group("value") or ""
+        action, separator, reference = value.rpartition("@")
+        if not separator or not action or not FULL_COMMIT_SHA.fullmatch(reference):
             errors.append(
                 f"{name}: action reference is not pinned to a full commit SHA: "
-                f"{match.group('action')}@{reference}"
+                f"{value or '<missing>'}"
             )
     return errors
 

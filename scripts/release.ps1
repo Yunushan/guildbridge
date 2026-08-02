@@ -128,7 +128,17 @@ function Write-Utf8NoBom {
     )
 
     $encoding = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+    $directory = Split-Path -Parent ([System.IO.Path]::GetFullPath($Path))
+    $temporary = Join-Path $directory (".{0}.{1}.tmp" -f ([System.IO.Path]::GetFileName($Path)), ([guid]::NewGuid().ToString("N")))
+    try {
+        [System.IO.File]::WriteAllText($temporary, $Content, $encoding)
+        [System.IO.File]::Move($temporary, $Path, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Set-Version {
@@ -161,13 +171,14 @@ function Invoke-ReleaseChecks {
         return
     }
 
-    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "src", "tests", "scripts/check-platform.py", "scripts/verify-dist.py", "scripts/check-release-version.py", "scripts/check-release-controls.py", "scripts/check-secret-hygiene.py", "scripts/check-security-baseline.py", "scripts/check-github-production-settings.py", "scripts/check-production-evidence.py", "scripts/check-production-readiness.py", "scripts/record-provider-drill-receipt.py", "scripts/check-release-assets.py", "scripts/check-content-capability-scope.py", "scripts/pip-audit-truststore.py")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "src", "tests", "scripts/check-platform.py", "scripts/verify-dist.py", "scripts/check-release-version.py", "scripts/check-release-controls.py", "scripts/check-secret-hygiene.py", "scripts/check-security-baseline.py", "scripts/check-github-production-settings.py", "scripts/check-production-evidence.py", "scripts/check-production-readiness.py", "scripts/record-provider-drill-receipt.py", "scripts/check-release-assets.py", "scripts/check-content-capability-scope.py", "scripts/check-operations-readiness.py", "scripts/pip-audit-truststore.py")
     Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "--select", "S", "src", "scripts")
     Invoke-Checked -FilePath $Python -Arguments @("-m", "ruff", "check", "--select", "BLE", "src", "scripts")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-release-controls.py")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-secret-hygiene.py", "--history")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-security-baseline.py")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-content-capability-scope.py")
+    Invoke-Checked -FilePath $Python -Arguments @("scripts/check-operations-readiness.py")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/pip-audit-truststore.py", "--strict")
     Assert-Command -Name "gh"
     Invoke-Checked -FilePath $Python -Arguments @(
@@ -177,7 +188,7 @@ function Invoke-ReleaseChecks {
     )
     Invoke-Checked -FilePath $Python -Arguments @("-m", "mypy", "src")
     Invoke-Checked -FilePath $Python -Arguments @("-m", "coverage", "run", "-m", "pytest", "-q")
-    Invoke-Checked -FilePath $Python -Arguments @("-m", "coverage", "report")
+    Invoke-Checked -FilePath $Python -Arguments @("-m", "coverage", "report", "--fail-under=80")
     Invoke-Checked -FilePath $Python -Arguments @("scripts/check-platform.py", "--require", "cli", "--format", "json")
 }
 

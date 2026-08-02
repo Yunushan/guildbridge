@@ -26,7 +26,7 @@ htmlcov/
 
 # Generated migration artifacts
 .guildbridge/
-/test
+# Keep generic top-level names visible; migration output must use the explicit patterns below.
 *.plan.json
 *.result.json
 *.apply-result.json

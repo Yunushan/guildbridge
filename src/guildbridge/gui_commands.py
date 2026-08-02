@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from guildbridge.diagnostics import format_error_report
+from guildbridge.processes import process_group_kwargs, terminate_process_tree
 from guildbridge.safety import APPLY_CONFIRMATION
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 60 * 60
@@ -521,7 +522,9 @@ def subprocess_command(args: Sequence[str]) -> list[str]:
 def subprocess_creationflags() -> int:
     if sys.platform != "win32":
         return 0
-    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(
+        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
 
 
 def subprocess_environment() -> dict[str, str]:
@@ -547,32 +550,39 @@ def run_cli_args(
 ) -> CommandResult:
     command = subprocess_command(args)
     started = time.monotonic()
+    process: subprocess.Popen[str] | None = None
     try:
         # Commands are generated from the bundled CLI and passed without a shell.
-        completed = subprocess.run(  # noqa: S603
+        process = subprocess.Popen(  # noqa: S603
             command,
             cwd=str(cwd) if cwd is not None else None,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout_seconds,
-            check=False,
-            creationflags=subprocess_creationflags(),
             env=subprocess_environment(),
+            **process_group_kwargs(),
         )
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
         duration = time.monotonic() - started
         return CommandResult(
             args=tuple(args),
             command=tuple(command),
-            returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            returncode=process.returncode,
+            stdout=stdout,
+            stderr=stderr,
             duration_seconds=duration,
         )
     except subprocess.TimeoutExpired as exc:
+        if process is not None:
+            terminate_process_tree(process)
+            stdout, stderr = process.communicate()
+        else:
+            stdout, stderr = _text(exc.stdout), _text(exc.stderr)
         duration = time.monotonic() - started
-        stderr = _text(exc.stderr)
+        stdout = _text(stdout) or _text(exc.stdout)
+        stderr = _text(stderr) or _text(exc.stderr)
         if stderr:
             stderr += "\n"
         stderr += f"Command timed out after {timeout_seconds} seconds."
@@ -580,7 +590,7 @@ def run_cli_args(
             args=tuple(args),
             command=tuple(command),
             returncode=124,
-            stdout=_text(exc.stdout),
+            stdout=stdout,
             stderr=stderr,
             duration_seconds=duration,
             timed_out=True,

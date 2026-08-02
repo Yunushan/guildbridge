@@ -3,12 +3,13 @@ from __future__ import annotations
 import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
+from http.client import HTTPConnection
 from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 import pytest
@@ -369,6 +370,32 @@ def test_lan_auth_allows_post_header_token(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert response.status == 200
     assert "guildbridge platforms --check" in body
+
+
+def test_web_rejects_negative_content_length() -> None:
+    with running_web_server() as base_url:
+        parsed = urlparse(base_url)
+        connection = HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+        connection.putrequest("POST", "/run")
+        connection.putheader("Content-Length", "-1")
+        connection.endheaders()
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+
+    assert response.status == 400
+
+
+def test_web_rejects_invalid_utf8_request_body() -> None:
+    with running_web_server() as base_url:
+        parsed = urlparse(base_url)
+        connection = HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+        connection.request("POST", "/run", body=b"\xff", headers={"Content-Length": "1"})
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+
+    assert response.status == 400
 
 
 def test_web_in_process_errors_include_recovery_guidance() -> None:

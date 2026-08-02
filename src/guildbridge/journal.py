@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import secrets
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -9,8 +11,10 @@ from typing import Any
 
 from guildbridge.http import sanitize_text
 from guildbridge.models import Action, CommunityTemplate, ImportResult
+from guildbridge.utils import atomic_write_text
 
 JOURNAL_SCHEMA = "guildbridge.apply-journal.v1"
+APPLY_LOCK_SCHEMA = "guildbridge.apply-lock.v1"
 
 
 def utc_now() -> str:
@@ -49,6 +53,63 @@ def default_journal_path(command: str, provider: str, *, root: str | Path = ".gu
     safe_command = _safe_path_part(command)
     safe_provider = _safe_path_part(provider)
     return Path(root) / f"{stamp}-{safe_command}-{safe_provider}-{suffix}.json"
+
+
+def default_apply_lock_path(
+    provider: str,
+    *,
+    target_id: str | None = None,
+    target_name: str | None = None,
+    root: str | Path = ".guildbridge/locks",
+) -> Path:
+    """Return a stable, credential-free lock path for one structural target."""
+    target_key = target_id or target_name or "new-target"
+    digest = hashlib.sha256(f"{provider}\0{target_key}".encode()).hexdigest()[:16]
+    return Path(root) / f"{_safe_path_part(provider)}-{digest}.lock"
+
+
+class ApplyMigrationLock:
+    """Prevent concurrent structural writes to the same provider target."""
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._created = False
+
+    def __enter__(self) -> ApplyMigrationLock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self.path.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps({"schema": APPLY_LOCK_SCHEMA, "created_at": utc_now()}) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError as exc:
+            raise ValueError(
+                f"Structural migration lock already exists at {self.path}. "
+                "Another migration may be running, or a previous run may need manual recovery."
+            ) from exc
+        except Exception:
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                # Recovery cleanup is idempotent if the lock disappeared concurrently.
+                pass
+            raise
+        self._created = True
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        del exc_type, exc, traceback
+        if self._created:
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                # Normal exit cleanup is idempotent if another recovery removed the lock.
+                pass
 
 
 def load_journal(path: str | Path) -> dict[str, Any]:
@@ -160,11 +221,8 @@ class ApplyJournal:
         return entry
 
     def _write(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(self._data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
-        tmp = self.path.with_name(f".{self.path.name}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(self.path)
+        atomic_write_text(self.path, text)
 
 
 def _safe_path_part(value: str) -> str:

@@ -17,6 +17,10 @@ GuildBridge treats templates as public artifacts by default.
 - raw provider IDs
 - bot tokens, session tokens, cookies, and access tokens
 
+## Managed Discord exporter downloads
+
+When the optional managed DiscordChatExporter bootstrap is used, GuildBridge accepts only HTTPS assets hosted by GitHub, follows a bounded number of redirects, closes each HTTP response, and rejects archives larger than 250 MiB. The asset must also provide a trusted SHA-256 digest from release metadata or the explicit `--discord-chat-exporter-sha256` option before it is written or executed. A local exporter binary can be supplied instead when the operator has independently verified it.
+
 ## Permission overwrites
 
 Role/everyone overwrites are structural and portable, so they can be exported.

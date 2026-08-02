@@ -156,6 +156,7 @@ class GuildBridgeGUI(ttk.Frame):
         self.theme = StringVar(value="Light")
         self.output = scrolledtext.ScrolledText(self, height=10, wrap="word")
         self.icon_image: PhotoImage | None = None
+        self._command_running = False
         self.themed_canvases: list[Canvas] = []
         self.themed_listboxes: list[Listbox] = []
         self.themed_trees: list[ttk.Treeview] = []
@@ -1734,8 +1735,16 @@ class GuildBridgeGUI(ttk.Frame):
         plan_out: str = "",
         apply_prompt: ApplyPrompt | None = None,
     ) -> None:
+        if self._command_running:
+            messagebox.showwarning(
+                "GuildBridge is busy",
+                "Another command is still running. Wait for it to finish before starting a new operation.",
+                parent=self.master,
+            )
+            return
         if apply_requested and not self._confirm_apply(reviewed_plan, plan_out, apply_prompt):
             return
+        self._command_running = True
         self._append_output(f"$ {command_preview(args)}\nStatus: running...\n")
         worker = threading.Thread(target=self._worker, args=(args,), daemon=True)
         worker.start()
@@ -1851,7 +1860,18 @@ class GuildBridgeGUI(ttk.Frame):
         return "\n".join(lines)
 
     def _worker(self, args: list[str]) -> None:
-        self.result_queue.put(run_cli_args(args))
+        try:
+            result = run_cli_args(args)
+        except Exception as exc:  # noqa: BLE001 - worker boundary must surface unexpected failures in the GUI.
+            result = CommandResult(
+                args=tuple(args),
+                command=(),
+                returncode=1,
+                stdout="",
+                stderr=f"GUI worker failed: {exc}",
+                duration_seconds=0.0,
+            )
+        self.result_queue.put(result)
 
     def _poll(self) -> None:
         try:
@@ -1859,6 +1879,7 @@ class GuildBridgeGUI(ttk.Frame):
         except queue.Empty:
             self.after(100, self._poll)
             return
+        self._command_running = False
         self._show_result(result)
 
     def _show_result(self, result: CommandResult) -> None:

@@ -36,7 +36,11 @@ def _structural_journal(*, resumed_from: str | None = None) -> dict[str, object]
     return {
         "schema": "guildbridge.apply-journal.v1",
         "status": "succeeded",
-        "context": {"provider": "stoat"},
+        "context": {
+            "provider": "stoat",
+            "source_provider": "discord",
+            "reviewed_plan_hash": "a" * 64,
+        },
         "resumed_from": resumed_from,
     }
 
@@ -77,11 +81,49 @@ def test_receipt_rejects_a_recovery_journal_without_resume_evidence(tmp_path: Pa
         )
 
 
+def test_receipt_rejects_a_journal_for_a_different_source_or_plan(tmp_path: Path) -> None:
+    plan = _write(tmp_path / "plan.json", _plan())
+    apply_data = _structural_journal()
+    apply_context = apply_data["context"]
+    assert isinstance(apply_context, dict)
+    apply_context["source_provider"] = "fluxer"
+    apply = _write(tmp_path / "apply.json", apply_data)
+    recovery = _write(tmp_path / "recovery.json", _structural_journal(resumed_from="failed.json"))
+
+    with pytest.raises(ValueError, match="source_provider"):
+        receipt.build_receipt(
+            kind="structural",
+            source="discord",
+            target="stoat",
+            plan_path=plan,
+            apply_journal_path=apply,
+            recovery_journal_path=recovery,
+        )
+
+    apply_context["source_provider"] = "discord"
+    apply_context["reviewed_plan_hash"] = "b" * 64
+    apply = _write(tmp_path / "apply.json", apply_data)
+    with pytest.raises(ValueError, match="reviewed_plan_hash"):
+        receipt.build_receipt(
+            kind="structural",
+            source="discord",
+            target="stoat",
+            plan_path=plan,
+            apply_journal_path=apply,
+            recovery_journal_path=recovery,
+        )
+
+
 def test_content_receipt_requires_the_content_journal_schema(tmp_path: Path) -> None:
     plan = _write(tmp_path / "plan.json", _plan())
     apply = _write(
         tmp_path / "apply.json",
-        {"schema": "guildbridge.content-apply-journal.v1", "status": "succeeded", "provider": "stoat"},
+        {
+            "schema": "guildbridge.content-apply-journal.v1",
+            "status": "succeeded",
+            "provider": "stoat",
+            "action_hash": "a" * 64,
+        },
     )
     recovery = _write(
         tmp_path / "recovery.json",
@@ -89,6 +131,7 @@ def test_content_receipt_requires_the_content_journal_schema(tmp_path: Path) -> 
             "schema": "guildbridge.content-apply-journal.v1",
             "status": "succeeded",
             "provider": "stoat",
+            "action_hash": "a" * 64,
             "resumed_from": "failed-content.json",
         },
     )
@@ -103,3 +146,37 @@ def test_content_receipt_requires_the_content_journal_schema(tmp_path: Path) -> 
     )
 
     assert result["kind"] == "content"
+    assert result["apply_journal"]["action_hash"] == "a" * 64
+
+
+def test_content_receipt_rejects_a_journal_for_a_different_action_set(tmp_path: Path) -> None:
+    plan = _write(tmp_path / "plan.json", _plan())
+    apply = _write(
+        tmp_path / "apply.json",
+        {
+            "schema": "guildbridge.content-apply-journal.v1",
+            "status": "succeeded",
+            "provider": "stoat",
+            "action_hash": "b" * 64,
+        },
+    )
+    recovery = _write(
+        tmp_path / "recovery.json",
+        {
+            "schema": "guildbridge.content-apply-journal.v1",
+            "status": "succeeded",
+            "provider": "stoat",
+            "action_hash": "a" * 64,
+            "resumed_from": "failed-content.json",
+        },
+    )
+
+    with pytest.raises(ValueError, match="action_hash"):
+        receipt.build_receipt(
+            kind="content",
+            source="discord",
+            target="stoat",
+            plan_path=plan,
+            apply_journal_path=apply,
+            recovery_journal_path=recovery,
+        )

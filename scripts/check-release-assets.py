@@ -13,15 +13,17 @@ from typing import Any
 from guildbridge.release_assets import ASSET_PATTERNS, PYTHON_MANIFEST_KEYS, WINDOWS_MANIFEST_KEYS
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+(?:[A-Za-z0-9.-]+)?$")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify release assets against their manifests and private evidence.")
     parser.add_argument("--assets-dir", required=True, type=Path, help="directory containing downloaded release assets")
     parser.add_argument("--evidence", required=True, type=Path, help="private production evidence JSON")
+    parser.add_argument("--tag", required=True, help="release tag whose version must appear in every asset name")
     args = parser.parse_args(argv)
 
-    errors = validate_release_assets(args.assets_dir, args.evidence)
+    errors = validate_release_assets(args.assets_dir, args.evidence, tag=args.tag)
     if errors:
         print("check-release-assets: error:", file=sys.stderr)
         for error in errors:
@@ -31,18 +33,43 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def validate_release_assets(assets_dir: Path, evidence_path: Path) -> list[str]:
+def validate_release_assets(assets_dir: Path, evidence_path: Path, *, tag: str | None = None) -> list[str]:
     errors: list[str] = []
     assets = _select_assets(assets_dir, errors)
     evidence = _load_evidence(evidence_path, errors)
     if errors:
         return errors
 
+    if tag is not None:
+        _verify_asset_versions(assets, tag, errors)
     _verify_asset_inventory(assets_dir, assets, errors)
     _verify_manifest(assets["sha256s"], assets, PYTHON_MANIFEST_KEYS, errors)
     _verify_manifest(assets["windows_sha256s"], assets, WINDOWS_MANIFEST_KEYS, errors)
     _verify_evidence_checksums(evidence, assets, errors)
     return errors
+
+
+def _verify_asset_versions(assets: dict[str, Path], tag: str, errors: list[str]) -> None:
+    if not TAG_PATTERN.fullmatch(tag):
+        errors.append("--tag must be a v-prefixed semantic version.")
+        return
+    version = tag[1:]
+    expected_names = {
+        "sdist": f"guildbridge-{version}.tar.gz",
+        "windows_zip": f"GuildBridge-{version}-windows-x64.zip",
+        "windows_msi": f"GuildBridge-{version}-windows-x64.msi",
+        "sbom": f"guildbridge-{tag}.spdx.json",
+        "dependency_audit": f"guildbridge-{tag}.dependency-audit.json",
+    }
+    for key, expected_name in expected_names.items():
+        actual_name = assets[key].name
+        if actual_name != expected_name:
+            errors.append(f"{key} asset must be named {expected_name}, found {actual_name}.")
+    wheel_prefix = f"guildbridge-{version}-"
+    if not assets["wheel"].name.startswith(wheel_prefix) or not assets["wheel"].name.endswith(".whl"):
+        errors.append(
+            f"wheel asset must start with {wheel_prefix!r} and end with '.whl', found {assets['wheel'].name}."
+        )
 
 
 def _select_assets(assets_dir: Path, errors: list[str]) -> dict[str, Path]:

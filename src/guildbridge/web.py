@@ -1000,10 +1000,17 @@ class GuildBridgeWebHandler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid Content-Length")
             return
+        if length < 0:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Content-Length must not be negative")
+            return
         if length > self.max_body_bytes:
             self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body is too large")
             return
-        raw = self.rfile.read(length).decode("utf-8")
+        try:
+            raw = self.rfile.read(length).decode("utf-8")
+        except UnicodeDecodeError:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Request body must be valid UTF-8")
+            return
         form = parse_qs(raw, keep_blank_values=True)
         if self.require_auth:
             if not self._request_auth_ok():
