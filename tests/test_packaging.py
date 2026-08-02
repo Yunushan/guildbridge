@@ -118,7 +118,7 @@ def test_project_metadata_uses_modern_license_fields() -> None:
     pyproject = _text("pyproject.toml")
 
     assert 'requires = ["setuptools>=77", "wheel"]' in pyproject
-    assert 'license = "MIT"' in pyproject
+    assert 'license = "0BSD"' in pyproject
     assert 'license-files = ["LICENSE"]' in pyproject
     assert '"Development Status :: 5 - Production/Stable"' in pyproject
     assert '"Development Status :: 3 - Alpha"' not in pyproject
