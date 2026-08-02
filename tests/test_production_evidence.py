@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -46,6 +48,13 @@ def test_production_evidence_example_cannot_be_used_as_a_release_record() -> Non
     assert "artifact_checksums must contain distinct digests for every published artifact." in errors
 
 
+def test_production_evidence_cli_requires_exact_release_commit() -> None:
+    module = _module()
+
+    with pytest.raises(SystemExit):
+        module.main(["--repo", "Yunushan/guildbridge", "--evidence", "evidence.json", "--tag", "v1.0.9"])
+
+
 def test_completed_production_evidence_covers_structural_and_live_content_routes() -> None:
     module = _module()
 
@@ -85,6 +94,33 @@ def test_production_evidence_binds_to_the_checked_out_release_commit() -> None:
     assert "source_commit must exactly match --expected-commit." in errors
 
 
+def test_production_evidence_binds_workflow_url_and_private_refs_to_repo_and_tag() -> None:
+    module = _module()
+    evidence = _completed_evidence()
+
+    errors = module.validate_evidence(evidence, "v1.0.9", repo="other-owner/other-repo")
+
+    assert "workflow_run_url must be a GitHub Actions run URL." in errors
+    assert not any("must include the release tag" in error for error in errors)
+
+    evidence["github_settings_evidence_ref"] = "private://release-evidence/v1.0.8/settings"
+    errors = module.validate_evidence(evidence, "v1.0.9", repo="Yunushan/guildbridge")
+
+    assert "github_settings_evidence_ref must include the release tag 'v1.0.9'." in errors
+
+
+def test_production_evidence_rejects_placeholder_reviewer_and_workflow_run() -> None:
+    module = _module()
+    evidence = _completed_evidence()
+    evidence["reviewed_by"] = "replace-with-release-owner"
+    evidence["workflow_run_url"] = "https://github.com/Yunushan/guildbridge/actions/runs/0000000000"
+
+    errors = module.validate_evidence(evidence, "v1.0.9", repo="Yunushan/guildbridge")
+
+    assert "reviewed_by must identify the actual release reviewer, not a placeholder." in errors
+    assert "workflow_run_url must be a GitHub Actions run URL." in errors
+
+
 def test_production_evidence_rejects_public_or_credential_bearing_evidence_references() -> None:
     module = _module()
     evidence = _completed_evidence()
@@ -121,3 +157,19 @@ def test_production_evidence_requires_live_content_route_evidence() -> None:
     errors = module.validate_evidence(evidence, "v1.0.9")
 
     assert "content_provider_drills[1].archive_export_verified must be true." in errors
+
+
+def test_production_evidence_requires_consumer_and_release_owner_reviews() -> None:
+    module = _module()
+    evidence = _completed_evidence()
+    evidence["consumer_assets_reviewed"] = False
+    evidence["release_owner_reviewed"] = False
+    del evidence["consumer_review_evidence_ref"]
+    del evidence["release_owner_evidence_ref"]
+
+    errors = module.validate_evidence(evidence, "v1.0.9")
+
+    assert "consumer_assets_reviewed must be true." in errors
+    assert "release_owner_reviewed must be true." in errors
+    assert "consumer_review_evidence_ref must be an opaque private:// evidence reference." in errors
+    assert "release_owner_evidence_ref must be an opaque private:// evidence reference." in errors

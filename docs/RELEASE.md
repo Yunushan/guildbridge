@@ -59,7 +59,7 @@ python -m ruff check --select S src scripts
 python -m ruff check --select BLE src scripts
 python -m mypy src
 python -m coverage run -m pytest -q
-python -m coverage report
+python -m coverage report --fail-under=80
 python scripts/pip-audit-truststore.py --strict
 python scripts/check-release-controls.py
 python scripts/check-secret-hygiene.py --history
@@ -119,10 +119,10 @@ This refuses a missing, duplicate, malformed, or checksum-mismatched asset befor
 After the protected release workflow finishes and the private evidence record is complete, use the single production-readiness gate:
 
 ```powershell
-python scripts/check-production-readiness.py --repo Yunushan/guildbridge --evidence C:\Private\guildbridge-v1.0.0-evidence.json --tag v1.0.0 --expected-commit <40-character-sha>
+python scripts/check-production-readiness.py --repo Yunushan/guildbridge --evidence C:\Private\guildbridge-v1.0.0-evidence.json --assets-dir C:\Downloads\GuildBridge-v1.0.0 --tag v1.0.0 --expected-commit <40-character-sha>
 ```
 
-It is read-only and fails unless repository controls, GitHub settings, secret hygiene, security baseline, content-route scope, and the exact release evidence all pass.
+It is read-only and fails unless repository controls, GitHub settings, secret hygiene, security baseline, content-route scope, downloaded release assets, and the exact release evidence all pass.
 
 ## Rollback Notes
 

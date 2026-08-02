@@ -72,6 +72,7 @@ def _valid_tag_rulesets() -> list[dict[str, Any]]:
             "enforcement": "active",
             "conditions": {"ref_name": {"include": ["refs/tags/v*"]}},
             "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+            "bypass_actors": [{"actor_id": 2, "actor_type": "User", "bypass_mode": "always"}],
         }
     ]
 
@@ -80,6 +81,28 @@ def test_validate_settings_accepts_complete_hosted_controls() -> None:
     module = _module()
 
     repository, protection, environment, secrets, deployment_policies = _valid_settings()
+
+    assert module.validate_settings(
+        repository,
+        protection,
+        environment,
+        secrets,
+        deployment_policies=deployment_policies,
+        release_author_id=2,
+        default_branch_commit_sha="a" * 40,
+        codeql_analyses=_valid_codeql_analyses(),
+        rulesets=_valid_tag_rulesets(),
+    ) == []
+
+
+def test_validate_settings_accepts_github_workflow_prefixed_check_names() -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+    protection["required_status_checks"]["contexts"] = [
+        "CI / package",
+        "CodeQL / Analyze (python)",
+        "CodeQL / Analyze (actions)",
+    ]
 
     assert module.validate_settings(
         repository,
@@ -207,6 +230,55 @@ def test_validate_settings_requires_an_immutable_public_tag_ruleset() -> None:
     assert "release tag ruleset for refs/tags/v* is missing protections: deletion, update" in errors
 
 
+def test_validate_settings_requires_the_authorized_release_user_to_bypass_tag_rules() -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+    rulesets = _valid_tag_rulesets()
+    rulesets[0]["bypass_actors"] = []
+
+    errors = module.validate_settings(
+        repository,
+        protection,
+        environment,
+        secrets,
+        deployment_policies=deployment_policies,
+        release_author_id=2,
+        rulesets=rulesets,
+        default_branch_commit_sha="a" * 40,
+        codeql_analyses=_valid_codeql_analyses(),
+    )
+
+    assert (
+        "release tag ruleset for refs/tags/v* must grant always-on bypass only to the authorized release user"
+        in errors
+    )
+
+
+def test_validate_settings_rejects_broad_tag_ruleset_bypass() -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+    rulesets = _valid_tag_rulesets()
+    rulesets[0]["bypass_actors"] = [{"actor_type": "OrganizationAdmin", "bypass_mode": "always"}]
+
+    errors = module.validate_settings(
+        repository,
+        protection,
+        environment,
+        secrets,
+        deployment_policies=deployment_policies,
+        release_author_id=2,
+        rulesets=rulesets,
+        default_branch_commit_sha="a" * 40,
+        codeql_analyses=_valid_codeql_analyses(),
+    )
+
+    assert (
+        "release tag ruleset for refs/tags/v* must not grant bypass to an organization administrator, "
+        "enterprise owner/role, or repository role"
+        in errors
+    )
+
+
 def test_validate_settings_requires_current_commit_codeql_for_python_and_actions() -> None:
     module = _module()
     repository, protection, environment, secrets, deployment_policies = _valid_settings()
@@ -293,12 +365,25 @@ def test_main_fetches_the_environment_deployment_policy_and_writes_a_private_rec
     )
 
     receipt_path = tmp_path / "github-production-settings-audit.json"
-    assert module.main(["--repo", "example/guildbridge", "--receipt-out", str(receipt_path)]) == 0
+    assert module.main(
+        [
+            "--repo",
+            "example/guildbridge",
+            "--receipt-out",
+            str(receipt_path),
+            "--release-tag",
+            "v1.0.10",
+            "--expected-commit",
+            "a" * 40,
+        ]
+    ) == 0
     assert "user" in endpoints
     assert "repos/example/guildbridge/environments/production-release/deployment-branch-policies" in endpoints
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["schema"] == "guildbridge.github-production-settings-audit-receipt.v1"
     assert receipt["repository"] == "example/guildbridge"
+    assert receipt["release_tag"] == "v1.0.10"
+    assert receipt["source_commit"] == "a" * 40
     assert receipt["verified_controls"] == [
         "repository_security",
         "branch_protection",
@@ -344,7 +429,18 @@ def test_main_does_not_write_a_receipt_when_hosted_controls_fail(
         ),
     )
 
-    assert module.main(["--repo", "example/guildbridge", "--receipt-out", str(receipt_path)]) == 1
+    assert module.main(
+        [
+            "--repo",
+            "example/guildbridge",
+            "--receipt-out",
+            str(receipt_path),
+            "--release-tag",
+            "v1.0.10",
+            "--expected-commit",
+            "a" * 40,
+        ]
+    ) == 1
     assert not receipt_path.exists()
 
 

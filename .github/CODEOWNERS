@@ -1,0 +1,8 @@
+# Production-sensitive changes require review by the repository maintainer.
+/.github/ @Yunushan
+/packaging/ @Yunushan
+/scripts/ @Yunushan
+/src/guildbridge/providers/ @Yunushan
+/Dockerfile @Yunushan
+/requirements/ @Yunushan
+* @Yunushan

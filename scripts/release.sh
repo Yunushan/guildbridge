@@ -192,6 +192,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from pathlib import Path
 
 version = os.environ["VERSION"]
@@ -204,7 +205,21 @@ def update(path: Path, pattern: str, replacement: str, label: str) -> None:
     updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
     if count != 1:
         raise SystemExit(f"Could not update {label} in {path}")
-    path.write_text(updated, encoding="utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent), text=True
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(updated)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 update(pyproject_path, r'^version = "[^"]+"$', f'version = "{version}"', "project version")
@@ -235,19 +250,20 @@ PY
 if [ "$SKIP_CHECKS" -eq 1 ]; then
   printf '%s\n' "Warning: skipping lint, type checks, tests, and platform check." >&2
 else
-  run "$PYTHON" -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-release-controls.py scripts/check-secret-hygiene.py scripts/check-security-baseline.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/pip-audit-truststore.py
+  run "$PYTHON" -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-release-version.py scripts/check-release-controls.py scripts/check-secret-hygiene.py scripts/check-security-baseline.py scripts/check-github-production-settings.py scripts/check-production-evidence.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py scripts/check-release-assets.py scripts/check-content-capability-scope.py scripts/check-operations-readiness.py scripts/pip-audit-truststore.py
   run "$PYTHON" -m ruff check --select S src scripts
   run "$PYTHON" -m ruff check --select BLE src scripts
   run "$PYTHON" scripts/check-release-controls.py
   run "$PYTHON" scripts/check-secret-hygiene.py --history
   run "$PYTHON" scripts/check-security-baseline.py
   run "$PYTHON" scripts/check-content-capability-scope.py
+  run "$PYTHON" scripts/check-operations-readiness.py
   run "$PYTHON" scripts/pip-audit-truststore.py --strict
   require_command gh
   run "$PYTHON" scripts/check-github-production-settings.py --repo "$(github_repository)"
   run "$PYTHON" -m mypy src
   run "$PYTHON" -m coverage run -m pytest -q
-  run "$PYTHON" -m coverage report
+  run "$PYTHON" -m coverage report --fail-under=80
   run "$PYTHON" scripts/check-platform.py --require cli --format json
 fi
 

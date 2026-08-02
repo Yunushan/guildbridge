@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import tkinter as tk
 from pathlib import Path
@@ -142,6 +143,8 @@ def test_gui_builds_full_tk_surface_when_a_desktop_session_is_available() -> Non
     try:
         root = tk.Tk()
     except tk.TclError as exc:
+        if os.environ.get("GUILDBRIDGE_REQUIRE_GUI") == "1":
+            pytest.fail(f"Tk desktop session is required for this GUI smoke job: {exc}")
         pytest.skip(f"Tk desktop session is unavailable: {exc}")
         return
 
@@ -523,6 +526,33 @@ def test_result_dialog_truncates_details_and_show_result_reports_status(monkeypa
     assert dialogs[0][0] == "error"
     assert dialogs[0][1].endswith("\n...")
     assert dialogs[1][0] == "info"
+
+
+def test_run_rejects_overlapping_commands(monkeypatch) -> None:
+    harness = SimpleNamespace(master=object(), _command_running=True)
+    warnings: list[tuple[object, ...]] = []
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda *args, **_kwargs: warnings.append(args))
+
+    gui.GuildBridgeGUI._run(harness, ["providers"])
+
+    assert warnings == [
+        (
+            "GuildBridge is busy",
+            "Another command is still running. Wait for it to finish before starting a new operation.",
+        )
+    ]
+
+
+def test_poll_clears_busy_state_before_showing_result() -> None:
+    harness = PollHarness()
+    harness._command_running = True
+    result = CommandResult(("providers",), ("python",), 0, "ok", "", 0.1)
+    harness.result_queue.put(result)
+
+    gui.GuildBridgeGUI._poll(harness)
+
+    assert harness._command_running is False
+    assert harness.results == [result]
 
 
 def test_confirm_apply_validates_plan_then_uses_yes_no_prompt(monkeypatch, tmp_path: Path) -> None:

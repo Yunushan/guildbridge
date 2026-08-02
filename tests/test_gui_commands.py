@@ -18,6 +18,7 @@ from guildbridge.gui_commands import (
     build_redact_args,
     build_validate_args,
     command_preview,
+    process_group_kwargs,
     run_cli_args,
     subprocess_command,
     subprocess_creationflags,
@@ -264,7 +265,11 @@ def test_subprocess_command_uses_bundled_cli_when_frozen(
 
 
 def test_subprocess_creationflags_hide_windows_console() -> None:
-    expected = int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0
+    expected = (
+        int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        if sys.platform == "win32"
+        else 0
+    )
     assert subprocess_creationflags() == expected
 
 
@@ -278,12 +283,23 @@ def test_subprocess_environment_forces_utf8() -> None:
 def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    class FakeProcess:
+        pid = 1234
+        returncode = 0
+
+        def communicate(self, **kwargs: object) -> tuple[str, str]:
+            seen["communicate"] = kwargs
+            return "ok", ""
+
+        def poll(self) -> int:
+            return self.returncode
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
         seen["command"] = command
         seen["kwargs"] = kwargs
-        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+        return FakeProcess()
 
-    monkeypatch.setattr("guildbridge.gui_commands.subprocess.run", fake_run)
+    monkeypatch.setattr("guildbridge.gui_commands.subprocess.Popen", fake_popen)
 
     result = run_cli_args(["providers"], timeout_seconds=5, cwd=".")
 
@@ -294,22 +310,43 @@ def test_run_cli_args_uses_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["command"] == subprocess_command(["providers"])
     assert seen["kwargs"] == {
         "cwd": ".",
-        "capture_output": True,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",
-        "timeout": 5,
-        "check": False,
-        "creationflags": subprocess_creationflags(),
         "env": subprocess_environment(),
+        **process_group_kwargs(),
     }
+    assert seen["communicate"] == {"timeout": 5}
 
 
 def test_run_cli_args_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(command, timeout=1, output="partial", stderr="late")
+    seen: dict[str, object] = {}
 
-    monkeypatch.setattr("guildbridge.gui_commands.subprocess.run", fake_run)
+    class FakeProcess:
+        pid = 1234
+        returncode = -9
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def communicate(self, **_: object) -> tuple[str, str]:
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(["guildbridge"], timeout=1, output="partial", stderr="late")
+            return "partial", "late"
+
+        def poll(self) -> None:
+            return None
+
+    def fake_popen(*_: object, **__: object) -> FakeProcess:
+        process = FakeProcess()
+        seen["process"] = process
+        return process
+
+    monkeypatch.setattr("guildbridge.gui_commands.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("guildbridge.gui_commands.terminate_process_tree", lambda process: seen.setdefault("terminated", process))
 
     result = run_cli_args(["providers"], timeout_seconds=1)
 
@@ -317,13 +354,14 @@ def test_run_cli_args_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.stdout == "partial"
     assert result.timed_out is True
     assert "timed out" in result.stderr
+    assert seen["terminated"] is seen["process"]
 
 
 def test_run_cli_args_start_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(_: list[str], **__: object) -> subprocess.CompletedProcess[str]:
+    def fake_popen(_: list[str], **__: object) -> subprocess.CompletedProcess[str]:
         raise OSError("no python")
 
-    monkeypatch.setattr("guildbridge.gui_commands.subprocess.run", fake_run)
+    monkeypatch.setattr("guildbridge.gui_commands.subprocess.Popen", fake_popen)
 
     result = run_cli_args(["providers"])
 

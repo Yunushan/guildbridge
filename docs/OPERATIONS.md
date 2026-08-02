@@ -14,6 +14,7 @@ This runbook is the minimum operating procedure for a production migration. It c
 1. Keep the reviewed plan, journal output, and any provider audit-log reason together in private storage.
 2. Stop on unexpected provider authorization, rate-limit, or validation failures. Do not retry with a changed plan.
 3. Use `--resume-journal` only after the tool confirms the reviewed plan and action hash match the interrupted run.
+4. Structural apply runs acquire a target-scoped lock under `.guildbridge/locks/`; content apply runs use their configured content lock. If a lock remains after a crash, confirm that no migration process is active before removing it and retrying.
 
 ## Recovery and retention
 

@@ -25,6 +25,14 @@ def test_release_control_checker_rejects_mutable_action_references() -> None:
     assert errors == ["ci.yml: action reference is not pinned to a full commit SHA: actions/checkout@v6"]
 
 
+def test_release_control_checker_rejects_action_references_without_a_commit() -> None:
+    module = _module()
+
+    errors = module._action_pin_errors("ci.yml", "      - uses: actions/checkout\n")
+
+    assert errors == ["ci.yml: action reference is not pinned to a full commit SHA: actions/checkout"]
+
+
 def test_release_control_checker_accepts_immutable_action_references() -> None:
     module = _module()
 
@@ -33,6 +41,20 @@ def test_release_control_checker_accepts_immutable_action_references() -> None:
     )
 
     assert errors == []
+
+
+def test_release_control_checker_rejects_mutable_named_step_action_references() -> None:
+    module = _module()
+
+    errors = module._action_pin_errors(
+        "codeql.yml",
+        "      - name: Analyze\n        uses: github/codeql-action/analyze@v4\n",
+    )
+
+    assert errors == [
+        "codeql.yml: action reference is not pinned to a full commit SHA: "
+        "github/codeql-action/analyze@v4"
+    ]
 
 
 def test_release_control_checker_requires_an_immutable_container_reference() -> None:
@@ -177,3 +199,36 @@ def test_release_control_checker_rejects_overprivileged_job_permissions() -> Non
     module._require_release_job_permissions(workflow, "windows-artifacts", {"contents": "read"}, errors)
 
     assert errors == ["release.yml job windows-artifacts must use exactly these permissions: contents: read"]
+
+
+def test_codeowners_covers_production_sensitive_paths() -> None:
+    codeowners = (ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
+
+    assert "@Yunushan" in codeowners
+    for path in ("/.github/", "/packaging/", "/scripts/", "/src/guildbridge/providers/"):
+        assert path in codeowners
+
+
+def test_release_control_checker_rejects_a_generic_hidden_test_artifact() -> None:
+    module = _module()
+    errors = module._generic_gitignore_errors("/test\n")
+
+    assert errors == [".gitignore must not hide a generic top-level /test artifact path."]
+
+
+def test_release_control_checker_rejects_crlf_shell_scripts(tmp_path: Path) -> None:
+    module = _module()
+    script = tmp_path / "release.sh"
+    script.write_bytes(b"#!/usr/bin/env sh\r\nset -eu\r\n")
+
+    assert module._shell_line_ending_errors(script, root=tmp_path) == [
+        "release.sh: shell scripts must use LF line endings."
+    ]
+
+
+def test_release_control_checker_accepts_lf_shell_scripts(tmp_path: Path) -> None:
+    module = _module()
+    script = tmp_path / "release.sh"
+    script.write_bytes(b"#!/usr/bin/env sh\nset -eu\n")
+
+    assert module._shell_line_ending_errors(script, root=tmp_path) == []

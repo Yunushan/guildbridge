@@ -15,7 +15,7 @@ TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+(?:[A-Za-z0-9.-]+)?$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 WORKFLOW_RUN_PATTERN = re.compile(
-    r"^https://github\.com/[^/]+/[^/]+/actions/runs/\d+(?:/attempts/\d+)?$"
+    r"^https://github\.com/[^/]+/[^/]+/actions/runs/(?P<run_id>[1-9]\d*)(?:/attempts/[1-9]\d*)?$"
 )
 PRIVATE_EVIDENCE_REF_PATTERN = re.compile(r"^private://[A-Za-z0-9][A-Za-z0-9._/-]*$")
 PROVIDERS = tuple(sorted(provider_names()))
@@ -24,10 +24,12 @@ REQUIRED_FLAGS = (
     "environment_protection_verified",
     "artifact_sha256_verified",
     "sbom_reviewed",
+    "consumer_assets_reviewed",
     "provenance_verified",
     "windows_signature_verified",
     "tls_reviewed",
     "operations_reviewed",
+    "release_owner_reviewed",
 )
 REQUIRED_ARTIFACTS = (
     "wheel",
@@ -43,15 +45,17 @@ REQUIRED_ARTIFACTS = (
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate private evidence for a public GuildBridge release.")
+    parser.add_argument("--repo", required=True, help="GitHub repository in OWNER/REPOSITORY form")
     parser.add_argument("--evidence", required=True, type=Path, help="private JSON evidence file; never commit it")
     parser.add_argument("--tag", required=True, help="release tag being verified, for example v1.0.9")
     parser.add_argument(
         "--expected-commit",
+        required=True,
         help="full commit SHA the release workflow checked out; requires source_commit to match",
     )
     args = parser.parse_args(argv)
 
-    errors = validate_evidence_path(args.evidence, args.tag, expected_commit=args.expected_commit)
+    errors = validate_evidence_path(args.evidence, args.tag, repo=args.repo, expected_commit=args.expected_commit)
     if errors:
         print("check-production-evidence: error:", file=sys.stderr)
         for error in errors:
@@ -61,7 +65,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def validate_evidence_path(path: Path, tag: str, *, expected_commit: str | None = None) -> list[str]:
+def validate_evidence_path(
+    path: Path, tag: str, *, repo: str | None = None, expected_commit: str | None = None
+) -> list[str]:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -70,10 +76,16 @@ def validate_evidence_path(path: Path, tag: str, *, expected_commit: str | None 
         return [f"evidence file is not valid JSON: {exc.msg}"]
     if not isinstance(parsed, dict):
         return ["evidence file must contain a JSON object."]
-    return validate_evidence(parsed, tag, expected_commit=expected_commit)
+    return validate_evidence(parsed, tag, repo=repo, expected_commit=expected_commit)
 
 
-def validate_evidence(evidence: dict[str, Any], tag: str, *, expected_commit: str | None = None) -> list[str]:
+def validate_evidence(
+    evidence: dict[str, Any],
+    tag: str,
+    *,
+    repo: str | None = None,
+    expected_commit: str | None = None,
+) -> list[str]:
     errors: list[str] = []
     if not TAG_PATTERN.fullmatch(tag):
         errors.append("--tag must be a v-prefixed semantic version.")
@@ -87,21 +99,26 @@ def validate_evidence(evidence: dict[str, Any], tag: str, *, expected_commit: st
             errors.append("--expected-commit must be a full 40-character commit SHA.")
         elif evidence["source_commit"] != normalized_expected:
             errors.append("source_commit must exactly match --expected-commit.")
-    if not isinstance(evidence.get("reviewed_by"), str) or not evidence["reviewed_by"].strip():
+    reviewed_by = evidence.get("reviewed_by")
+    if not isinstance(reviewed_by, str) or not reviewed_by.strip():
         errors.append("reviewed_by must be a non-empty string.")
+    elif _is_placeholder_identity(reviewed_by):
+        errors.append("reviewed_by must identify the actual release reviewer, not a placeholder.")
     if not _is_timestamp(evidence.get("reviewed_at")):
         errors.append("reviewed_at must be an ISO 8601 timestamp with an explicit timezone.")
-    if not isinstance(evidence.get("workflow_run_url"), str) or not WORKFLOW_RUN_PATTERN.fullmatch(
-        evidence["workflow_run_url"]
-    ):
+    workflow_run_url = evidence.get("workflow_run_url")
+    workflow_pattern = _workflow_run_pattern(repo)
+    if not isinstance(workflow_run_url, str) or not workflow_pattern.fullmatch(workflow_run_url):
         errors.append("workflow_run_url must be a GitHub Actions run URL.")
     for key in (
         "github_settings_evidence_ref",
         "tls_evidence_ref",
         "operations_evidence_ref",
         "signing_evidence_ref",
+        "consumer_review_evidence_ref",
+        "release_owner_evidence_ref",
     ):
-        _validate_private_evidence_ref(evidence.get(key), key, errors)
+        _validate_private_evidence_ref(evidence.get(key), key, errors, tag=tag)
     for key in REQUIRED_FLAGS:
         if evidence.get(key) is not True:
             errors.append(f"{key} must be true.")
@@ -111,13 +128,40 @@ def validate_evidence(evidence: dict[str, Any], tag: str, *, expected_commit: st
     if not isinstance(drills, list):
         errors.append("provider_drills must be a list of per-source evidence bundles.")
     else:
-        _validate_provider_drills(drills, errors)
+        _validate_provider_drills(drills, errors, tag=tag)
     content_drills = evidence.get("content_provider_drills")
     if not isinstance(content_drills, list):
         errors.append("content_provider_drills must be a list of enabled live-content route evidence bundles.")
     else:
-        _validate_content_provider_drills(content_drills, errors)
+        _validate_content_provider_drills(content_drills, errors, tag=tag)
     return errors
+
+
+def _workflow_run_pattern(repo: str | None) -> re.Pattern[str]:
+    if repo is None:
+        return WORKFLOW_RUN_PATTERN
+    if not re.fullmatch(r"[^/]+/[^/]+", repo):
+        return re.compile(r"(?!)")
+    return re.compile(
+        rf"^https://github\.com/{re.escape(repo)}/actions/runs/[1-9]\d*(?:/attempts/[1-9]\d*)?$"
+    )
+
+
+def _is_placeholder_identity(value: str) -> bool:
+    normalized = value.strip().casefold()
+    return (
+        normalized.startswith("<")
+        or normalized.endswith(">")
+        or normalized in {
+            "replace-with-release-owner",
+            "replace_me",
+            "replace-me",
+            "todo",
+            "tbd",
+            "unknown",
+        }
+        or "owner/repository" in normalized
+    )
 
 
 def _is_timestamp(value: object) -> bool:
@@ -146,7 +190,7 @@ def _validate_artifact_checksums(value: object, errors: list[str]) -> None:
         errors.append("artifact_checksums must contain distinct digests for every published artifact.")
 
 
-def _validate_provider_drills(drills: list[object], errors: list[str]) -> None:
+def _validate_provider_drills(drills: list[object], errors: list[str], *, tag: str) -> None:
     bundles: dict[str, dict[str, Any]] = {}
     for index, drill in enumerate(drills, start=1):
         if not isinstance(drill, dict):
@@ -170,13 +214,17 @@ def _validate_provider_drills(drills: list[object], errors: list[str]) -> None:
             if drill.get(key) is not True:
                 errors.append(f"provider_drills[{index}].{key} must be true.")
         _validate_private_evidence_ref(
-            drill.get("evidence_bundle_ref"), f"provider_drills[{index}].evidence_bundle_ref", errors
+            drill.get("evidence_bundle_ref"),
+            f"provider_drills[{index}].evidence_bundle_ref",
+            errors,
+            tag=tag,
         )
         _validate_route_evidence_refs(
             drill.get("route_evidence_refs"),
             expected_targets,
             f"provider_drills[{index}].route_evidence_refs",
             errors,
+            tag=tag,
         )
 
     missing = [provider for provider in PROVIDERS if provider not in bundles]
@@ -200,7 +248,7 @@ def _content_route_matrix() -> dict[str, set[str]]:
     return {source: importers - {source} for source in exporters}
 
 
-def _validate_content_provider_drills(drills: list[object], errors: list[str]) -> None:
+def _validate_content_provider_drills(drills: list[object], errors: list[str], *, tag: str) -> None:
     expected_routes = _content_route_matrix()
     bundles: dict[str, dict[str, Any]] = {}
     for index, drill in enumerate(drills, start=1):
@@ -227,13 +275,17 @@ def _validate_content_provider_drills(drills: list[object], errors: list[str]) -
             if drill.get(key) is not True:
                 errors.append(f"content_provider_drills[{index}].{key} must be true.")
         _validate_private_evidence_ref(
-            drill.get("evidence_bundle_ref"), f"content_provider_drills[{index}].evidence_bundle_ref", errors
+            drill.get("evidence_bundle_ref"),
+            f"content_provider_drills[{index}].evidence_bundle_ref",
+            errors,
+            tag=tag,
         )
         _validate_route_evidence_refs(
             drill.get("route_evidence_refs"),
             expected_targets,
             f"content_provider_drills[{index}].route_evidence_refs",
             errors,
+            tag=tag,
         )
 
     missing = [provider for provider in expected_routes if provider not in bundles]
@@ -249,6 +301,8 @@ def _validate_route_evidence_refs(
     expected_targets: set[str],
     field: str,
     errors: list[str],
+    *,
+    tag: str,
 ) -> None:
     if not isinstance(value, dict):
         errors.append(f"{field} must map every target provider to a private evidence reference.")
@@ -257,12 +311,14 @@ def _validate_route_evidence_refs(
         errors.append(f"{field} must contain every target provider exactly once.")
         return
     for target in sorted(expected_targets):
-        _validate_private_evidence_ref(value[target], f"{field}.{target}", errors)
+        _validate_private_evidence_ref(value[target], f"{field}.{target}", errors, tag=tag)
 
 
-def _validate_private_evidence_ref(value: object, field: str, errors: list[str]) -> None:
+def _validate_private_evidence_ref(value: object, field: str, errors: list[str], *, tag: str) -> None:
     if not isinstance(value, str) or not PRIVATE_EVIDENCE_REF_PATTERN.fullmatch(value):
         errors.append(f"{field} must be an opaque private:// evidence reference.")
+    elif f"/{tag}/" not in value:
+        errors.append(f"{field} must include the release tag {tag!r}.")
 
 
 if __name__ == "__main__":

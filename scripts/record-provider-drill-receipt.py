@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from guildbridge.providers import provider_names
+from guildbridge.utils import atomic_write_text
 
 PLAN_SCHEMA = "guildbridge.apply-plan.v1"
 BATCH_RESULT_SCHEMA = "guildbridge.batch-result.v1"
@@ -75,7 +76,14 @@ def _validate_plan(plan_data: dict[str, Any], *, source: str, target: str) -> di
 
 
 def _validate_journal(
-    journal: dict[str, Any], *, kind: str, target: str, label: str, requires_resume: bool
+    journal: dict[str, Any],
+    *,
+    kind: str,
+    source: str,
+    target: str,
+    label: str,
+    requires_resume: bool,
+    expected_action_hash: str,
 ) -> dict[str, str]:
     expected_schema = STRUCTURAL_JOURNAL_SCHEMA if kind == "structural" else CONTENT_JOURNAL_SCHEMA
     if journal.get("schema") != expected_schema:
@@ -85,11 +93,25 @@ def _validate_journal(
     context = journal.get("context") if kind == "structural" else journal
     if not isinstance(context, dict) or context.get("provider") != target:
         raise ValueError(f"{label} provider must match the selected target provider.")
+    if kind == "structural":
+        if context.get("source_provider") != source:
+            raise ValueError(f"{label} source_provider must match the selected source provider.")
+        if context.get("reviewed_plan_hash") != expected_action_hash:
+            raise ValueError(f"{label} reviewed_plan_hash must match the dry-run plan action_hash.")
+    else:
+        journal_action_hash = context.get("action_hash")
+        if not isinstance(journal_action_hash, str) or not SHA256_PATTERN.fullmatch(journal_action_hash):
+            raise ValueError(f"{label} must record a lowercase SHA-256 action_hash.")
+        if journal_action_hash != expected_action_hash:
+            raise ValueError(f"{label} action_hash must match the dry-run plan action_hash.")
     if requires_resume and (
         not isinstance(journal.get("resumed_from"), str) or not journal["resumed_from"].strip()
     ):
         raise ValueError(f"{label} must record the failed journal it resumed from.")
-    return {"schema": expected_schema, "status": "succeeded"}
+    evidence = {"schema": expected_schema, "status": "succeeded"}
+    if kind == "content":
+        evidence["action_hash"] = expected_action_hash
+    return evidence
 
 
 def build_receipt(
@@ -104,22 +126,36 @@ def build_receipt(
     plan = _read_json(plan_path, "dry-run plan")
     apply_journal = _read_json(apply_journal_path, "apply journal")
     recovery_journal = _read_json(recovery_journal_path, "recovery journal")
+    plan_metadata = _validate_plan(plan, source=source, target=target)
+    expected_action_hash = plan_metadata["action_hash"]
     return {
         "schema": "guildbridge.provider-drill-receipt.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "kind": kind,
         "source_provider": source,
         "target_provider": target,
-        "dry_run_plan": {**_validate_plan(plan, source=source, target=target), "sha256": _sha256(plan_path)},
+        "dry_run_plan": {**plan_metadata, "sha256": _sha256(plan_path)},
         "apply_journal": {
             **_validate_journal(
-                apply_journal, kind=kind, target=target, label="Apply journal", requires_resume=False
+                apply_journal,
+                kind=kind,
+                source=source,
+                target=target,
+                label="Apply journal",
+                requires_resume=False,
+                expected_action_hash=expected_action_hash,
             ),
             "sha256": _sha256(apply_journal_path),
         },
         "recovery_journal": {
             **_validate_journal(
-                recovery_journal, kind=kind, target=target, label="Recovery journal", requires_resume=True
+                recovery_journal,
+                kind=kind,
+                source=source,
+                target=target,
+                label="Recovery journal",
+                requires_resume=True,
+                expected_action_hash=expected_action_hash,
             ),
             "sha256": _sha256(recovery_journal_path),
         },
@@ -156,9 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.out.with_suffix(args.out.suffix + ".tmp")
-    temporary.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(args.out)
+    atomic_write_text(args.out, json.dumps(receipt, indent=2) + "\n")
     print(f"Wrote credential-free provider-drill receipt: {args.out}")
     return 0
 

@@ -4,10 +4,33 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from guildbridge.cli import main
+from guildbridge.journal import ApplyMigrationLock
 from guildbridge.models import Action, CommunityTemplate, ImportResult, Role
 from guildbridge.providers.base import ImportOptions, plan_or_apply_action
 from guildbridge.safety import APPLY_CONFIRMATION
+
+
+def test_structural_apply_lock_is_fail_closed_and_cleans_up(tmp_path: Path) -> None:
+    lock_path = tmp_path / "structural.lock"
+    with ApplyMigrationLock(lock_path):
+        assert lock_path.exists()
+        assert json.loads(lock_path.read_text(encoding="utf-8"))["schema"] == "guildbridge.apply-lock.v1"
+        with pytest.raises(ValueError, match="lock already exists"):
+            with ApplyMigrationLock(lock_path):
+                pass
+    assert not lock_path.exists()
+
+
+def test_structural_apply_lock_does_not_remove_an_existing_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "stale.lock"
+    lock_path.write_text("stale\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="lock already exists"):
+        with ApplyMigrationLock(lock_path):
+            pass
+    assert lock_path.read_text(encoding="utf-8") == "stale\n"
 
 
 def write_template(path: Path, *, name: str = "Example") -> None:

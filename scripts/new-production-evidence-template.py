@@ -10,6 +10,7 @@ from typing import Any
 
 from guildbridge.config import RuntimeConfig
 from guildbridge.providers import get_provider, provider_names
+from guildbridge.utils import atomic_write_text
 
 TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+(?:[A-Za-z0-9.-]+)?$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -58,14 +59,18 @@ def build_template(tag: str, commit: str) -> dict[str, Any]:
         "tls_evidence_ref": f"private://release-evidence/{tag}/tls-review",
         "operations_evidence_ref": f"private://release-evidence/{tag}/operations-review",
         "signing_evidence_ref": f"private://release-evidence/{tag}/windows-signing",
+        "consumer_review_evidence_ref": f"private://release-evidence/{tag}/consumer-review",
+        "release_owner_evidence_ref": f"private://release-evidence/{tag}/release-owner-review",
         "branch_protection_verified": False,
         "environment_protection_verified": False,
         "artifact_sha256_verified": False,
         "sbom_reviewed": False,
+        "consumer_assets_reviewed": False,
         "provenance_verified": False,
         "windows_signature_verified": False,
         "tls_reviewed": False,
         "operations_reviewed": False,
+        "release_owner_reviewed": False,
         "artifact_checksums": {
             "wheel": PLACEHOLDER_SHA256,
             "sdist": PLACEHOLDER_SHA256,
@@ -112,9 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"{args.out} already exists; pass --overwrite to replace it.")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.out.with_suffix(args.out.suffix + ".tmp")
-    temporary.write_text(json.dumps(build_template(args.tag, args.commit), indent=2) + "\n", encoding="utf-8")
-    temporary.replace(args.out)
+    atomic_write_text(args.out, json.dumps(build_template(args.tag, args.commit), indent=2) + "\n")
     print(f"Wrote private production-evidence template: {args.out}")
     return 0
 

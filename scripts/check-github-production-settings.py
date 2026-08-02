@@ -10,20 +10,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 REQUIRED_CHECKS = {"package", "Analyze (python)", "Analyze (actions)"}
+REQUIRED_CHECK_CONTEXTS = {
+    "package": {"package", "CI / package"},
+    "Analyze (python)": {"Analyze (python)", "CodeQL / Analyze (python)"},
+    "Analyze (actions)": {"Analyze (actions)", "CodeQL / Analyze (actions)"},
+}
 REQUIRED_ENVIRONMENT_RULES = {"branch_policy", "required_reviewers"}
 REQUIRED_CODEQL_CATEGORIES = {"/language:python", "/language:actions"}
 REQUIRED_RELEASE_TAG_RULE_TYPES = {"creation", "update", "deletion"}
 REQUIRED_RELEASE_TAG_REF_PATTERN = "refs/tags/v*"
 DEFAULT_RELEASE_TAG_PATTERN = "v*"
+RELEASE_TAG_PATTERN = r"^v\d+\.\d+\.\d+(?:[A-Za-z0-9.-]+)?$"
+COMMIT_PATTERN = r"^[0-9a-f]{40}$"
 DEFAULT_RELEASE_SECRETS = (
     "GUILDBRIDGE_CODESIGN_PFX_BASE64",
     "GUILDBRIDGE_CODESIGN_PFX_PASSWORD",
@@ -56,6 +66,14 @@ def main(argv: list[str] | None = None) -> int:
         help="optional private JSON receipt written only after a successful audit; never commit it",
     )
     parser.add_argument(
+        "--release-tag",
+        help="exact release tag the private receipt will support, for example v1.0.10",
+    )
+    parser.add_argument(
+        "--expected-commit",
+        help="full main-branch commit SHA the private receipt will support",
+    )
+    parser.add_argument(
         "--overwrite-receipt",
         action="store_true",
         help="replace an existing --receipt-out file",
@@ -81,6 +99,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--repo must be in OWNER/REPOSITORY form")
     if args.release_author is not None and not _valid_login(args.release_author):
         parser.error("--release-author must be a valid GitHub login")
+    if args.release_tag is not None and not _valid_release_tag(args.release_tag):
+        parser.error("--release-tag must be a v-prefixed semantic version")
+    if args.expected_commit is not None and not _valid_commit(args.expected_commit):
+        parser.error("--expected-commit must be a lowercase 40-character commit SHA")
+    if args.receipt_out is not None and (args.release_tag is None or args.expected_commit is None):
+        parser.error("--receipt-out requires both --release-tag and --expected-commit")
     if not shutil.which("gh"):
         print("check-github-production-settings: error: GitHub CLI 'gh' is not installed or not on PATH.", file=sys.stderr)
         return 1
@@ -93,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError("could not determine the release author GitHub account ID")
         default_branch = _string(repository.get("default_branch")) or "main"
         default_branch_commit = _gh_api(f"repos/{args.repo}/commits/{default_branch}")
+        default_branch_commit_sha = _string(default_branch_commit.get("sha"))
+        if args.expected_commit is not None and default_branch_commit_sha != args.expected_commit:
+            raise RuntimeError("the expected release commit does not match the current default-branch commit")
         protection = _gh_api(f"repos/{args.repo}/branches/{default_branch}/protection")
         environment = _gh_api(f"repos/{args.repo}/environments/{args.environment}")
         deployment_policies = _gh_api(
@@ -158,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
             repo=args.repo,
             environment=args.environment,
             default_branch=default_branch,
+            release_tag=args.release_tag,
+            source_commit=args.expected_commit,
             release_author=_string(author.get("login")) or args.release_author or "authenticated-gh-user",
             required_release_tag_pattern=args.required_release_tag_pattern,
             required_secrets=args.require_release_secret,
@@ -177,6 +206,8 @@ def build_receipt(
     repo: str,
     environment: str,
     default_branch: str,
+    release_tag: str | None,
+    source_commit: str | None,
     release_author: str,
     required_release_tag_pattern: str,
     required_secrets: Iterable[str],
@@ -188,6 +219,8 @@ def build_receipt(
         "repository": repo,
         "environment": environment,
         "default_branch": default_branch,
+        "release_tag": release_tag,
+        "source_commit": source_commit,
         "release_author": release_author,
         "required_release_tag_pattern": required_release_tag_pattern,
         "required_environment_secret_names": sorted(set(required_secrets)),
@@ -203,13 +236,33 @@ def build_receipt(
     }
 
 
+def _atomic_json_write(path: Path, data: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def write_receipt(path: Path, receipt: dict[str, object], *, overwrite: bool) -> None:
     """Atomically write a private audit receipt without serializing fetched settings or secrets."""
     if path.exists() and not overwrite:
         raise OSError(f"{path} already exists; use --overwrite-receipt to replace it")
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    _atomic_json_write(path, receipt)
 
 
 def build_remediation_plan(
@@ -261,9 +314,7 @@ def write_remediation_plan(path: Path, plan: dict[str, object], *, overwrite: bo
     """Atomically write a remediation plan without serializing hosted payloads or secrets."""
     if path.exists() and not overwrite:
         raise OSError(f"{path} already exists; use --overwrite-remediation-plan to replace it")
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    _atomic_json_write(path, plan)
 
 
 def validate_settings(
@@ -291,7 +342,11 @@ def validate_settings(
 
     required_checks = _mapping(protection.get("required_status_checks"))
     found_checks = set(_strings(required_checks.get("contexts")))
-    missing_checks = sorted(REQUIRED_CHECKS - found_checks)
+    missing_checks = sorted(
+        check_name
+        for check_name in REQUIRED_CHECKS
+        if not (REQUIRED_CHECK_CONTEXTS[check_name] & found_checks)
+    )
     if missing_checks:
         errors.append("main branch is missing required checks: " + ", ".join(missing_checks))
     if required_checks.get("strict") is not True:
@@ -315,7 +370,7 @@ def validate_settings(
     if protection.get("required_conversation_resolution") is not True:
         errors.append("main branch must require resolved review conversations")
 
-    _validate_release_tag_protection(rulesets, errors)
+    _validate_release_tag_protection(rulesets, errors, release_author_id=release_author_id)
 
     if environment.get("can_admins_bypass") is not False:
         errors.append(f"{environment_name} environment must not allow administrator bypass")
@@ -384,7 +439,12 @@ def _validate_codeql_freshness(
         )
 
 
-def _validate_release_tag_protection(rulesets: Iterable[dict[str, Any]], errors: list[str]) -> None:
+def _validate_release_tag_protection(
+    rulesets: Iterable[dict[str, Any]],
+    errors: list[str],
+    *,
+    release_author_id: int | None,
+) -> None:
     """Require immutable, restricted GitHub ruleset controls for public release tags."""
     matching_rulesets = [
         ruleset
@@ -408,6 +468,35 @@ def _validate_release_tag_protection(rulesets: Iterable[dict[str, Any]], errors:
     if missing_rules:
         errors.append(
             "release tag ruleset for refs/tags/v* is missing protections: " + ", ".join(missing_rules)
+        )
+    if release_author_id is None:
+        return
+
+    bypass_actors = [
+        actor
+        for ruleset in matching_rulesets
+        for actor in _mappings(ruleset.get("bypass_actors"))
+    ]
+    broad_bypass_types = {
+        "EnterpriseOwner",
+        "EnterpriseRole",
+        "OrganizationAdmin",
+        "RepositoryRole",
+    }
+    if any(_string(actor.get("actor_type")) in broad_bypass_types for actor in bypass_actors):
+        errors.append(
+            "release tag ruleset for refs/tags/v* must not grant bypass to an organization administrator, "
+            "enterprise owner/role, or repository role"
+        )
+    authorized_bypass = any(
+        _string(actor.get("actor_type")) == "User"
+        and _integer(actor.get("actor_id")) == release_author_id
+        and _string(actor.get("bypass_mode")) == "always"
+        for actor in bypass_actors
+    )
+    if not authorized_bypass:
+        errors.append(
+            "release tag ruleset for refs/tags/v* must grant always-on bypass only to the authorized release user"
         )
 
 
@@ -503,6 +592,14 @@ def _valid_repo(value: str) -> bool:
 
 def _valid_login(value: str) -> bool:
     return bool(value) and all(character.isalnum() or character == "-" for character in value)
+
+
+def _valid_release_tag(value: str) -> bool:
+    return bool(re.fullmatch(RELEASE_TAG_PATTERN, value))
+
+
+def _valid_commit(value: str) -> bool:
+    return bool(re.fullmatch(COMMIT_PATTERN, value))
 
 
 def _mapping(value: object) -> dict[str, Any]:

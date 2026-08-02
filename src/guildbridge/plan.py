@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from guildbridge.content import content_actions_fingerprint
 from guildbridge.journal import template_fingerprint, utc_now
 from guildbridge.models import Action, CommunityTemplate, ImportResult
 
@@ -93,11 +94,16 @@ def validate_reviewed_plan_data(data: dict[str, Any], expected: dict[str, Any]) 
     reviewed_actions = data.get("actions")
     if not isinstance(reviewed_actions, list):
         raise ValueError("Reviewed plan actions must be a list.")
-    reviewed_action_hash = action_fingerprint(reviewed_actions)
+    reviewed_context = reviewed_plan.get("context")
+    is_content_plan = isinstance(reviewed_context, dict) and str(reviewed_context.get("command", "")).startswith("content-")
+    reviewed_action_hash = (
+        content_actions_fingerprint(reviewed_actions)
+        if is_content_plan
+        else action_fingerprint(reviewed_actions)
+    )
     if reviewed_action_hash != reviewed_plan.get("action_hash"):
         raise ValueError("Reviewed plan action hash does not match its actions.")
     expected_context = expected.get("context")
-    reviewed_context = reviewed_plan.get("context")
     if not isinstance(expected_context, dict) or not isinstance(reviewed_context, dict):
         raise ValueError("Reviewed plan context is invalid.")
     for key in ("command", "provider", "source_provider", "target_id", "target_name", "template_hash"):

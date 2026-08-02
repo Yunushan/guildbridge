@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from guildbridge.release_assets import ASSET_PATTERNS, MANIFESTS
+from guildbridge.utils import atomic_write_text
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -87,9 +88,7 @@ def record_checksums(evidence_path: Path, assets: dict[str, Path]) -> None:
         raise ValueError("evidence file must contain a JSON object")
 
     evidence["artifact_checksums"] = {key: sha256(path) for key, path in assets.items()}
-    temporary = evidence_path.with_suffix(evidence_path.suffix + ".tmp")
-    temporary.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(evidence_path)
+    atomic_write_text(evidence_path, json.dumps(evidence, indent=2, sort_keys=True) + "\n")
 
 
 def sha256(path: Path) -> str:

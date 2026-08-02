@@ -16,6 +16,8 @@ import venv
 import zipfile
 from pathlib import Path
 
+from guildbridge.utils import atomic_write_text
+
 REQUIRED_SDIST_SUFFIXES = (
     "LICENSE",
     "README.md",
@@ -220,7 +222,7 @@ def write_spdx_sbom(python: str, wheel: Path, destination: Path) -> None:
     wheel_hash = hashlib.sha256(wheel.read_bytes()).hexdigest()
     document = build_spdx_document(components, wheel_hash)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(destination, json.dumps(document, indent=2, sort_keys=True) + "\n")
 
 
 def build_spdx_document(components: list[dict[str, str]], wheel_hash: str) -> dict[str, object]:

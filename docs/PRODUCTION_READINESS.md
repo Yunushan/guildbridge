@@ -7,7 +7,7 @@ This document defines the evidence required to describe a GuildBridge release as
 The repository currently provides the following controls:
 
 - CI tests the supported hosted OS/Python matrix, runs Ruff, mypy, pytest, package validation, a dependency vulnerability audit, and an executable release-controls policy check.
-- CI also constructs the desktop Tk GUI under Xvfb on Ubuntu 24.04 and Python 3.14; package verification cannot start until that GUI smoke job passes.
+- CI constructs the desktop Tk GUI under Xvfb on Ubuntu 24.04 and directly on Windows 2025/Visual Studio 2026 with Python 3.14; package verification cannot start until both GUI smoke jobs pass.
 - CI measures branch coverage for `src/guildbridge` and fails below the current 80% source-coverage baseline. This is a ratchet: it prevents silent regression, but does not replace live provider contract or GUI interaction evidence.
 - A zero-dependency static security baseline, Ruff security-rules pass, and explicit exception-boundary lint reject dynamic code execution, unsafe deserialization, shell execution, TLS-verification bypasses, weak digests, insecure temporary-file APIs, unsafe process-invocation patterns, and undocumented broad exception handling in application code and Python release tooling.
 - A dedicated CodeQL workflow analyzes Python and GitHub Actions workflows on pushes, pull requests, and a weekly schedule using extended security and quality query suites; it is pinned to immutable action commits and policy-checked alongside release controls.
@@ -19,10 +19,15 @@ The repository currently provides the following controls:
 - Tag releases verify the tag version, generate wheel/sdist and Windows ZIP/MSI outputs, publish SHA-256 checksum files, an SPDX 2.3 SBOM, and a machine-readable dependency-audit report, create GitHub build provenance attestations, cryptographically verify those attestations against the exact repository, release workflow, tag, commit, and GitHub-hosted runner, and compare every downloaded release asset to both its manifest and the protected private evidence record before publication.
 - Public tag releases fail closed unless a trusted Windows code-signing PFX and password are configured as protected `production-release` environment secrets; the tag-only signing job signs and verifies EXE/MSI artifacts before publication.
 - GUI-managed provider credentials are stored in the operating-system credential store; legacy non-secret settings files are atomically replaced and owner-readable only on POSIX. LAN web mode requires TLS, explicit authentication, CSRF protection, and a short-lived secure browser session.
-- Managed DiscordChatExporter downloads require a verified SHA-256 digest and refuse unmanaged cached binaries.
+- Managed DiscordChatExporter downloads require a verified SHA-256 digest, HTTPS GitHub hosting, bounded redirects and archive size, and refuse unmanaged cached binaries.
 - Credential-bearing provider requests require HTTPS for non-loopback endpoints; legacy plain HTTP is an explicit, documented break-glass setting only.
 - Release and local verification paths scan tracked files for high-confidence secret signatures without printing their values; a maintainer can also scan reachable Git history before publication.
 - Migration writes remain opt-in and require a reviewed plan plus explicit apply confirmation.
+- CLI templates, plans, reports, downloaded content assets, and managed tool metadata are written through unique fsynced temporary files and atomic replacement, so interrupted or concurrent runs cannot leave partial review artifacts at the destination path.
+- `scripts/check-operations-readiness.py` fails CI and local release preparation if the operations runbook loses its least-privilege, dry-run, recovery, retention, credential-rotation, or incident-response controls.
+- The hosted-settings audit validates that the protected `v*` tag ruleset grants `always` bypass only to the authorized release user and rejects broad administrator, enterprise, or repository-role bypasses.
+- Private release evidence rejects placeholder reviewer identities and zero-valued workflow or attempt IDs, so an edited template cannot pass those identity checks.
+- `.github/CODEOWNERS` assigns review ownership for workflows, packaging, release tooling, provider adapters, and dependency changes; GitHub must separately enforce code-owner review on the protected release branch.
 
 ## Required external evidence for a 100/100 release
 
@@ -31,19 +36,19 @@ Before assigning a 100/100 production-readiness score to a public release, retai
 1. A protected release branch requires CI, code review, and signed or verified commits according to the organization policy.
 2. The tag workflow completed successfully, including dependency audit, artifact checksum generation, and GitHub provenance attestations.
 3. Windows EXE and MSI assets are signed by a currently trusted code-signing certificate and pass `signtool verify /pa /v` on a clean Windows host. Retain the output of `scripts/verify-windows-release.ps1` run against the downloaded ZIP, MSI, and `SHA256SUMS-windows.txt`.
-4. A clean consumer machine verifies the published `SHA256SUMS` and reviews the release SPDX SBOM and dependency-audit report before installing the wheel, ZIP, or MSI.
+4. A clean consumer machine verifies the published `SHA256SUMS` and reviews the release SPDX SBOM and dependency-audit report before installing the wheel, ZIP, or MSI. Record this separately as `consumer_assets_reviewed` with `consumer_review_evidence_ref`.
 5. Every directed structural-template combination of the supported providers has a live, disposable-tenant dry run and an apply/recovery exercise using least-privilege dedicated migration accounts. Retain one source-provider bundle plus one opaque private evidence reference for each directed destination route. Live content migration has a narrower, guarded matrix: Discord is the source, Mumble is excluded as a target, and each enabled content route needs its own disposable-tenant evidence before it is claimed production-ready. Do not test against production communities first.
 6. The exact TLS certificate and DNS/reverse-proxy configuration used for LAN web GUI deployment is independently reviewed. LAN mode must not be exposed directly to the public internet.
 7. The organization has a vulnerability disclosure contact, incident owner, backup/retention policy for journals, and a tested rollback or compensating-action procedure.
-8. A release owner reviews dependency audit exceptions, provider API breaking changes, and platform-specific installer smoke-test evidence.
+8. A release owner reviews dependency audit exceptions, provider API breaking changes, and platform-specific installer smoke-test evidence. Record this separately as `release_owner_reviewed` with `release_owner_evidence_ref`.
 
 The operational retention and recovery procedure is documented in `docs/OPERATIONS.md`, and the required GitHub branch/environment controls are documented in `docs/REPOSITORY_SETTINGS.md`; their execution evidence must be retained outside the repository.
 
-Use `examples/production-evidence.example.json` as a structural reference, or create an exact matrix with `python scripts/new-production-evidence-template.py --tag vX.Y.Z --commit <40-character-sha> --out <private-file.json>`. Both include `provider_drills` for structural-template routes and `content_provider_drills` for the currently enabled live-content routes. Neither file is valid production evidence: the example contains all-zero digests and the generated template has incomplete controls. First run `python scripts/check-github-production-settings.py --repo Yunushan/guildbridge --receipt-out <private-directory>/github-production-settings-audit-vX.Y.Z.json` as an administrator and retain the resulting receipt; set `github_settings_evidence_ref` to its opaque `private://` reference. After downloading the eight published assets, run `python scripts/record-release-asset-checksums.py --assets-dir <downloaded-assets-dir> --evidence <private-file.json>` to verify the public manifests and record their checksums atomically. Replace the remaining placeholder fields with distinct evidence records for the exact release, then run `python scripts/check-production-evidence.py --evidence <private-file.json> --tag vX.Y.Z`. Evidence files are ignored by Git and must never contain credentials.
+Use `examples/production-evidence.example.json` as a structural reference, or create an exact matrix with `python scripts/new-production-evidence-template.py --tag vX.Y.Z --commit <40-character-sha> --out <private-file.json>`. Both include `provider_drills` for structural-template routes and `content_provider_drills` for the currently enabled live-content routes. Neither file is valid production evidence: the example contains all-zero digests and the generated template has incomplete controls. First run `python scripts/check-github-production-settings.py --repo Yunushan/guildbridge --release-tag vX.Y.Z --expected-commit <40-character-sha> --receipt-out <private-directory>/github-production-settings-audit-vX.Y.Z.json` as an administrator and retain the resulting receipt; set `github_settings_evidence_ref` to its opaque `private://` reference. After downloading the eight published assets, run `python scripts/record-release-asset-checksums.py --assets-dir <downloaded-assets-dir> --evidence <private-file.json>` to verify the public manifests and record their checksums atomically. Replace the remaining placeholder fields with distinct evidence records for the exact release, then run `python scripts/check-production-evidence.py --repo Yunushan/guildbridge --evidence <private-file.json> --tag vX.Y.Z --expected-commit <40-character-sha>`. The validator binds the workflow URL, source commit, and every private evidence reference to the exact repository and release tag. Evidence files are ignored by Git and must never contain credentials.
 
 Evidence references use the opaque `private://` scheme. Do not place public URLs, credentials, query tokens, server IDs, or customer/community names in an evidence record. Production-evidence files, hosted-settings audit receipts, and provider-drill `*.receipt.json` files are excluded from Git and Docker build contexts; retain them only in approved private storage.
 
-For each structural or live-content provider route, create a separate private receipt after its dry run, successful apply, and successful recovery run. The receipt records only the route, stable action metadata, and SHA-256 digests of the three local artifacts; it does not copy provider IDs, journal payloads, messages, or credentials:
+For each structural or live-content provider route, create a separate private receipt after its dry run, successful apply, and successful recovery run. The receipt records only the route, stable action metadata, and SHA-256 digests of the three local artifacts; structural receipts also verify that both journals carry the selected source provider and the reviewed dry-run action hash. It does not copy provider IDs, journal payloads, messages, or credentials.
 
 ```bash
 python scripts/record-provider-drill-receipt.py \
@@ -64,11 +69,12 @@ After a tag release has published its assets and the private record is complete,
 python scripts/check-production-readiness.py \
   --repo Yunushan/guildbridge \
   --evidence <private-file.json> \
+  --assets-dir <downloaded-release-assets-dir> \
   --tag vX.Y.Z \
   --expected-commit <40-character-sha>
 ```
 
-This aggregates repository controls, Git-history secret hygiene, the static security baseline, current live-content capability scope, live GitHub settings, and exact private release evidence. It makes no GitHub changes and never prints credential values.
+This aggregates repository controls, Git-history secret hygiene, the static security baseline, current live-content capability scope, live GitHub settings, exact private release evidence, and an independent verification of the downloaded release assets and checksum manifests. The tag and full source commit are mandatory so the gate cannot approve evidence detached from the release being published. It makes no GitHub changes and never prints credential values.
 
 ## Scoring rule
 

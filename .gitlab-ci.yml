@@ -15,14 +15,15 @@ before_script:
 test:
   stage: test
   script:
-    - python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-content-capability-scope.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py
+    - python -m ruff check src tests scripts/check-platform.py scripts/verify-dist.py scripts/check-content-capability-scope.py scripts/check-operations-readiness.py scripts/check-production-readiness.py scripts/record-provider-drill-receipt.py
     - python -m ruff check --select S src scripts
     - python -m ruff check --select BLE src scripts
     - python -m mypy src
     - python -m coverage run -m pytest -q
-    - python -m coverage report
+    - python -m coverage report --fail-under=80
     - python scripts/check-platform.py --require cli --format json
     - python scripts/check-content-capability-scope.py
+    - python scripts/check-operations-readiness.py
     - python scripts/check-release-controls.py
     - python scripts/check-secret-hygiene.py --history
     - python scripts/check-security-baseline.py

@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+RETRYABLE_METHODS = {"GET", "HEAD", "OPTIONS"}
 DEFAULT_USER_AGENT = "GuildBridge/0.1 (+https://github.com/Yunushan/guildbridge)"
 MAX_RETRY_DELAY_SECONDS = 30.0
 TOKEN_PATTERNS = (
@@ -68,6 +69,7 @@ class HttpClient:
         max_retries: int = 5,
         user_agent: str = DEFAULT_USER_AGENT,
         allow_insecure_http: bool | None = None,
+        retry_non_idempotent: bool = False,
         retry_sleep: Any = time.sleep,
     ):
         self.base_url = base_url.rstrip("/") + "/"
@@ -81,6 +83,10 @@ class HttpClient:
         self.auth_scheme = auth_scheme
         self.timeout = timeout
         self.max_retries = max(0, max_retries)
+        # Retrying a write after an ambiguous timeout can create duplicate
+        # servers, channels, roles, or messages. Opt in only for an endpoint
+        # whose contract makes the operation idempotent.
+        self.retry_non_idempotent = retry_non_idempotent
         self.retry_sleep = retry_sleep
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent or DEFAULT_USER_AGENT})
@@ -108,6 +114,7 @@ class HttpClient:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         retries: int | None = None,
+        retry_non_idempotent: bool | None = None,
     ) -> Any:
         if json_body is not None and (form_body is not None or data_body is not None or files is not None):
             raise ValueError("Use either json_body or form_body/data_body/files, not multiple body types.")
@@ -116,7 +123,15 @@ class HttpClient:
         url = path if path.startswith("http://") or path.startswith("https://") else urljoin(self.base_url, path.lstrip("/"))
         self._assert_secure_url(url)
         method_upper = method.upper()
-        max_retries = self.max_retries if retries is None else max(0, retries)
+        allow_non_idempotent_retries = (
+            self.retry_non_idempotent if retry_non_idempotent is None else retry_non_idempotent
+        )
+        configured_retries = self.max_retries if retries is None else max(0, retries)
+        max_retries = (
+            configured_retries
+            if method_upper in RETRYABLE_METHODS or allow_non_idempotent_retries
+            else 0
+        )
         attempts = max_retries + 1
         last_transport_error: requests.RequestException | None = None
         request_headers = headers
@@ -139,6 +154,10 @@ class HttpClient:
                     params=params,
                     headers=merged_headers,
                     timeout=self.timeout,
+                    # Provider redirects must not be followed automatically.
+                    # A redirect target would otherwise bypass the initial URL
+                    # validation and could receive provider credentials.
+                    allow_redirects=False,
                 )
             except requests.RequestException as exc:
                 last_transport_error = exc
@@ -147,17 +166,22 @@ class HttpClient:
                     continue
                 raise HttpTransportError(method_upper, url, sanitize_text(str(exc)), attempt + 1) from exc
 
-            if resp.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries:
-                self._sleep_before_retry(attempt, resp)
-                continue
-            if 200 <= resp.status_code < 300:
-                if not resp.content:
-                    return None
-                try:
-                    return resp.json()
-                except json.JSONDecodeError:
-                    return resp.text
-            raise HttpError(method_upper, url, resp.status_code, sanitize_response_text(resp.text), attempt + 1)
+            try:
+                if resp.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries:
+                    self._sleep_before_retry(attempt, resp)
+                    continue
+                if 200 <= resp.status_code < 300:
+                    if not resp.content:
+                        return None
+                    try:
+                        return resp.json()
+                    except json.JSONDecodeError:
+                        return resp.text
+                raise HttpError(method_upper, url, resp.status_code, sanitize_response_text(resp.text), attempt + 1)
+            finally:
+                # Release the connection before a retry or return so long-running
+                # migrations cannot exhaust the requests connection pool.
+                resp.close()
         if last_transport_error is not None:
             raise HttpTransportError(method_upper, url, sanitize_text(str(last_transport_error)), attempts) from last_transport_error
         raise AssertionError("unreachable")
@@ -280,22 +304,28 @@ def sanitize_response_text(text: str) -> str:
     return WHITESPACE_PATTERN.sub(" ", plain).strip()
 
 
+def _bounded_retry_delay(value: Any) -> float | None:
+    try:
+        return min(float(value), MAX_RETRY_DELAY_SECONDS)
+    except (TypeError, ValueError):
+        return None
+
+
 def retry_delay_seconds(attempt: int, response: requests.Response | None = None) -> float:
     if response is not None:
         retry_header = response.headers.get("Retry-After")
         if retry_header:
-            try:
-                return min(float(retry_header), MAX_RETRY_DELAY_SECONDS)
-            except ValueError:
-                pass
+            header_delay = _bounded_retry_delay(retry_header)
+            if header_delay is not None:
+                return header_delay
         try:
             body = response.json()
-            retry_after = body.get("retry_after")
-            if retry_after is not None:
-                return min(float(retry_after), MAX_RETRY_DELAY_SECONDS)
         except ValueError:
-            # Error responses may not contain JSON; use the bounded exponential fallback below.
-            pass
+            body = None
+        if isinstance(body, dict):
+            body_delay = _bounded_retry_delay(body.get("retry_after"))
+            if body_delay is not None:
+                return body_delay
     base = min(2.0 ** attempt, MAX_RETRY_DELAY_SECONDS)
     # This jitter only avoids synchronized retries; it is not used for security.
     jitter = random.uniform(0, min(0.25, base / 4))  # noqa: S311

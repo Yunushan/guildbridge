@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import math
 import struct
+import sys
 import zlib
 from collections.abc import Iterable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from guildbridge.utils import atomic_write_bytes, atomic_write_text  # noqa: E402
+
 DOCS_ASSET = ROOT / "docs" / "assets" / "guildbridge-icon.svg"
 PACKAGE_ASSETS = ROOT / "src" / "guildbridge" / "assets"
 WINDOWS_ICON = ROOT / "packaging" / "windows" / "guildbridge.ico"
@@ -266,12 +273,12 @@ def main() -> int:
     PACKAGE_ASSETS.mkdir(parents=True, exist_ok=True)
     WINDOWS_ICON.parent.mkdir(parents=True, exist_ok=True)
 
-    DOCS_ASSET.write_text(SVG, encoding="utf-8")
-    (PACKAGE_ASSETS / "guildbridge-icon.svg").write_text(SVG, encoding="utf-8")
-    (PACKAGE_ASSETS / "guildbridge-icon.png").write_bytes(png_bytes(256))
+    atomic_write_text(DOCS_ASSET, SVG)
+    atomic_write_text(PACKAGE_ASSETS / "guildbridge-icon.svg", SVG)
+    atomic_write_bytes(PACKAGE_ASSETS / "guildbridge-icon.png", png_bytes(256))
     icon = ico_bytes((16, 24, 32, 48, 64, 128, 256))
-    (PACKAGE_ASSETS / "guildbridge-icon.ico").write_bytes(icon)
-    WINDOWS_ICON.write_bytes(icon)
+    atomic_write_bytes(PACKAGE_ASSETS / "guildbridge-icon.ico", icon)
+    atomic_write_bytes(WINDOWS_ICON, icon)
     print("Generated GuildBridge icon assets.")
     return 0
 
