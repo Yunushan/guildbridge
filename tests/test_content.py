@@ -470,11 +470,6 @@ def test_run_discord_chat_exporter_invokes_local_cli_and_redacts_token(tmp_path:
     output_path = tmp_path / "dce"
     calls: list[list[str]] = []
 
-    class Completed:
-        returncode = 0
-        stdout = "ok"
-        stderr = ""
-
     class FakeProcess:
         pid = 1234
         returncode = 0
