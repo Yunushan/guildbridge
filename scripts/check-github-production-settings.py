@@ -440,7 +440,14 @@ def _validate_codeql_freshness(
         if _string(_mapping(analysis.get("tool")).get("name")) == "CodeQL"
         and _string(analysis.get("commit_sha")) == default_branch_commit_sha
     }
-    missing_categories = sorted(REQUIRED_CODEQL_CATEGORIES - completed_categories)
+    # GitHub prefixes categories for workflow-defined CodeQL analyses with the
+    # workflow and job name. Match the stable language suffix as well as the
+    # bare category returned by older API responses.
+    missing_categories = sorted(
+        required
+        for required in REQUIRED_CODEQL_CATEGORIES
+        if not any(category == required or category.endswith(required) for category in completed_categories)
+    )
     if missing_categories:
         errors.append(
             "current default-branch commit is missing CodeQL analyses: " + ", ".join(missing_categories)

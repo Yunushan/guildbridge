@@ -320,6 +320,36 @@ def test_validate_settings_requires_current_commit_codeql_for_python_and_actions
     assert "current default-branch commit is missing CodeQL analyses: /language:actions, /language:python" in errors
 
 
+def test_validate_settings_accepts_workflow_prefixed_codeql_categories() -> None:
+    module = _module()
+    repository, protection, environment, secrets, deployment_policies = _valid_settings()
+
+    errors = module.validate_settings(
+        repository,
+        protection,
+        environment,
+        secrets,
+        deployment_policies=deployment_policies,
+        default_branch_commit_sha="a" * 40,
+        codeql_analyses=[
+            {
+                "tool": {"name": "CodeQL"},
+                "commit_sha": "a" * 40,
+                "category": ".github/workflows/codeql.yml:analyze/language:python",
+            },
+            {
+                "tool": {"name": "CodeQL"},
+                "commit_sha": "a" * 40,
+                "category": ".github/workflows/codeql.yml:analyze/language:actions",
+            },
+        ],
+        rulesets=_valid_tag_rulesets(),
+        release_author_id=2,
+    )
+
+    assert errors == []
+
+
 def test_validate_settings_requires_an_assigned_environment_reviewer() -> None:
     module = _module()
     repository, protection, environment, secrets, deployment_policies = _valid_settings()

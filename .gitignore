@@ -47,6 +47,7 @@ production-evidence*.json
 github-production-settings-audit*.json
 *.receipt.json
 !examples/production-evidence.example.json
+.tmp/
 
 # OS/editor
 .DS_Store
